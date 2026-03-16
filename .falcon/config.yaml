@@ -1,0 +1,21 @@
+graph:
+  file: ""
+  autostart: false
+debug:
+  enabled: false
+testing:
+  enabled: false
+network:
+  port: 5555
+logging:
+  path: ./
+  screen:
+    enabled: true
+  cloud:
+    enabled: false
+    port: 5556
+server_side_storage:
+  environment: ./
+  resources: /home/linda/Documents/CLAS/resources
+  custom:
+    {}

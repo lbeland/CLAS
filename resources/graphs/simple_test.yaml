@@ -1,0 +1,20 @@
+graph:
+  name: CLAS
+  processors:
+    source:
+      class: Producer
+      options:
+        nchannels: 2
+        nsamples: 2
+        n_messages: 1000
+        output_file: /home/linda/Documents/CLAS/rt_c_results/2_2
+      advanced:
+        buffer_sizes:
+          data: 10
+    sink:
+      class: Consumer
+      options:
+        n_messages: 1000
+        output_file: /home/linda/Documents/CLAS/rt_c_results/2_2
+  connections:
+  - source.data = sink.data

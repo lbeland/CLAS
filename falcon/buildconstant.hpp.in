@@ -1,0 +1,10 @@
+#pragma once
+
+#include <iostream>
+#include "utilities/string.hpp"
+
+#define GIT_REVISION "@_build_version@"
+#define BUILD_TIMESTAMP "@_time_stamp@"
+#define DOC_PATH "@_processor_doc_path@"
+#define EXTENSIONS_BUILD "@_extension_names@"
+#define BUILD_TYPE "@CMAKE_BUILD_TYPE@"

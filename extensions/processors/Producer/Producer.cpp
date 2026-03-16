@@ -34,9 +34,9 @@ Producer::Producer() : IProcessor(PRIORITY_HIGH) {
 
 void Producer::CreatePorts() {
   data_out_port_ = create_output_port<MultiChannelType<double>>(
-      "data",
+      "out",
       MultiChannelType<double>::Parameters(nchannels_(), nsamples_(), 1.0),
-      PortOutPolicy(SlotRange(1)));
+      PortOutPolicy(SlotRange(1),200,WaitStrategy::kBusySpinStrategy));
 }
 
 void Producer::CompleteStreamInfo() {
@@ -45,30 +45,9 @@ void Producer::CompleteStreamInfo() {
       .set_parameters(MultiChannelType<double>::Parameters(nchannels_(), nsamples_(), 1.0));
 }
 
-#include <chrono>
-
-double get_source_time() {
-    return std::chrono::duration<double>(
-        std::chrono::steady_clock::now().time_since_epoch()
-    ).count();
-}
-
 void Producer::Process(ProcessingContext &context) {
   MultiChannelType<double>::Data *data_out = nullptr;
   send_times.resize(n_messages_());
-
-  // Warm-up
-  double now = get_source_time();
-  for (int i=0; i < 500 && !context.terminated(); i++) {
-    // Claim output buffer
-    data_out = data_out_port_->slot(0)->ClaimData(false);
-
-    // Set timestamp as value
-    std::fill(data_out->data().begin(), data_out->data().end(), now);
-
-    // Publish data
-    data_out_port_->slot(0)->PublishData();
-  }
 
   // Measurement phase
   for (int i=0; i < n_messages_() && !context.terminated(); i++) {
@@ -76,17 +55,19 @@ void Producer::Process(ProcessingContext &context) {
     data_out = data_out_port_->slot(0)->ClaimData(false);
 
     // Set timestamp as value
-    double timestamp = get_source_time();
-    // data_out->data()[0] = timestamp;  // Set first sample to timestamp for easier debugging
-    std::fill(data_out->data().begin(), data_out->data().end(), timestamp);
+    double sample = 0.0;
+    data_out->set_data_sample(0, 0, sample);
+    data_out->set_source_timestamp();  // Set source timestamp to now
+
+    double timestamp = data_out->source_timestamp().time_since_epoch().count();
+    // printf("%s. Sent message %u with timestamp %9f.\n", name().c_str(), i + 1, timestamp);
 
     // Publish data
     data_out_port_->slot(0)->PublishData();
-    // printf("%s. Sent message %u with timestamp %9f.\n", name().c_str(), i + 1, timestamp);
+
+
     send_times[i] = timestamp;
 
-    // sleep(1);
-    
   }
 
 }
@@ -116,12 +97,12 @@ void Producer::Postprocess(ProcessingContext &context) {
   }
 
   double avg_period_sec = sum_diff / (n_messages_() - 1);
-  double avg_period = avg_period_sec * 1e6;  // us
+  double avg_period = avg_period_sec * 1e-3;  // us
   double variance = (sum_sq_diff / (n_messages_() - 1)) - (avg_period_sec * avg_period_sec);  // s²
-  double std_period = sqrt(fmax(0.0, variance)) * 1e6;  // us
+  double std_period = sqrt(fmax(0.0, variance)) * 1e-3;  // us
 
   printf("Average send period (us): %.6f\n", avg_period);
-  printf("Max send period (us): %.6f, idx: %d\n", max_diff * 1e6, max_idx);
+  printf("Max send period (us): %.6f, idx: %d\n", max_diff * 1e-3, max_idx);
   printf("Std send period (us): %.6f\n", std_period);
 
   // Save to CSV
@@ -131,7 +112,7 @@ void Producer::Postprocess(ProcessingContext &context) {
   output << "Metric,Send_period\n";
   output << "mean," << avg_period << "\n";
   output << "std," << std_period << "\n";
-  output << "max," << max_diff*1e6 << "\n";
+  output << "max," << max_diff*1e-3 << "\n";
   output.close();
 
   append = "_send_times.csv";

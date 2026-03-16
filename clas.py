@@ -16,10 +16,10 @@ WORKSPACE_FALCON_CONFIG = REPO_ROOT / ".falcon" / "config.yaml"
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--n_messages", type=int, default=1000)
-    parser.add_argument("--msg_size", type=int, default=2)
-    parser.add_argument("--num_channels", type=int, default=2)
-    parser.add_argument("--max_buffer_size", type=int, default=10)
+    parser.add_argument("--n_messages", type=int, default=1000000)
+    parser.add_argument("--msg_size", type=int, default=1)
+    parser.add_argument("--num_channels", type=int, default=1)
+    parser.add_argument("--max_buffer_size", type=int, default=2)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--output_file", type=str, default="Producer.csv")
     args = parser.parse_args()
@@ -39,7 +39,7 @@ def main():
         "graph": {
         "name": "CLAS",
         "processors": {
-            "source": {
+            "Producer": {
                 "class": "Producer",
                 "options": {
                     "nchannels": args.num_channels,
@@ -49,20 +49,37 @@ def main():
                 },
                 "advanced":{
                     "buffer_sizes": {
-                        "data": args.max_buffer_size
-                    }
+                        "out": args.max_buffer_size
+                    },
+                    "thread_core": 7
                 }
             },
-            "sink": {
+            "PhaseEstimator": {
+                "class": "PhaseEstimator",
+                "options": {
+                    "n_messages": args.n_messages
+                },
+                "advanced":{
+                    "buffer_sizes": {
+                        "out": args.max_buffer_size
+                    },
+                    "thread_core": 8
+                }
+            },
+            "Consumer": {
                 "class": "Consumer",
                 "options": {
                     "n_messages": args.n_messages,
                     "output_file": str(output_path)
+                },
+                "advanced":{
+                    "thread_core": 9
                 }
             }
         },
         "connections": [
-            "source.data = sink.data"
+            "Producer.out.0 = PhaseEstimator.in.0",
+            "PhaseEstimator.out.0 = Consumer.in.0"
         ]
     }
     }

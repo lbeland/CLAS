@@ -21,23 +21,22 @@
 #include "iprocessor.hpp"
 #include "multichanneldata/multichanneldata.hpp"
 
-class Consumer : public IProcessor {
+class PhaseEstimator : public IProcessor {
  public:
-    Consumer();
+    PhaseEstimator();
 
   void CreatePorts() override;
+  void CompleteStreamInfo() override;
   void Preprocess(ProcessingContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
 
  protected:
   PortIn<MultiChannelType<double>> *data_in_port_;
+  PortOut<MultiChannelType<double>> *data_out_port_;
 
   options::Value<unsigned int, false> n_messages_{0};
-  options::Value<std::string, false> output_file_{"Consumer.csv"};
   
   unsigned int packet_count_ = 0;
   double first_timestamp_ = 0.0;
-  inline static std::vector<double> recv_times;
-  inline static std::vector<double> process_times;
 };

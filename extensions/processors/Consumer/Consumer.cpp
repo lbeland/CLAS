@@ -32,30 +32,22 @@ Consumer::Consumer() : IProcessor(PRIORITY_HIGH) {
 
 void Consumer::CreatePorts() {
   data_in_port_ = create_input_port<MultiChannelType<double>>(
-      "data", 
+      "in", 
       MultiChannelType<double>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
       PortInPolicy(SlotRange(1)));
 }
 
-double get_sink_time() {
-    return std::chrono::duration<double>(
-        std::chrono::steady_clock::now().time_since_epoch()
-    ).count();
+void Consumer::Preprocess(ProcessingContext &context){
+  printf("\n");
+  const auto& info = data_in_port_->streaminfo(0);
+  const auto& p = info.parameters<MultiChannelType<double>::Parameters>();
+  printf("Stream parameters - nchannels: %u, nsamples: %u, sample_rate: %f\n", p.nchannels, p.nsamples, p.sample_rate);
+  // recv_times.resize(n_messages_());
+  // process_times.resize(n_messages_());
 }
 
 void Consumer::Process(ProcessingContext &context) {
   MultiChannelType<double>::Data *data_in = nullptr;
-  recv_times.resize(n_messages_());
-  process_times.resize(n_messages_());
-
-  // Warm-up
-  while (warm_up_count_ < 500 && !context.terminated()) {
-    if (!data_in_port_->slot(0)->RetrieveData(data_in)) {
-      break;
-    }
-    data_in_port_->slot(0)->ReleaseData();
-    warm_up_count_++;
-  }
 
   // Measurement phase
   while (packet_count_ < n_messages_() && !context.terminated()) {
@@ -64,28 +56,30 @@ void Consumer::Process(ProcessingContext &context) {
     if (!data_in_port_->slot(0)->RetrieveData(data_in)) {
       break;
     }
-    double now = get_sink_time();
+    // Release data
+    data_in_port_->slot(0)->ReleaseData();
+    double now = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();
 
     // Process the data, take first sample of first channel
-    double timestamp = data_in->data()[0];
-    if (first_timestamp_ == 0.0) {
+    double timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(data_in->source_timestamp().time_since_epoch()).count();
+    if (packet_count_ == 0) {
       first_timestamp_ = timestamp;
     }
 
-    recv_times[packet_count_] = now;
-    process_times[packet_count_] = now - timestamp;
+    recv_times.push_back(now);
+    process_times.push_back(now - timestamp);
 
-    // printf("%s. Received packet %u with timestamp %9f.\n", name().c_str(), packet_count_ + 1, timestamp);
+    // printf("%s. Received packet %u with timestamp %9f at %9f\n", name().c_str(), packet_count_ + 1, timestamp, now);
     
     packet_count_++;
-    // Release data
-    data_in_port_->slot(0)->ReleaseData();
+
     // custom_sleep_for(500000);
   }
 
 }
 
 void Consumer::Postprocess(ProcessingContext &context) {
+
   printf("Total messages processed: %d\n", packet_count_);
 
   // Jitter statistics
@@ -106,13 +100,13 @@ void Consumer::Postprocess(ProcessingContext &context) {
           max_idx = i;
       }
   }
-  double avg_period_sec = sum_diff / (packet_count_ - 1);
-  double avg_period = avg_period_sec * 1e6;  // us
-  double variance = (sum_sq_diff / (packet_count_ - 1)) - (avg_period_sec * avg_period_sec);  // s²
-  double std_period = sqrt(fmax(0.0, variance)) * 1e6;  // us
+  double avg_period_ns = sum_diff / (packet_count_ - 1);
+  double avg_period = avg_period_ns * 1e-3;  // us
+  double variance = (sum_sq_diff / (packet_count_ - 1)) - (avg_period_ns * avg_period_ns);  // s²
+  double std_period = sqrt(fmax(0.0, variance)) * 1e-3;  // us
 
   printf("Average receive period (us): %.6f\n", avg_period);
-  printf("Max receive period (us): %.6f, idx: %d\n", max_diff*1e6, max_idx);
+  printf("Max receive period (us): %.6f, idx: %d\n", max_diff*1e-3, max_idx);
   printf("Std receive period (us): %.6f\n", std_period);
 
   // Latency statistics
@@ -130,16 +124,16 @@ void Consumer::Postprocess(ProcessingContext &context) {
       }
   }
   double avg_latency_sec = sum / packet_count_;
-  double avg_latency = avg_latency_sec * 1e6;  // us
+  double avg_latency = avg_latency_sec * 1e-3;  // us
   double variance_latency = (sum_sq / packet_count_) - (avg_latency_sec * avg_latency_sec);  // s²
-  double std_latency = sqrt(fmax(0.0, variance_latency)) * 1e6;  // us
+  double std_latency = sqrt(fmax(0.0, variance_latency)) * 1e-3;  // us
 
   printf("Average latency (us): %.6f\n", avg_latency);
-  printf("Max latency (us): %.6f, idx: %d\n", max*1e6, max_idx);
+  printf("Max latency (us): %.6f, idx: %d\n", max*1e-3, max_idx);
   printf("Std latency (us): %.6f\n", std_latency);
 
-  double throughput = packet_count_ / (recv_times[packet_count_-1] - first_timestamp_)/1e3;
-  printf("Throughput (msg/ms): %d/%.6f = %.2f\n", packet_count_, (recv_times[packet_count_-1] - first_timestamp_)*1e3, throughput);
+  double throughput = packet_count_ / (recv_times[packet_count_-1] - first_timestamp_)/1e-6;
+  printf("Throughput (msg/ms): %d/%.6f = %.2f\n", packet_count_, (recv_times[packet_count_-1] - first_timestamp_)*1e-6, throughput);
 
 
   // Save to CSV
@@ -149,7 +143,7 @@ void Consumer::Postprocess(ProcessingContext &context) {
   output << "Metric,Recv_period,Latency,Throughput\n";
   output << "mean," << avg_period << "," << avg_latency << "," << throughput << "\n";
   output << "std," << std_period << "," << std_latency << ",\n";
-  output << "max," << max_diff*1e6 << "," << max*1e6 << ",\n";
+  output << "max," << max_diff*1e-3 << "," << max*1e-3 << ",\n";
   output.close();
 
   append = "_recv_times.csv";

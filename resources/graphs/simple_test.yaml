@@ -1,20 +1,32 @@
 graph:
   name: CLAS
   processors:
-    source:
+    Producer:
       class: Producer
       options:
-        nchannels: 2
-        nsamples: 2
-        n_messages: 1000
-        output_file: /home/linda/Documents/CLAS/rt_c_results/2_2
+        nchannels: 1
+        nsamples: 1
+        n_messages: 1000000
+        output_file: /home/linda/Documents/CLAS/rt_c_results/1_1
       advanced:
         buffer_sizes:
-          data: 10
-    sink:
+          out: 32
+        thread_core: 7
+    PhaseEstimator:
+      class: PhaseEstimator
+      options:
+        n_messages: 1000000
+      advanced:
+        buffer_sizes:
+          out: 32
+        thread_core: 8
+    Consumer:
       class: Consumer
       options:
-        n_messages: 1000
-        output_file: /home/linda/Documents/CLAS/rt_c_results/2_2
+        n_messages: 1000000
+        output_file: /home/linda/Documents/CLAS/rt_c_results/1_1
+      advanced:
+        thread_core: 9
   connections:
-  - source.data = sink.data
+  - Producer.out.0 = PhaseEstimator.in.0
+  - PhaseEstimator.out.0 = Consumer.in.0

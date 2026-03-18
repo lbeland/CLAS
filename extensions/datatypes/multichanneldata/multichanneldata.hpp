@@ -110,7 +110,7 @@ template <typename T> class Data : public Base::Data {
   }
 
   Data(size_t nchannels, size_t nsamples, double sample_rate) {
-    Initialize(nchannels, nchannels, sample_rate);
+    Initialize(nchannels, nsamples, sample_rate);
   }
 
   void ClearData() override {

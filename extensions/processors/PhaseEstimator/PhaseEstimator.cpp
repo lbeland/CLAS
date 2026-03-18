@@ -30,23 +30,23 @@ PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH) {
 }
 
 void PhaseEstimator::CreatePorts() {
-  data_in_port_ = create_input_port<MultiChannelType<double>>(
+  data_in_port_ = create_input_port<MultiChannelType<float>>(
       "in", 
-      MultiChannelType<double>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
+      MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
       PortInPolicy(SlotRange(1)));
 
-  data_out_port_ = create_output_port<MultiChannelType<double>>(
+  data_out_port_ = create_output_port<MultiChannelType<float>>(
       "out",
-      MultiChannelType<double>::Parameters(1,1,1),
-      PortOutPolicy(SlotRange(1),200,WaitStrategy::kBusySpinStrategy));
+      MultiChannelType<float>::Parameters(1,1,1),
+      PortOutPolicy(SlotRange(1),200,WaitStrategy::kBlockingStrategy));
 }
 
 void PhaseEstimator::CompleteStreamInfo() {
   const auto &input_info = data_in_port_->slot(0)->streaminfo();
   const auto &input_params =
-      input_info.parameters<MultiChannelType<double>::Parameters>();
+      input_info.parameters<MultiChannelType<float>::Parameters>();
 
-  dynamic_cast<StreamInfo<MultiChannelType<double>>&>(
+  dynamic_cast<StreamInfo<MultiChannelType<float>>&>(
       data_out_port_->slot(0)->streaminfo())
       .set_parameters(input_params);
 }
@@ -54,37 +54,39 @@ void PhaseEstimator::CompleteStreamInfo() {
 void PhaseEstimator::Preprocess(ProcessingContext &context) {
   printf("\n");
   const auto& info = data_in_port_->streaminfo(0);
-  const auto& p = info.parameters<MultiChannelType<double>::Parameters>();
+  const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
   printf("Stream parameters - nchannels: %u, nsamples: %u, sample_rate: %f\n", p.nchannels, p.nsamples, p.sample_rate);
 }
 
 void PhaseEstimator::Process(ProcessingContext &context) {
-  MultiChannelType<double>::Data* data_in;
-  MultiChannelType<double>::Data *data_out = nullptr;
+  MultiChannelType<float>::Data* data_in;
+  MultiChannelType<float>::Data *data_out = nullptr;
 
   // Measurement phase
-  while (packet_count_ < n_messages_() && !context.terminated()) {
+  while (!context.terminated()) {
     
     // Try to retrieve data
     if (!data_in_port_->slot(0)->RetrieveData(data_in)) {
       break;
     }
-    data_in_port_->slot(0)->ReleaseData();
-    double timestamp = data_in->source_timestamp().time_since_epoch().count();
+
+    // double timestamp = data_in->source_timestamp().time_since_epoch().count();
     
     packet_count_++;
-    
+    auto sample = data_in->data(); 
+    auto timestamp = data_in->source_timestamp();
+
+    data_in_port_->slot(0)->ReleaseData();
 
     data_out = data_out_port_->slot(0)->ClaimData(false);
 
     // data_out->data()[0] = data_in->data()[0];  // Echo the input data to output
     // std::fill(data_out->data().begin(), data_out->data().end(), data_in->data()[0]);
-    data_out->set_data_sample(0, 0, data_in->data()[0]);
-    data_out->set_source_timestamp(data_in->source_timestamp());
-    // printf("%s. Received and sent packet %u with timestamp %f\n", name().c_str(), packet_count_, timestamp);
+    data_out->data() = sample;  // Echo the input data to output
+    data_out->set_source_timestamp(timestamp);
+    // printf("%s. Received and sent packet %u with sample %f\n", name().c_str(), packet_count_, sample);
 
     data_out_port_->slot(0)->PublishData();  
-
 
     // custom_sleep_for(500000);
   }
@@ -93,7 +95,7 @@ void PhaseEstimator::Process(ProcessingContext &context) {
 }
 
 void PhaseEstimator::Postprocess(ProcessingContext &context) {
-  printf("PhaseEstimator:Total messages processed: %d\n", packet_count_);
+  printf("\n PhaseEstimator:Total messages processed: %d", packet_count_);
 }
 
 REGISTERPROCESSOR(PhaseEstimator);

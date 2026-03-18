@@ -31,45 +31,46 @@ Consumer::Consumer() : IProcessor(PRIORITY_HIGH) {
 }
 
 void Consumer::CreatePorts() {
-  data_in_port_ = create_input_port<MultiChannelType<double>>(
+  data_in_port_ = create_input_port<MultiChannelType<float>>(
       "in", 
-      MultiChannelType<double>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
+      MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
       PortInPolicy(SlotRange(1)));
 }
 
 void Consumer::Preprocess(ProcessingContext &context){
   printf("\n");
   const auto& info = data_in_port_->streaminfo(0);
-  const auto& p = info.parameters<MultiChannelType<double>::Parameters>();
+  const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
   printf("Stream parameters - nchannels: %u, nsamples: %u, sample_rate: %f\n", p.nchannels, p.nsamples, p.sample_rate);
   // recv_times.resize(n_messages_());
   // process_times.resize(n_messages_());
 }
 
 void Consumer::Process(ProcessingContext &context) {
-  MultiChannelType<double>::Data *data_in = nullptr;
+  MultiChannelType<float>::Data *data_in = nullptr;
 
   // Measurement phase
-  while (packet_count_ < n_messages_() && !context.terminated()) {
+  while (!context.terminated()) {
     
     // Try to retrieve data
     if (!data_in_port_->slot(0)->RetrieveData(data_in)) {
       break;
     }
+    double now = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();
+    auto sample = data_in->data_sample(0,0);  // Get the first sample of the first channel
+    double timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(data_in->source_timestamp().time_since_epoch()).count();
+
     // Release data
     data_in_port_->slot(0)->ReleaseData();
-    double now = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();
 
-    // Process the data, take first sample of first channel
-    double timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(data_in->source_timestamp().time_since_epoch()).count();
     if (packet_count_ == 0) {
       first_timestamp_ = timestamp;
     }
-
+    samples.push_back(sample);
     recv_times.push_back(now);
     process_times.push_back(now - timestamp);
 
-    // printf("%s. Received packet %u with timestamp %9f at %9f\n", name().c_str(), packet_count_ + 1, timestamp, now);
+    // printf("%s. Received packet %u with sample %f at %9f\n", name().c_str(), packet_count_ + 1, sample, now);
     
     packet_count_++;
 
@@ -80,7 +81,11 @@ void Consumer::Process(ProcessingContext &context) {
 
 void Consumer::Postprocess(ProcessingContext &context) {
 
-  printf("Total messages processed: %d\n", packet_count_);
+  printf("\n Consumer: Total messages processed: %d", packet_count_);
+
+  if (packet_count_ == 0) {
+      return;
+  }
 
   // Jitter statistics
   double sum_diff = 0.0;
@@ -105,9 +110,9 @@ void Consumer::Postprocess(ProcessingContext &context) {
   double variance = (sum_sq_diff / (packet_count_ - 1)) - (avg_period_ns * avg_period_ns);  // s²
   double std_period = sqrt(fmax(0.0, variance)) * 1e-3;  // us
 
-  printf("Average receive period (us): %.6f\n", avg_period);
-  printf("Max receive period (us): %.6f, idx: %d\n", max_diff*1e-3, max_idx);
-  printf("Std receive period (us): %.6f\n", std_period);
+  printf("\n Average receive period (us): %.6f", avg_period);
+  printf("\n Max receive period (us): %.6f, idx: %d", max_diff*1e-3, max_idx);
+  printf("\n Std receive period (us): %.6f\n", std_period);
 
   // Latency statistics
   double sum = 0.0;
@@ -128,12 +133,12 @@ void Consumer::Postprocess(ProcessingContext &context) {
   double variance_latency = (sum_sq / packet_count_) - (avg_latency_sec * avg_latency_sec);  // s²
   double std_latency = sqrt(fmax(0.0, variance_latency)) * 1e-3;  // us
 
-  printf("Average latency (us): %.6f\n", avg_latency);
-  printf("Max latency (us): %.6f, idx: %d\n", max*1e-3, max_idx);
-  printf("Std latency (us): %.6f\n", std_latency);
+  printf("\n Average latency (us): %.6f", avg_latency);
+  printf("\n Max latency (us): %.6f, idx: %d", max*1e-3, max_idx);
+  printf("\n Std latency (us): %.6f\n", std_latency);
 
-  double throughput = packet_count_ / (recv_times[packet_count_-1] - first_timestamp_)/1e-6;
-  printf("Throughput (msg/ms): %d/%.6f = %.2f\n", packet_count_, (recv_times[packet_count_-1] - first_timestamp_)*1e-6, throughput);
+  double throughput = packet_count_ / (recv_times[packet_count_-1] - first_timestamp_)/1e-9;
+  printf("\n Throughput (msg/s): %d/%.6f = %.2f", packet_count_, (recv_times[packet_count_-1] - first_timestamp_)*1e-9, throughput);
 
 
   // Save to CSV
@@ -163,6 +168,15 @@ void Consumer::Postprocess(ProcessingContext &context) {
       process_times_output << t << "\n";
   }
   process_times_output.close();
+
+  append = "_samples.csv";
+  std::ofstream samples_output;
+  samples_output << std::fixed << std::setprecision(17);
+  samples_output.open(output_file_().c_str() + append);
+  for (double s : samples) {
+      samples_output << s << "\n";
+  }
+  samples_output.close();
 }
 
 REGISTERPROCESSOR(Consumer);

@@ -36,7 +36,7 @@ class Producer : public IProcessor {
 
   options::Value<unsigned int, false> nchannels_{4};
   options::Value<unsigned int, false> nsamples_{100};
-  options::Value<unsigned int, false> n_messages_{10};
+  options::Value<int, false> n_messages_{10};
   options::Value<std::string, false> output_file_{"Producer.csv"};
   
   inline static std::vector<double> send_times;

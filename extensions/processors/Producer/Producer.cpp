@@ -24,6 +24,9 @@
 #include "threadutilities.hpp"
 #include <thread>
 #include <chrono>
+#include <cmath>
+
+const double PI = 3.141592653589793;
 
 Producer::Producer() : IProcessor(PRIORITY_HIGH) {
   add_option("nchannels", nchannels_, "Number of channels to generate.");
@@ -55,12 +58,17 @@ void Producer::Process(ProcessingContext &context) {
     data_out = data_out_port_->slot(0)->ClaimData(false);
 
     // Set timestamp as value
-    double sample = 0.0;
-    data_out->set_data_sample(0, 0, sample);
+    auto t = i * 0.0001;  // Simulate a sample timestamp (e.g., 10 kHz sample rate)
+    std::vector<double> sample(3,sin(2 * PI * t * 10));  // Generate a sine wave with frequency of 10 Hz
+    // int sample = i;
+    for (int i=0;i<nsamples_();i++) {
+      data_out->set_data_sample(i, sample);
+    }
+    
     data_out->set_source_timestamp();  // Set source timestamp to now
 
     double timestamp = data_out->source_timestamp().time_since_epoch().count();
-    // printf("%s. Sent message %u with timestamp %9f.\n", name().c_str(), i + 1, timestamp);
+    // printf("%s. Sent message %u with sample %f.\n", name().c_str(), i + 1, sample);
 
     // Publish data
     data_out_port_->slot(0)->PublishData();
@@ -75,7 +83,11 @@ void Producer::Process(ProcessingContext &context) {
 void Producer::Postprocess(ProcessingContext &context) {
 
   // Calculate Statistics
-  printf("Total messages sent: %d\n", n_messages_());
+  printf("Total messages sent: %d\n", (int)send_times.size());
+
+  if (send_times.empty()) {
+      return;
+  }
 
   // Calculate statistics (skip first measurement)
   double sum_diff = 0.0;
@@ -83,9 +95,9 @@ void Producer::Postprocess(ProcessingContext &context) {
   int max_idx = 0;
   double sum_sq_diff = 0.0;
   std::vector<double> send_times_diff;
-  send_times_diff.resize(n_messages_() - 1);
+  send_times_diff.resize(send_times.size() - 1);
 
-  for (int i = 0; i < n_messages_()-1; i++) {
+  for (int i = 0; i < send_times.size()-1; i++) {
       double diff = send_times[i+1] - send_times[i];
       send_times_diff[i] = diff;
       sum_diff += diff;
@@ -96,9 +108,9 @@ void Producer::Postprocess(ProcessingContext &context) {
       }
   }
 
-  double avg_period_sec = sum_diff / (n_messages_() - 1);
+  double avg_period_sec = sum_diff / (send_times.size() - 1);
   double avg_period = avg_period_sec * 1e-3;  // us
-  double variance = (sum_sq_diff / (n_messages_() - 1)) - (avg_period_sec * avg_period_sec);  // s²
+  double variance = (sum_sq_diff / (send_times.size() - 1)) - (avg_period_sec * avg_period_sec);  // s²
   double std_period = sqrt(fmax(0.0, variance)) * 1e-3;  // us
 
   printf("Average send period (us): %.6f\n", avg_period);

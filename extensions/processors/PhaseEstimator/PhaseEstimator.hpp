@@ -32,8 +32,8 @@ class PhaseEstimator : public IProcessor {
   void Postprocess(ProcessingContext &context) override;
 
  protected:
-  PortIn<MultiChannelType<double>> *data_in_port_;
-  PortOut<MultiChannelType<double>> *data_out_port_;
+  PortIn<MultiChannelType<float>> *data_in_port_;
+  PortOut<MultiChannelType<float>> *data_out_port_;
 
   options::Value<unsigned int, false> n_messages_{0};
   

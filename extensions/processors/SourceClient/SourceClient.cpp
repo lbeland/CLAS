@@ -30,18 +30,44 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-
 constexpr int PORT = 25000;
 constexpr size_t PACKET_SIZE = 172;
 const std::string SOURCE_IP = "192.168.200.21"; // set "" to disable filtering
-  struct Packet {
-    uint32_t token;
-    uint32_t sample_counter;
-    uint32_t trigger_bits;
-        std::vector<float> aux = std::vector<float>(8);
-        std::vector<float> eeg = std::vector<float>(32);
-};
 
+
+uint32_t read_u32_le(const uint8_t* p) {
+    return (uint32_t)p[0]
+         | ((uint32_t)p[1] << 8)
+         | ((uint32_t)p[2] << 16)
+         | ((uint32_t)p[3] << 24);
+}
+
+float read_f32_le(const uint8_t* p) {
+    uint32_t tmp = read_u32_le(p);
+    float value;
+    std::memcpy(&value, &tmp, sizeof(float));
+    return value;
+}
+
+bool parse_packet(const uint8_t* data, size_t len, Packet& pkt) {
+    if (len < PACKET_SIZE) return false;
+
+    // pkt.token = read_u32_le(data + 0);
+    pkt.sample_counter = read_u32_le(data + 4);
+    // pkt.trigger_bits = read_u32_le(data + 8);
+
+    // // Aux: 8 floats
+    // for (size_t i = 0; i < 8; ++i) {
+    //     pkt.aux[i] = read_f32_le(data + 12 + i * 4);
+    // }
+
+    // // EEG: 32 floats
+    // for (size_t i = 0; i < 32; ++i) {
+    //     pkt.eeg[i] = read_f32_le(data + 44 + i * 4);
+    // }
+
+    return true;
+}
 
 SourceClient::SourceClient() : IProcessor(PRIORITY_HIGH) {
   add_option("nchannels", nchannels_, "Number of channels to generate.");
@@ -61,40 +87,6 @@ void SourceClient::CompleteStreamInfo() {
   // Set the parameters for the output stream
   dynamic_cast<StreamInfo<MultiChannelType<float>>&>(data_out_port_->slot(0)->streaminfo())
       .set_parameters(MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), 1.0));
-}
-
-uint32_t read_u32_le(const uint8_t* p) {
-    return (uint32_t)p[0]
-         | ((uint32_t)p[1] << 8)
-         | ((uint32_t)p[2] << 16)
-         | ((uint32_t)p[3] << 24);
-}
-
-float read_f32_le(const uint8_t* p) {
-    uint32_t tmp = read_u32_le(p);
-    float value;
-    std::memcpy(&value, &tmp, sizeof(float));
-    return value;
-}
-
-bool parse_packet(const uint8_t* data, size_t len, Packet& pkt) {
-    if (len < PACKET_SIZE) return false;
-
-    pkt.token = read_u32_le(data + 0);
-    pkt.sample_counter = read_u32_le(data + 4);
-    pkt.trigger_bits = read_u32_le(data + 8);
-
-    // Aux: 8 floats
-    for (size_t i = 0; i < 8; ++i) {
-        pkt.aux[i] = read_f32_le(data + 12 + i * 4);
-    }
-
-    // EEG: 32 floats
-    for (size_t i = 0; i < 32; ++i) {
-        pkt.eeg[i] = read_f32_le(data + 44 + i * 4);
-    }
-
-    return true;
 }
 
 void SourceClient::Preprocess(ProcessingContext &context) {
@@ -134,10 +126,10 @@ void SourceClient::Process(ProcessingContext &context) {
   uint8_t buffer[2048];
   int last_sample_counter = -1;
   // Measurement phase
-  while (!context.terminated()){
+  sockaddr_in src{};
+  socklen_t srclen = sizeof(src);
 
-    sockaddr_in src{};
-    socklen_t srclen = sizeof(src);
+  while (!context.terminated()){
 
     ssize_t received = recvfrom(sock, buffer, sizeof(buffer), 0,
                                 (struct sockaddr*)&src, &srclen);
@@ -220,7 +212,7 @@ void SourceClient::Postprocess(ProcessingContext &context) {
       return;
   }
 
-  // Calculate statistics (skip first measurement)
+  // Calculate statistics
   double sum_diff = 0.0;
   double max_diff = 0.0;
   int max_idx = 0;

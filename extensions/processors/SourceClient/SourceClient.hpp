@@ -22,6 +22,18 @@
 #include "multichanneldata/multichanneldata.hpp"
 #include "options/options.hpp"
 
+struct Packet {
+  uint32_t token;
+  uint32_t sample_counter;
+  uint32_t trigger_bits;
+      std::vector<float> aux = std::vector<float>(8);
+      std::vector<float> eeg = std::vector<float>(32);
+};
+
+uint32_t read_u32_le(const uint8_t* p);
+float read_f32_le(const uint8_t* p);
+bool parse_packet(const uint8_t* data, size_t len, Packet& pkt);
+
 class SourceClient : public IProcessor {
  public:
   SourceClient();

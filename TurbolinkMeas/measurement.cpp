@@ -79,6 +79,12 @@ int main() {
     addr.sin_port = htons(25000);
     addr.sin_addr.s_addr = INADDR_ANY;
 
+    int busy_poll_us = 10;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_BUSY_POLL,
+                &busy_poll_us, sizeof(busy_poll_us)) < 0) {
+        perror("setsockopt(SO_BUSY_POLL)");
+    }
+
     if (bind(sockfd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
         perror("bind");
         close(sockfd);
@@ -89,25 +95,26 @@ int main() {
 
     std::array<std::uint8_t, 2048> buffer{};
 
-    const int freq = 10000; // Hz
+    const int freq = 10000; // Hz, has to be adapted to the actual frequency of the incoming packets
 
-    static const int n_packets = 20 * freq; // 5 seconds worth of packets 
-    std::array<double, n_packets> receive_times;
+    static const int n_packets = 1 * freq; // 20 seconds worth of packets 
+    std::array<std::chrono::_V2::steady_clock::time_point, n_packets> receive_times;
     int count = 0;
+    std::chrono::_V2::steady_clock::time_point timestamp;
+    ssize_t len = 0;
+    sockaddr_in sender{};
+    socklen_t sender_len = sizeof(sender);
 
     while (count<n_packets) {
-        sockaddr_in sender{};
-        socklen_t sender_len = sizeof(sender);
 
-        ssize_t len = recvfrom(sockfd, buffer.data(), buffer.size(), 0, reinterpret_cast<sockaddr*>(&sender), &sender_len);
+        len = recvfrom(sockfd, buffer.data(), buffer.size(), 0, reinterpret_cast<sockaddr*>(&sender), &sender_len);
+        timestamp = std::chrono::steady_clock::now();
 
         if (len < 0) {
             perror("recvfrom");
             break;
         }
-
-        double timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        receive_times[count]= timestamp;
+        receive_times[count] = timestamp;
         count++;
 
         // Frame frame{};
@@ -137,7 +144,7 @@ int main() {
     receive_times_diff.resize(receive_times.size() - 1);
 
     for (int i = 0; i < receive_times.size()-1; i++) {
-        double diff = receive_times[i+1] - receive_times[i];
+        double diff = std::chrono::duration_cast<std::chrono::nanoseconds>(receive_times[i+1] - receive_times[i]).count();
         receive_times_diff[i] = diff;
         sum_diff += diff;
         sum_sq_diff += diff * diff;

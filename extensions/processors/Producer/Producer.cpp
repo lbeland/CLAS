@@ -25,6 +25,7 @@
 #include <thread>
 #include <chrono>
 #include <cmath>
+#include <sstream>
 
 const double PI = 3.141592653589793;
 
@@ -82,14 +83,16 @@ void Producer::Process(ProcessingContext &context) {
 
 void Producer::Postprocess(ProcessingContext &context) {
 
+  std::ostringstream statistic_print;
+
   // Calculate Statistics
-  printf("Total messages sent: %d\n", (int)send_times.size());
+  statistic_print << "Total messages sent: " << send_times.size() << "\n";
 
   if (send_times.empty()) {
       return;
   }
 
-  // Calculate statistics (skip first measurement)
+  // Calculate statistics
   double sum_diff = 0.0;
   double max_diff = 0.0;
   int max_idx = 0;
@@ -113,9 +116,9 @@ void Producer::Postprocess(ProcessingContext &context) {
   double variance = (sum_sq_diff / (send_times.size() - 1)) - (avg_period_sec * avg_period_sec);  // s²
   double std_period = sqrt(fmax(0.0, variance)) * 1e-3;  // us
 
-  printf("Average send period (us): %.6f\n", avg_period);
-  printf("Max send period (us): %.6f, idx: %d\n", max_diff * 1e-3, max_idx);
-  printf("Std send period (us): %.6f\n", std_period);
+  statistic_print << "Average send period (us): " << avg_period << "\n";
+  statistic_print << "Max send period (us): " << max_diff * 1e-3 << ", idx: " << max_idx << "\n";
+  statistic_print << "Std send period (us): " << std_period << "\n";
 
   // Save to CSV
   std::string append = "_Producer.csv";
@@ -135,6 +138,8 @@ void Producer::Postprocess(ProcessingContext &context) {
       send_times_output << t << "\n";
   }
   send_times_output.close();
+
+  std::cout << statistic_print.str();
 }
 
 REGISTERPROCESSOR(Producer);

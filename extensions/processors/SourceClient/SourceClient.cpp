@@ -25,6 +25,7 @@
 #include <thread>
 #include <chrono>
 #include <cmath>
+#include <sstream>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -70,10 +71,11 @@ bool parse_packet(const uint8_t* data, size_t len, Packet& pkt) {
 }
 
 SourceClient::SourceClient() : IProcessor(PRIORITY_HIGH) {
-  add_option("nchannels", nchannels_, "Number of channels to generate.");
-  add_option("nsamples", nsamples_, "Number of samples per packet.");
-  add_option("n_messages", n_messages_, "Number of packets to generate (0 = infinite).");
-  add_option("output_file", output_file_, "Path to output CSV file.");
+    add_option("fs", fs_, "Sample Frequency of Turbolink Client");
+    add_option("nchannels", nchannels_, "Number of channels to generate.");
+    add_option("nsamples", nsamples_, "Number of samples per packet.");
+    add_option("n_messages", n_messages_, "Number of packets to generate (0 = infinite).");
+    add_option("output_file", output_file_, "Path to output CSV file.");
 }
 
 void SourceClient::CreatePorts() {
@@ -91,6 +93,8 @@ void SourceClient::CompleteStreamInfo() {
 
 void SourceClient::Preprocess(ProcessingContext &context) {
 
+    send_times.clear();
+
     sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         perror("socket");
@@ -100,7 +104,7 @@ void SourceClient::Preprocess(ProcessingContext &context) {
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(PORT);
-    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("bind");
@@ -122,38 +126,38 @@ void SourceClient::Preprocess(ProcessingContext &context) {
 
 
 void SourceClient::Process(ProcessingContext &context) {
-  MultiChannelType<float>::Data *data_out = nullptr;
-  uint8_t buffer[2048];
-  int last_sample_counter = -1;
-  // Measurement phase
-  sockaddr_in src{};
-  socklen_t srclen = sizeof(src);
+    using clock = std::chrono::steady_clock;
+    MultiChannelType<float>::Data *data_out = nullptr;
+    uint8_t buffer[2048];
+    int first_sample_counter;
+    uint32_t sample_counter;
+    // Measurement phase
+    sockaddr_in src{};
+    socklen_t srclen = sizeof(src);
+    int first_sample = true;
+    clock::time_point first_timestamp;
+    clock::time_point timestamp;
 
-  while (!context.terminated()){
+    while (!context.terminated()){
 
-    ssize_t received = recvfrom(sock, buffer, sizeof(buffer), 0,
-                                (struct sockaddr*)&src, &srclen);
+        ssize_t received = recvfrom(sock, buffer, sizeof(buffer), 0,
+                                    (struct sockaddr*)&src, &srclen);
 
-    if (received < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            // timeout: loop again and check g_running
-            continue;
-        }
+        if (received < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // timeout: loop again and check g_running
+                continue;
+            }
 
-        if (context.terminated()) {
+            if (context.terminated()) {
+                break;
+            }
+
+            perror("recvfrom");
             break;
-        }
-
-        perror("recvfrom");
-        break;
     }
-
-    char sender_ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &src.sin_addr, sender_ip, sizeof(sender_ip));
-
-    if (!SOURCE_IP.empty() && SOURCE_IP != sender_ip) {
-        continue;
-    }
+    
+    timestamp = clock::now();
 
     Packet pkt{};
     if (!parse_packet(buffer, received, pkt)) {
@@ -164,18 +168,25 @@ void SourceClient::Process(ProcessingContext &context) {
     // std::cout << "Sample: " << pkt.sample_counter
     //           << " | EEG[0]: " << pkt.eeg[0]
     //           << std::endl;
-    if (last_sample_counter == -1) {
-        last_sample_counter = pkt.sample_counter;
+
+    if (first_sample == true) {
+        first_sample_counter = pkt.sample_counter;
+        sample_counter = pkt.sample_counter;
+        first_timestamp = timestamp;
+        first_sample = false;
     }
-    if (pkt.sample_counter > last_sample_counter+1) {
-      printf("\n Warning: Missed packet(s). Last sample counter: %d, current: %d", last_sample_counter, pkt.sample_counter);
-      perror("\n Error: Missed packet(s)");
-      return;
-    }
-    else{
-      last_sample_counter = pkt.sample_counter;
+    else {
+        if ((pkt.sample_counter > sample_counter+1) || (sample_counter == std::numeric_limits<uint32_t>::max() && pkt.sample_counter != 0)) {
+            printf("\n Warning: Missed packet(s). Last sample counter: %d, current: %d", sample_counter, pkt.sample_counter);
+            perror("\n Error: Missed packet(s)");
+            return;
+        }
+        else{
+            sample_counter = pkt.sample_counter;
+        }
     }
 
+    // printf("Sample counter: %d\n", sample_counter);
 
     // Claim output buffer
     data_out = data_out_port_->slot(0)->ClaimData(false);
@@ -189,15 +200,17 @@ void SourceClient::Process(ProcessingContext &context) {
       data_out->set_data_sample(0, i, sample);
     }
     
-    data_out->set_source_timestamp();  // Set source timestamp to now
+    data_out->set_source_timestamp(timestamp);  // Set source timestamp to now
+    std::chrono::time_point hardware_timestamp = first_timestamp + std::chrono::seconds((sample_counter - first_sample_counter)/fs_());
 
-    double timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(data_out->source_timestamp().time_since_epoch()).count();
+    data_out->set_hardware_timestamp(std::chrono::duration_cast<std::chrono::milliseconds>(hardware_timestamp.time_since_epoch()).count());
+
     // printf("%s. Sent message %u with sample %f.\n", name().c_str(), i + 1, sample);
 
     // Publish data
     data_out_port_->slot(0)->PublishData();
 
-    send_times.push_back(timestamp);
+    send_times.push_back(data_out->source_timestamp());
 
   }
 
@@ -205,62 +218,71 @@ void SourceClient::Process(ProcessingContext &context) {
 
 void SourceClient::Postprocess(ProcessingContext &context) {
 
-  // Calculate Statistics
-  printf("\n Total messages sent: %d", send_times.size());
+    std::ostringstream statistic_print;
 
-  if (send_times.empty()) {
-      return;
-  }
+    // Calculate Statistics
+    statistic_print << "\n ---------------- \n Total messages sent: " << send_times.size();
 
-  // Calculate statistics
-  double sum_diff = 0.0;
-  double max_diff = 0.0;
-  int max_idx = 0;
-  double sum_sq_diff = 0.0;
-  std::vector<double> send_times_diff;
-  send_times_diff.resize(send_times.size() - 1);
+    if (send_times.empty()) {
+        return;
+    }
 
-  for (int i = 0; i < send_times.size()-1; i++) {
-      double diff = send_times[i+1] - send_times[i];
-      send_times_diff[i] = diff;
-      sum_diff += diff;
-      sum_sq_diff += diff * diff;
-      if (diff > max_diff) {
-          max_diff = diff;
-          max_idx = i;
-      }
-  }
+    // Calculate statistics
+    double sum_diff_us = 0.0;
+    double max_diff_us = 0.0;
+    std::size_t max_idx = 0;
+    double sum_sq_diff = 0.0;
+    std::vector<double> send_times_diff;
+    send_times_diff.resize(send_times.size() - 1);
 
-  double avg_period_sec = sum_diff / (send_times.size() - 1);
-  double avg_period = avg_period_sec * 1e-3;  // us
-  double variance = (sum_sq_diff / (send_times.size() - 1)) - (avg_period_sec * avg_period_sec);  // s²
-  double std_period = sqrt(fmax(0.0, variance)) * 1e-3;  // us
+    for (std::size_t i = 0; i + 1 < send_times.size(); i++) {
+        const double diff_us = std::chrono::duration<double, std::micro>(send_times[i+1] - send_times[i]).count();
+        
+        send_times_diff[i] = diff_us;
+        sum_diff_us += diff_us;
+        sum_sq_diff += diff_us * diff_us;
+        if (diff_us > max_diff_us) {
+            max_diff_us = diff_us;
+            max_idx = i;
+        }
+    }
 
-  printf("\n Average send period (us): %.6f", avg_period);
-  printf("\n Max send period (us): %.6f, idx: %d", max_diff * 1e-3, max_idx);
-  printf("\n Std send period (us): %.6f\n", std_period);
+    const std::size_t n_periods = send_times_diff.size();
+    double avg_period = 0.0;
+    double std_period = 0.0;
+    if (n_periods > 0) {
+        avg_period = sum_diff_us / static_cast<double>(n_periods);
+        const double variance = (sum_sq_diff / static_cast<double>(n_periods)) - (avg_period * avg_period);
+        std_period = sqrt(fmax(0.0, variance));
+    }
 
-  // Save to CSV
-  std::string append = "_SourceClient.csv";
-  std::ofstream output;
-  output.open(output_file_().c_str() + append);
-  output << "Metric,Send_period\n";
-  output << "mean," << avg_period << "\n";
-  output << "std," << std_period << "\n";
-  output << "max," << max_diff*1e-3 << "\n";
-  output.close();
+    statistic_print << "\n Average send period (us): " << avg_period;
+    statistic_print << "\n Max send period (us): " << max_diff_us << ", idx: " << max_idx;
+    statistic_print << "\n Std send period (us): " << std_period << "\n";
 
-  append = "_send_times.csv";
-  std::ofstream send_times_output;
-  send_times_output << std::fixed << std::setprecision(17);
-  send_times_output.open(output_file_().c_str() + append);
-  for (double t : send_times_diff) {
-      send_times_output << t << "\n";
-  }
-  send_times_output.close();
+    // Save to CSV
+    std::string append = "_SourceClient.csv";
+    std::ofstream output;
+    output.open(output_file_().c_str() + append);
+    output << "Metric,Send_period\n";
+    output << "mean," << avg_period << "\n";
+    output << "std," << std_period << "\n";
+    output << "max," << max_diff_us << "\n";
+    output.close();
 
-  close(sock);
-  std::cout << "\n Socket closed. Shutdown complete." << std::endl;
+    append = "_send_times.csv";
+    std::ofstream send_times_output;
+    send_times_output << std::fixed << std::setprecision(17);
+    send_times_output.open(output_file_().c_str() + append);
+    for (double t : send_times_diff) {
+        send_times_output << t << "\n";
+    }
+    send_times_output.close();
+
+    std::cout << statistic_print.str();
+
+    close(sock);
+    std::cout << "\n Socket closed. Shutdown complete." << std::endl;
 }
 
 REGISTERPROCESSOR(SourceClient);

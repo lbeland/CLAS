@@ -20,6 +20,7 @@
 
 #include "iprocessor.hpp"
 #include "multichanneldata/multichanneldata.hpp"
+#include <chrono>
 
 class Consumer : public IProcessor {
  public:
@@ -37,8 +38,7 @@ class Consumer : public IProcessor {
   options::Value<std::string, false> output_file_{"Consumer.csv"};
   
   unsigned int packet_count_ = 0;
-  double first_timestamp_ = 0.0;
   inline static std::vector<float> samples;
-  inline static std::vector<double> recv_times;
-  inline static std::vector<double> process_times;
+  inline static std::vector<std::chrono::steady_clock::time_point> recv_times;
+  inline static std::vector<std::chrono::steady_clock::time_point> source_times;
 };

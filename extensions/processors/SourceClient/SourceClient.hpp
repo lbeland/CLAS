@@ -48,10 +48,11 @@ class SourceClient : public IProcessor {
   PortOut<MultiChannelType<float>> *data_out_port_;
   int sock = -1;
 
-  options::Value<unsigned int, false> nchannels_{4};
-  options::Value<unsigned int, false> nsamples_{100};
+  options::Value<int, false> fs_{1000};
+  options::Value<int, false> nchannels_{4};
+  options::Value<int, false> nsamples_{100};
   options::Value<int, false> n_messages_{10};
   options::Value<std::string, false> output_file_{"SourceClient.csv"};
   
-  inline static std::vector<double> send_times;
+  inline static std::vector<std::chrono::steady_clock::time_point> send_times;
 };

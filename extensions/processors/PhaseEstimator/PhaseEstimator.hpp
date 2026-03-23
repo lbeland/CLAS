@@ -20,6 +20,7 @@
 
 #include "iprocessor.hpp"
 #include "multichanneldata/multichanneldata.hpp"
+#include <boost/circular_buffer.hpp>
 
 class PhaseEstimator : public IProcessor {
  public:
@@ -39,4 +40,6 @@ class PhaseEstimator : public IProcessor {
   
   unsigned int packet_count_ = 0;
   double first_timestamp_ = 0.0;
+  float fs_ = 0.0;
+  inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Preprocess
 };

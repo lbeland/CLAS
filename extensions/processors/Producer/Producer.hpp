@@ -32,12 +32,13 @@ class Producer : public IProcessor {
   void Postprocess(ProcessingContext &context) override;
 
  protected:
-  PortOut<MultiChannelType<double>> *data_out_port_;
+  PortOut<MultiChannelType<float>> *data_out_port_;
 
+  options::Value<double, false> fs_{10000.0};
   options::Value<unsigned int, false> nchannels_{4};
   options::Value<unsigned int, false> nsamples_{100};
-  options::Value<int, false> n_messages_{10};
+  options::Value<int, false> n_messages_{-1};
   options::Value<std::string, false> output_file_{"Producer.csv"};
   
-  inline static std::vector<double> send_times;
+  inline static std::vector<std::chrono::steady_clock::time_point> send_times;
 };

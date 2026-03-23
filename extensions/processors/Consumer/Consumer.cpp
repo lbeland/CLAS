@@ -35,7 +35,7 @@ void Consumer::CreatePorts() {
   data_in_port_ = create_input_port<MultiChannelType<float>>(
       "in", 
       MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
-      PortInPolicy(SlotRange(1)));
+      PortInPolicy(SlotRange(2)));
 }
 
 void Consumer::Preprocess(ProcessingContext &context){
@@ -50,24 +50,42 @@ void Consumer::Preprocess(ProcessingContext &context){
 }
 
 void Consumer::Process(ProcessingContext &context) {
-  MultiChannelType<float>::Data *data_in = nullptr;
-  using Clock = std::chrono::steady_clock;
-  Clock::time_point receive_timestamp;
+  MultiChannelType<float>::Data *data_in_phase = nullptr;
+  MultiChannelType<float>::Data *data_in_sample = nullptr;
+
+  using clock = std::chrono::steady_clock;
+  clock::time_point receive_timestamp;
+
+  float sample;
+  clock::time_point source_timestamp;
+  uint64_t hardware_timestamp;
+
 
   // Measurement phase
   while (!context.terminated()) {
-    
-    // Try to retrieve data
-    if (!data_in_port_->slot(0)->RetrieveData(data_in)) {
+    if (n_messages_() != -1 && packet_count_ >= n_messages_()) {
       break;
     }
-    receive_timestamp = Clock::now();
-    auto sample = data_in->data_sample(0,0);  // Get the first sample of the first channel
-    auto source_timestamp = data_in->source_timestamp();
+    
+    // Try to retrieve data
+    for (int slot_idx = 0; slot_idx < 2; slot_idx++) {
+      if (!data_in_port_->slot(slot_idx)->RetrieveData(data_in_sample)) {
+        perror(std::format("Failed to retrieve data from input slot %d", slot_idx).c_str());
+      }
+      receive_timestamp = clock::now();
+      sample = data_in_sample->data_sample(0,0);  // Get the first sample of the first channel
+      source_timestamp = data_in_sample->source_timestamp();
+      hardware_timestamp = data_in_sample->hardware_timestamp();
+ 
+      // Release data
+      data_in_port_->slot(slot_idx)->ReleaseData();
+    }
 
-    // Release data
-    data_in_port_->slot(0)->ReleaseData();
+    if (packet_count_ % 100 == 0) {
+      printf("\n %s. Received packet %u with sample %.2f at %.3f us (source timestamp: %.3f us, hardware timestamp: %lu us)", name().c_str(), packet_count_ + 1, sample, std::chrono::duration<double, std::micro>(receive_timestamp.time_since_epoch()).count(), std::chrono::duration<double, std::micro>(source_timestamp.time_since_epoch()).count(), hardware_timestamp);
+    }
 
+    
     samples.push_back(sample);
     recv_times.push_back(receive_timestamp);
     source_times.push_back(source_timestamp);
@@ -76,7 +94,7 @@ void Consumer::Process(ProcessingContext &context) {
 
     packet_count_++;
 
-    // custom_sleep_for(500000);
+    custom_sleep_for(100);
   }
 
 }
@@ -96,7 +114,7 @@ void Consumer::Postprocess(ProcessingContext &context) {
   std::size_t max_idx = 0;
   double sum_sq_diff = 0.0;
   std::vector<double> recv_times_diff;
-  recv_times_diff.resize(packet_count_ > 0 ? packet_count_ - 1 : 0);
+  recv_times_diff.resize(packet_count_ -1);
 
   for (std::size_t i = 0; i + 1 < recv_times.size(); i++) {
     const double diff_us = std::chrono::duration<double, std::micro>(recv_times[i+1] - recv_times[i]).count();

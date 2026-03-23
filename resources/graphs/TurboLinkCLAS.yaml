@@ -1,0 +1,24 @@
+graph:
+  name: CLAS
+  processors:
+    SourceClient:
+      class: SourceClient
+      options:
+        fs: 1000
+        nchannels: 10
+        nsamples: 1
+        # n_messages: 2000
+        output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
+      advanced:
+        buffer_sizes:
+          out: 16
+        thread_core: 7
+    Consumer:
+      class: Consumer
+      options:
+        # n_messages: 2000
+        output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
+      advanced:
+        thread_core: 9
+  connections:
+  - SourceClient.out.0 = Consumer.in.0

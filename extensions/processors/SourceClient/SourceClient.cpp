@@ -53,19 +53,19 @@ float read_f32_le(const uint8_t* p) {
 bool parse_packet(const uint8_t* data, size_t len, Packet& pkt) {
     if (len < PACKET_SIZE) return false;
 
-    // pkt.token = read_u32_le(data + 0);
+    pkt.token = read_u32_le(data + 0);
     pkt.sample_counter = read_u32_le(data + 4);
-    // pkt.trigger_bits = read_u32_le(data + 8);
+    pkt.trigger_bits = read_u32_le(data + 8);
 
-    // // Aux: 8 floats
-    // for (size_t i = 0; i < 8; ++i) {
-    //     pkt.aux[i] = read_f32_le(data + 12 + i * 4);
-    // }
+    // Aux: 8 floats
+    for (size_t i = 0; i < 8; ++i) {
+        pkt.aux[i] = read_f32_le(data + 12 + i * 4);
+    }
 
-    // // EEG: 32 floats
-    // for (size_t i = 0; i < 32; ++i) {
-    //     pkt.eeg[i] = read_f32_le(data + 44 + i * 4);
-    // }
+    // EEG: 32 floats
+    for (size_t i = 0; i < 32; ++i) {
+        pkt.eeg[i] = read_f32_le(data + 44 + i * 4);
+    }
 
     return true;
 }
@@ -74,21 +74,21 @@ SourceClient::SourceClient() : IProcessor(PRIORITY_HIGH) {
     add_option("fs", fs_, "Sample Frequency of Turbolink Client");
     add_option("nchannels", nchannels_, "Number of channels to generate.");
     add_option("nsamples", nsamples_, "Number of samples per packet.");
-    add_option("n_messages", n_messages_, "Number of packets to generate (0 = infinite).");
+    add_option("n_messages", n_messages_, "Number of packets to generate (-1 = infinite).");
     add_option("output_file", output_file_, "Path to output CSV file.");
 }
 
 void SourceClient::CreatePorts() {
   data_out_port_ = create_output_port<MultiChannelType<float>>(
       "out",
-      MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), 1.0),
+      MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()),
       PortOutPolicy(SlotRange(1),200,WaitStrategy::kBlockingStrategy));
 }
 
 void SourceClient::CompleteStreamInfo() {
   // Set the parameters for the output stream
   dynamic_cast<StreamInfo<MultiChannelType<float>>&>(data_out_port_->slot(0)->streaminfo())
-      .set_parameters(MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), 1.0));
+      .set_parameters(MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
 }
 
 void SourceClient::Preprocess(ProcessingContext &context) {
@@ -134,11 +134,14 @@ void SourceClient::Process(ProcessingContext &context) {
     // Measurement phase
     sockaddr_in src{};
     socklen_t srclen = sizeof(src);
-    int first_sample = true;
+    int packet_count = 0;
     clock::time_point first_timestamp;
     clock::time_point timestamp;
 
     while (!context.terminated()){
+        if (n_messages_() != -1 && packet_count >= n_messages_()) {
+            break;
+        }
 
         ssize_t received = recvfrom(sock, buffer, sizeof(buffer), 0,
                                     (struct sockaddr*)&src, &srclen);
@@ -155,64 +158,72 @@ void SourceClient::Process(ProcessingContext &context) {
 
             perror("recvfrom");
             break;
-    }
-    
-    timestamp = clock::now();
-
-    Packet pkt{};
-    if (!parse_packet(buffer, received, pkt)) {
-        std::cerr << "Invalid packet size: " << received << std::endl;
-        continue;
-    }
-
-    // std::cout << "Sample: " << pkt.sample_counter
-    //           << " | EEG[0]: " << pkt.eeg[0]
-    //           << std::endl;
-
-    if (first_sample == true) {
-        first_sample_counter = pkt.sample_counter;
-        sample_counter = pkt.sample_counter;
-        first_timestamp = timestamp;
-        first_sample = false;
-    }
-    else {
-        if ((pkt.sample_counter > sample_counter+1) || (sample_counter == std::numeric_limits<uint32_t>::max() && pkt.sample_counter != 0)) {
-            printf("\n Warning: Missed packet(s). Last sample counter: %d, current: %d", sample_counter, pkt.sample_counter);
-            perror("\n Error: Missed packet(s)");
-            return;
         }
-        else{
+    
+        timestamp = clock::now();
+
+        Packet pkt{};
+        if (!parse_packet(buffer, received, pkt)) {
+            std::cerr << "Invalid packet size: " << received << std::endl;
+            continue;
+        }
+
+        // std::cout << "Sample: " << pkt.sample_counter
+        //           << " | EEG[0]: " << pkt.eeg[0]
+        //           << std::endl;
+
+        if (packet_count == 0) {
+            first_sample_counter = pkt.sample_counter;
             sample_counter = pkt.sample_counter;
+            first_timestamp = timestamp;
+            printf("\n First packet received. Sample counter: %u", sample_counter);
         }
+        else {
+            if ((pkt.sample_counter > sample_counter+1) || (sample_counter == std::numeric_limits<uint32_t>::max() && pkt.sample_counter != 0)) {
+                printf("\n Warning: Missed packet(s). Last sample counter: %d, current: %d", sample_counter, pkt.sample_counter);
+                perror("\n Error: Missed packet(s)");
+                return;
+            }
+            else{
+                sample_counter = pkt.sample_counter;
+            }
+            
+        }
+
+        // Claim output buffer
+        data_out = data_out_port_->slot(0)->ClaimData(false);
+
+        // Send whole eeg array (all channels)
+        // data_out->set_data_sample(0, pkt.eeg);
+
+        // Send only as many channels as defined
+        for (int i=0;i<nchannels_();i++) {
+        float sample = pkt.eeg[i];
+        data_out->set_data_sample(0, i, sample);
+        }
+        
+        const auto source_timestamp_us = std::chrono::time_point_cast<std::chrono::microseconds>(timestamp);
+        data_out->set_source_timestamp(source_timestamp_us);  // Set source timestamp with microsecond precision
+
+        // Calculate hardware timestamp based on sample counter and fs
+        std::chrono::time_point hardware_timestamp = first_timestamp + std::chrono::duration<double>((sample_counter - first_sample_counter)/fs_());
+        const uint64_t hw_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(hardware_timestamp.time_since_epoch()).count());
+
+        if (packet_count % 100 == 0) {
+            printf("\n %s. Received packet %u with sample %.2f with sample counter %u (hardware timestamp: %lu)", name().c_str(), packet_count + 1, pkt.eeg[0], pkt.sample_counter, hw_us);
+        }
+
+        data_out->set_hardware_timestamp(hw_us);
+
+        // printf("%s. Sent message %u with sample %f.\n", name().c_str(), i + 1, sample);
+
+        // Publish data
+        data_out_port_->slot(0)->PublishData();
+
+        send_times.push_back(source_timestamp_us);
+
+        packet_count++;
     }
-
-    // printf("Sample counter: %d\n", sample_counter);
-
-    // Claim output buffer
-    data_out = data_out_port_->slot(0)->ClaimData(false);
-
-    // Send whole eeg array (all channels)
-    // data_out->set_data_sample(0, pkt.eeg);
-
-    // Send only as many channels as defined
-    for (int i=0;i<nchannels_();i++) {
-      auto sample = pkt.eeg[i];
-      data_out->set_data_sample(0, i, sample);
-    }
-    
-    data_out->set_source_timestamp(timestamp);  // Set source timestamp to now
-    std::chrono::time_point hardware_timestamp = first_timestamp + std::chrono::seconds((sample_counter - first_sample_counter)/fs_());
-
-    data_out->set_hardware_timestamp(std::chrono::duration_cast<std::chrono::milliseconds>(hardware_timestamp.time_since_epoch()).count());
-
-    // printf("%s. Sent message %u with sample %f.\n", name().c_str(), i + 1, sample);
-
-    // Publish data
-    data_out_port_->slot(0)->PublishData();
-
-    send_times.push_back(data_out->source_timestamp());
-
-  }
 
 }
 

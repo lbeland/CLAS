@@ -25,6 +25,7 @@
 #include <numeric>
 #include <limits>
 
+
 PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH) {
   add_option("n_messages", n_messages_, "Number of packets to receive");
 }
@@ -55,7 +56,10 @@ void PhaseEstimator::Preprocess(ProcessingContext &context) {
   printf("\n");
   const auto& info = data_in_port_->streaminfo(0);
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
-  printf("Stream parameters - nchannels: %u, nsamples: %u, sample_rate: %f\n", p.nchannels, p.nsamples, p.sample_rate);
+  printf("Stream parameters - nchannels: %lu, nsamples: %lu, sample_rate: %f\n", p.nchannels, p.nsamples, p.sample_rate);
+  fs_ = p.sample_rate;
+  sample_window.set_capacity(fs_ * (1.0/10.0)*2.0);  // 2 cycles of a 10 Hz sine wave
+  printf("Sample window size set to %lu\n", sample_window.capacity());
 }
 
 void PhaseEstimator::Process(ProcessingContext &context) {
@@ -64,31 +68,35 @@ void PhaseEstimator::Process(ProcessingContext &context) {
 
   // Measurement phase
   while (!context.terminated()) {
-    
+    if (n_messages_() != -1 && packet_count_ >= n_messages_()) {
+      break;
+    }
+
+    if (!data_in_port_->slot(0)->connected()) {
+    // No upstream connected, wait for a short time before checking again
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    continue;
+    }
+  
     // Try to retrieve data
     if (!data_in_port_->slot(0)->RetrieveData(data_in)) {
       break;
     }
 
-    // double timestamp = data_in->source_timestamp().time_since_epoch().count();
-    
-    packet_count_++;
-    auto sample = data_in->data(); 
-    auto timestamp = data_in->source_timestamp();
-
-    data_in_port_->slot(0)->ReleaseData();
-
     data_out = data_out_port_->slot(0)->ClaimData(false);
 
-    // data_out->data()[0] = data_in->data()[0];  // Echo the input data to output
-    // std::fill(data_out->data().begin(), data_out->data().end(), data_in->data()[0]);
-    data_out->data() = sample;  // Echo the input data to output
-    data_out->set_source_timestamp(timestamp);
-    // printf("%s. Received and sent packet %u with sample %f\n", name().c_str(), packet_count_, sample);
+    float sample = data_in->data_sample(0,0);  // Get the first sample of the first channel
+    sample_window.push_back(sample);
 
+    data_out = data_in;   // Echo the input data to output
+    // data_out->data() = data_in->data();   
+    // data_out->set_source_timestamp(data_in->source_timestamp());
+
+    data_in_port_->slot(0)->ReleaseData();
     data_out_port_->slot(0)->PublishData();  
 
-    // custom_sleep_for(500000);
+    packet_count_++;
+
   }
 
 

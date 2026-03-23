@@ -9,11 +9,11 @@ fig, ax = plt.subplots(figsize=(15, 8))
 divider = make_axes_locatable(ax)
 ax_hist = divider.append_axes("right", size="20%", pad=0.1)
 
-for freq in ["500Hz", "1kHz", "5kHz", "10kHz",""]:
+for freq in ["0.5kHz", "1kHz", "5kHz", "10kHz"]:
     recv_times = pd.read_csv(f"receive_times_{freq}.csv", header=None).values.flatten() * 1e-6
-    freq_value = len(recv_times)/20
+    freq_value = len(recv_times)/5
     
-    x = np.linspace(0, 20000, len(recv_times))
+    x = np.linspace(0, 5000, len(recv_times))
 
     ax_hist.hist(recv_times, bins=25, histtype='step', orientation='horizontal', label=freq)
     ax.plot(x, recv_times, label=freq)

@@ -77,13 +77,13 @@ int main() {
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(25000);
-    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    int busy_poll_us = 10;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_BUSY_POLL,
-                &busy_poll_us, sizeof(busy_poll_us)) < 0) {
-        perror("setsockopt(SO_BUSY_POLL)");
-    }
+    // int busy_poll_us = 10;
+    // if (setsockopt(sockfd, SOL_SOCKET, SO_BUSY_POLL,
+    //             &busy_poll_us, sizeof(busy_poll_us)) < 0) {
+    //     perror("setsockopt(SO_BUSY_POLL)");
+    // }
 
     if (bind(sockfd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
         perror("bind");
@@ -91,13 +91,15 @@ int main() {
         return 1;
     }
 
-    std::cout << "Listening on UDP port 25000...\n";
+    // No connect to specific sender because IP is broadcast 
+
+    std::cout << "Listening on UDP port 25000 \n";
 
     std::array<std::uint8_t, 2048> buffer{};
 
-    const int freq = 10000; // Hz, has to be adapted to the actual frequency of the incoming packets
+    const int freq = 1000; // Hz, has to be adapted to the actual frequency of the incoming packets
 
-    static const int n_packets = 1 * freq; // 20 seconds worth of packets 
+    static const int n_packets = 5 * freq; // 20 seconds worth of packets 
     std::array<std::chrono::_V2::steady_clock::time_point, n_packets> receive_times;
     int count = 0;
     std::chrono::_V2::steady_clock::time_point timestamp;
@@ -138,12 +140,12 @@ int main() {
     // Calculate statistics
     double sum_diff = 0.0;
     double max_diff = 0.0;
-    int max_idx = 0;
+    std::size_t max_idx = 0;
     double sum_sq_diff = 0.0;
     std::vector<double> receive_times_diff;
     receive_times_diff.resize(receive_times.size() - 1);
 
-    for (int i = 0; i < receive_times.size()-1; i++) {
+    for (std::size_t i = 0; i < receive_times.size()-1; i++) {
         double diff = std::chrono::duration_cast<std::chrono::nanoseconds>(receive_times[i+1] - receive_times[i]).count();
         receive_times_diff[i] = diff;
         sum_diff += diff;
@@ -160,7 +162,7 @@ int main() {
     double std_period = sqrt(fmax(0.0, variance)) * 1e-3;  // us
 
     printf("\n Average receive period (us): %.6f", avg_period);
-    printf("\n Max receive period (us): %.6f, idx: %d", max_diff * 1e-3, max_idx);
+    printf("\n Max receive period (us): %.6f, idx: %zu", max_diff * 1e-3, max_idx);
     printf("\n Std receive period (us): %.6f\n", std_period);
 
     std::ofstream receive_times_output;

@@ -21,16 +21,19 @@
 #include "iprocessor.hpp"
 #include "multichanneldata/multichanneldata.hpp"
 #include <boost/circular_buffer.hpp>
+#include <fftw3.h>
 
 class PhaseEstimator : public IProcessor {
  public:
     PhaseEstimator();
+    int get_max_bin(fftw_complex* out, size_t out_size);
 
   void CreatePorts() override;
   void CompleteStreamInfo() override;
   void Preprocess(ProcessingContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
+
 
  protected:
   PortIn<MultiChannelType<float>> *data_in_port_;

@@ -31,6 +31,7 @@
 
 PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH) {
   add_option("n_messages", n_messages_, "Number of packets to receive");
+  add_option("n_fft", n_fft_, "FFT size");
 }
 
 void PhaseEstimator::CreatePorts() {
@@ -65,11 +66,18 @@ void PhaseEstimator::Preprocess(ProcessingContext &context) {
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
   printf("Stream parameters - nchannels: %lu, nsamples: %lu, sample_rate: %f\n", p.nchannels, p.nsamples, p.sample_rate);
   fs_ = p.sample_rate;
-  sample_window.set_capacity(fs_ * (1.0/10.0)*2.0);  // 2 cycles of a 10 Hz sine wave
+  f0_ = 10.0;
+  int N = static_cast<int>(fs_ * (1.0/f0_)*2.0);  // 2 cycles of a 10 Hz sine wave
+  sample_window.set_capacity(N);
   printf("Sample window size set to %lu\n", sample_window.capacity());
+
+  const int n_fft = static_cast<int>(n_fft_());
+  if (n_fft < N) {
+    throw std::runtime_error("PhaseEstimator: n_fft must be >= window length");
+  }
 }
 
-int PhaseEstimator::get_max_bin(fftw_complex* out, size_t out_size) {
+int PhaseEstimator::get_max_bin(fftwf_complex* out, size_t out_size) {
   int max_bin = -1;
   double max_mag2 = -1.0;
 
@@ -86,7 +94,33 @@ int PhaseEstimator::get_max_bin(fftw_complex* out, size_t out_size) {
   return max_bin;
 }
 
-void PhaseEstimator::fftshift(const fftw_complex* in, fftw_complex* out, int L) {
+
+void PhaseEstimator::construct_analytic_spectrum(int n_fft, const fftwf_complex* half, fftwf_complex* full){
+  for (int k = 0; k < n_fft; ++k) {
+      full[k][0] = 0.0;
+      full[k][1] = 0.0;
+  }
+
+  full[0][0] = half[0][0];
+  full[0][1] = half[0][1];
+
+  if (n_fft % 2 == 0) {
+      for (int k = 1; k < n_fft / 2; ++k) {
+          full[k][0] = 2.0 * half[k][0];
+          full[k][1] = 2.0 * half[k][1];
+      }
+
+      full[n_fft / 2][0] = half[n_fft / 2][0];
+      full[n_fft / 2][1] = half[n_fft / 2][1];
+  } else {
+      for (int k = 1; k <= (n_fft - 1) / 2; ++k) {
+          full[k][0] = 2.0 * half[k][0];
+          full[k][1] = 2.0 * half[k][1];
+      }
+  }
+}
+
+void PhaseEstimator::fftshift(const fftwf_complex* in, fftwf_complex* out, int L) {
     int s = L / 2;  // floor(L/2)
     for (int k = 0; k < L; ++k) {
         int src = (k + s) % L;
@@ -94,7 +128,7 @@ void PhaseEstimator::fftshift(const fftw_complex* in, fftw_complex* out, int L) 
         out[k][1] = in[src][1];
     }
 }
-void PhaseEstimator::ifftshift(const fftw_complex* in, fftw_complex* out, int L) {
+void PhaseEstimator::ifftshift(const fftwf_complex* in, fftwf_complex* out, int L) {
     int s = (L + 1) / 2;  // ceil(L/2)
     for (int k = 0; k < L; ++k) {
         int src = (k + s) % L;
@@ -108,24 +142,19 @@ void PhaseEstimator::Process(ProcessingContext &context) {
   MultiChannelType<float>::Data *data_real_out = nullptr;
   MultiChannelType<float>::Data *data_phase_out = nullptr;
 
-  int f0_ = 10;
-
   // FFTW output spectrum
   float sample;
   float phase;
   float real_part;
   const int N = static_cast<int>(sample_window.capacity());
-  fftw_complex* complex_in = fftw_alloc_complex(N);
-  fftw_complex* freq = fftw_alloc_complex(N);
-  fftw_complex* out = fftw_alloc_complex(N);
+  const int n_fft = n_fft_();  // FFT size
+  float* signal_in = fftwf_alloc_real(n_fft);
+  fftwf_complex* freq_half = fftwf_alloc_complex(n_fft/2 + 1);
+  fftwf_complex* freq = fftwf_alloc_complex(n_fft);
+  fftwf_complex* out = fftwf_alloc_complex(n_fft);
 
-  fftw_plan p_inv = fftw_plan_dft_1d(N, freq, out, FFTW_BACKWARD, FFTW_ESTIMATE);
-  fftw_plan p = fftw_plan_dft_1d(N, complex_in, freq, FFTW_FORWARD, FFTW_ESTIMATE);
-
-  // Set imaginary part of input to zero
-  for (int i = 0; i < N; i++) {
-    complex_in[i][1] = 0.0;
-  }
+  fftwf_plan p = fftwf_plan_dft_r2c_1d(n_fft, signal_in, freq_half, FFTW_ESTIMATE);
+  fftwf_plan p_inv = fftwf_plan_dft_1d(n_fft, freq, out, FFTW_BACKWARD, FFTW_ESTIMATE);
 
   // Measurement phase
   while (!context.terminated()) {
@@ -139,8 +168,8 @@ void PhaseEstimator::Process(ProcessingContext &context) {
     }
 
     sample = data_in->data_sample(0,0);  // Get the first sample of the first channel
-
     
+    // Copy timestamps to both output slots
     data_phase_out = data_out_port_->slot(0)->ClaimData(false);
     data_phase_out->CloneTimestamps(*data_in);
     data_real_out = data_out_port_->slot(1)->ClaimData(false);
@@ -152,61 +181,31 @@ void PhaseEstimator::Process(ProcessingContext &context) {
 
     if ((sample_window.size() == sample_window.capacity())) { //} && (packet_count_ % (sample_window.capacity()/2) == 0)) {
 
-      // Convert circular buffer<float> to contiguous std::vector<double>
-      // std::vector<double> in(sample_window.begin(), sample_window.end());
-
-      for (int n = 0; n < N; ++n) {
-        complex_in[n][0] = static_cast<double>(sample_window[n]);
+      // Convert circular buffer<float> to continuous array for FFTW input and zero-pad to n_fft
+      // signal_in = sample_window.linearize();
+      for (int i = 0; i < N; ++i) {
+          signal_in[i] = sample_window[i];
+      }
+      for (int i = N; i < n_fft; ++i) {
+          signal_in[i] = 0.0f;
       }
 
-      fftw_execute(p);
+      // FFT
+      fftwf_execute(p);
 
-      int target_bin = static_cast<int>(std::round(f0_ * N / fs_));
-      int max_bin = get_max_bin(freq, N);
-      // if (max_bin != target_bin) {
-      //   std::cout << "\nPacket_count: " << packet_count_ << ", Expected 10 Hz bin: " << target_bin << '\n';
-      //   std::cout << "Maximum magnitude bin: " << max_bin
-      //             << " (" << max_bin * fs_ / N << " Hz)\n";
+      // Construct analytic signal spectrum
+      construct_analytic_spectrum(n_fft, freq_half, freq);
 
-      // Create analytic signal
-      // Build analytic signal spectrum
-      // DC - do nothing
-      // freq[0][0] *= 1.0;
-      // freq[0][1] *= 1.0;
-
-      int pos_end;   // last positive-frequency bin to double
-      int neg_start; // first negative-frequency bin to zero
-
-      if (N % 2 == 0) {
-          // even N
-          freq[N/2][0] = static_cast<double>(sample_window[N/2]); // Nyquist - do nothing
-          freq[N/2][1] = 1.0;
-          pos_end = N/2 - 1;
-          neg_start = N/2 + 1;
-      } else {
-          // odd N
-          pos_end = (N - 1)/2;
-          neg_start = (N + 1)/2;
-      }
-
-      for (int k = 1; k <= pos_end; ++k) {
-          freq[k][0] = 2.0 * static_cast<double>(sample_window[k]);
-          freq[k][1] = 2.0 * static_cast<double>(sample_window[k]);
-      }
-
-      for (int k = neg_start; k < N; ++k) {
-          freq[k][0] = 0.0;
-          freq[k][1] = 0.0;
-      }
-
-      fftw_execute(p_inv);
+      // IFFT
+      fftwf_execute(p_inv);
 
       // Normalize the output of the inverse FFT
-      for (int i = 0; i < N; i++) {
-        out[i][0] /= N;
-        out[i][1] /= N;
+      for (int i = 0; i < n_fft; i++) {
+        out[i][0] /= n_fft;
+        out[i][1] /= n_fft;
       }
 
+      // Get phase and real part of the last sample (N-1) of the original signal
       phase = std::atan2(out[N-1][1], out[N-1][0]);
       real_part = out[N-1][0];
 
@@ -221,11 +220,12 @@ void PhaseEstimator::Process(ProcessingContext &context) {
 
   }
 
-  fftw_free(complex_in);
-  fftw_free(freq);
-  fftw_free(out);
-  fftw_destroy_plan(p);
-  fftw_destroy_plan(p_inv);
+  fftwf_destroy_plan(p);
+  fftwf_destroy_plan(p_inv);
+  fftwf_free(signal_in);
+  fftwf_free(freq_half);
+  fftwf_free(freq);
+  fftwf_free(out);
 }
 
 void PhaseEstimator::Postprocess(ProcessingContext &context) {

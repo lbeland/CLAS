@@ -26,9 +26,10 @@
 class PhaseEstimator : public IProcessor {
  public:
     PhaseEstimator();
-    int get_max_bin(fftw_complex* out, size_t out_size);
-    void fftshift(const fftw_complex* in, fftw_complex* out, int L);
-    void ifftshift(const fftw_complex* in, fftw_complex* out, int L);
+    int get_max_bin(fftwf_complex* out, size_t out_size);
+    void construct_analytic_spectrum(int M, const fftwf_complex* half, fftwf_complex* full);
+    void fftshift(const fftwf_complex* in, fftwf_complex* out, int L);
+    void ifftshift(const fftwf_complex* in, fftwf_complex* out, int L);
 
   void CreatePorts() override;
   void CompleteStreamInfo() override;
@@ -42,9 +43,11 @@ class PhaseEstimator : public IProcessor {
   PortOut<MultiChannelType<float>> *data_out_port_;
 
   options::Value<unsigned int, false> n_messages_{0};
+  options::Value<unsigned int, false> n_fft_{4096};
   
   unsigned int packet_count_ = 0;
   double first_timestamp_ = 0.0;
   float fs_ = 0.0;
+  float f0_ = 0.0;
   inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Preprocess
 };

@@ -19,6 +19,7 @@ graph:
       class: PhaseEstimator
       options:
         n_messages: *n_messages
+        n_fft: 2048
       advanced:
         buffer_sizes:
           out: 16

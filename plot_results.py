@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 # Load data
-samples = pd.read_csv('rt_c_results/10_1_samples_orig.csv', header=0)
+samples = pd.read_csv('rt_c_results/10_1_samples.csv', header=0)
 
 # Plot samples
 plt.figure(figsize=(10, 5))

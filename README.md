@@ -20,6 +20,19 @@ sudo setcap 'cap_sys_nice=pe' ./build/falcon/falcon
 # Check if installation worked
 falcon --help
 ```
+
+## FFTW Installation
+- fftw-3.3.10 folder holds the library
+- has to be compiled with 
+```bash
+./configure
+make
+make install
+```
+- there exist several compile flags for specializations (float or double precision, threads enabled etc. https://www.fftw.org/fftw2_doc/fftw_6.html )
+- check later if some of these could lead to faster execution
+
+
 ## Start Benchmark
 ```bash
 python3 c_benchmark.py --overwrite

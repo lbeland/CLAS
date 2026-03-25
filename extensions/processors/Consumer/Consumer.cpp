@@ -35,22 +35,19 @@ void Consumer::CreatePorts() {
   data_in_port_ = create_input_port<MultiChannelType<float>>(
       "in", 
       MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
-      PortInPolicy(SlotRange(2)));
+      PortInPolicy(SlotRange(3)));
 }
 
 void Consumer::Preprocess(ProcessingContext &context){
   printf("\n");
   const auto& info = data_in_port_->streaminfo(0);
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
-  printf("Stream parameters - nchannels: %u, nsamples: %u, sample_rate: %f\n", p.nchannels, p.nsamples, p.sample_rate);
+  printf("Stream parameters - nchannels: %u, nsamples_orig: %u, sample_rate: %f\n", p.nchannels, p.nsamples, p.sample_rate);
   packet_count_ = 0;
-  samples.clear();
-  recv_times.clear();
-  source_times.clear();
 }
 
 void Consumer::Process(ProcessingContext &context) {
-  MultiChannelType<float>::Data *data_in_phase = nullptr;
+  // MultiChannelType<float>::Data *data_in_phase = nullptr;
   MultiChannelType<float>::Data *data_in_sample = nullptr;
 
   using clock = std::chrono::steady_clock;
@@ -60,6 +57,8 @@ void Consumer::Process(ProcessingContext &context) {
   clock::time_point source_timestamp;
   uint64_t hardware_timestamp;
 
+  std::array<float, 3> sample_entry;
+
 
   // Measurement phase
   while (!context.terminated()) {
@@ -68,25 +67,30 @@ void Consumer::Process(ProcessingContext &context) {
     }
     
     // Try to retrieve data
-    for (int slot_idx = 0; slot_idx < 2; slot_idx++) {
+    for (int slot_idx = 0; slot_idx < data_in_port_->number_of_slots(); slot_idx++) {
       if (!data_in_port_->slot(slot_idx)->RetrieveData(data_in_sample)) {
-        perror(std::format("Failed to retrieve data from input slot %d", slot_idx).c_str());
+        printf("\n %s. Failed to retrieve data from input slot %d, terminating processing loop.\n", name().c_str(), slot_idx);
+        perror("Failed");
+        return;
       }
       receive_timestamp = clock::now();
       sample = data_in_sample->data_sample(0,0);  // Get the first sample of the first channel
       source_timestamp = data_in_sample->source_timestamp();
       hardware_timestamp = data_in_sample->hardware_timestamp();
- 
+
       // Release data
       data_in_port_->slot(slot_idx)->ReleaseData();
+
+      sample_entry[slot_idx] = sample;
     }
 
-    if (packet_count_ % 100 == 0) {
-      printf("\n %s. Received packet %u with sample %.2f at %.3f us (source timestamp: %.3f us, hardware timestamp: %lu us)", name().c_str(), packet_count_ + 1, sample, std::chrono::duration<double, std::micro>(receive_timestamp.time_since_epoch()).count(), std::chrono::duration<double, std::micro>(source_timestamp.time_since_epoch()).count(), hardware_timestamp);
-    }
+    samples.push_back(sample_entry);
+
+    // if (packet_count_ % 100 == 0) {
+    //   printf("\n %s. Received packet %u with sample %.2f at %.3f us (source timestamp: %.3f us, hardware timestamp: %lu us)", name().c_str(), packet_count_ + 1, sample, std::chrono::duration<double, std::micro>(receive_timestamp.time_since_epoch()).count(), std::chrono::duration<double, std::micro>(source_timestamp.time_since_epoch()).count(), hardware_timestamp);
+    // }
 
     
-    samples.push_back(sample);
     recv_times.push_back(receive_timestamp);
     source_times.push_back(source_timestamp);
 
@@ -210,10 +214,12 @@ void Consumer::Postprocess(ProcessingContext &context) {
   std::ofstream samples_output;
   samples_output << std::fixed << std::setprecision(17);
   samples_output.open(output_file_().c_str() + append);
-  for (double s : samples) {
-      samples_output << s << "\n";
+  samples_output << "Orig,Phase,Real\n";
+  for (const std::array<float, 3>& s : samples) {
+      samples_output << s[0] << "," << s[1] << "," << s[2] << "\n";
   }
   samples_output.close();
+
 }
 
 REGISTERPROCESSOR(Consumer);

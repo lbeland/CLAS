@@ -70,7 +70,7 @@ void Producer::Process(ProcessingContext &context) {
 
     // Set timestamp as value
     t = packet_count * (1.0 / fs_());  // Simulate a sample timestamp (e.g., 10 kHz sample rate)
-    sample = 5*sin(2 * PI * t * 10);  // Generate a sine wave with frequency of 10 Hz
+    sample = 1*sin(2 * PI * t * 10);  // Generate a sine wave with frequency of 10 Hz
     // int sample = i;
     for (int i=0;i<nchannels_();i++) {
       data_out->set_data_sample(0, i, sample);
@@ -92,7 +92,6 @@ void Producer::Process(ProcessingContext &context) {
     packet_count++;
 
   }
-
 }
 
 void Producer::Postprocess(ProcessingContext &context) {

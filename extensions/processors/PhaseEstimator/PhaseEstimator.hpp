@@ -27,6 +27,8 @@ class PhaseEstimator : public IProcessor {
  public:
     PhaseEstimator();
     int get_max_bin(fftw_complex* out, size_t out_size);
+    void fftshift(const fftw_complex* in, fftw_complex* out, int L);
+    void ifftshift(const fftw_complex* in, fftw_complex* out, int L);
 
   void CreatePorts() override;
   void CompleteStreamInfo() override;

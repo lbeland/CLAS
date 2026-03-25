@@ -1,19 +1,19 @@
 graph:
   name: CLAS
   defaults:
-    n_messages: &n_messages 750
+    n_messages: &n_messages 10000
   processors:
     Producer:
       class: Producer
       options:
-        fs: 1000
+        fs: 10000
         nchannels: 10
         nsamples: 1
         n_messages: *n_messages
         output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
       advanced:
         buffer_sizes:
-          out: 512
+          out: 16
         thread_core: 7
     PhaseEstimator:
       class: PhaseEstimator
@@ -21,7 +21,7 @@ graph:
         n_messages: *n_messages
       advanced:
         buffer_sizes:
-          out: 512
+          out: 16
         thread_core: 8
     Consumer:
       class: Consumer

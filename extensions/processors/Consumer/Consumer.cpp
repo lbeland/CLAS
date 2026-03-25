@@ -50,11 +50,10 @@ void Consumer::Process(ProcessingContext &context) {
   // MultiChannelType<float>::Data *data_in_phase = nullptr;
   MultiChannelType<float>::Data *data_in_sample = nullptr;
 
-  using clock = std::chrono::steady_clock;
-  clock::time_point receive_timestamp;
+  TimePoint receive_timestamp;
 
   float sample;
-  clock::time_point source_timestamp;
+  TimePoint source_timestamp;
   uint64_t hardware_timestamp;
 
   std::array<float, 3> sample_entry;
@@ -73,7 +72,7 @@ void Consumer::Process(ProcessingContext &context) {
         perror("Failed");
         return;
       }
-      receive_timestamp = clock::now();
+      receive_timestamp = Clock::now();
       sample = data_in_sample->data_sample(0,0);  // Get the first sample of the first channel
       source_timestamp = data_in_sample->source_timestamp();
       hardware_timestamp = data_in_sample->hardware_timestamp();
@@ -98,7 +97,7 @@ void Consumer::Process(ProcessingContext &context) {
 
     packet_count_++;
 
-    custom_sleep_for(100);
+    // custom_sleep_for(100);
   }
 
 }

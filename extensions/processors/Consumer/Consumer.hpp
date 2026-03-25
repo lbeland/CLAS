@@ -21,6 +21,7 @@
 #include "iprocessor.hpp"
 #include "multichanneldata/multichanneldata.hpp"
 #include <chrono>
+#include "utilities/time.hpp"
 
 class Consumer : public IProcessor {
  public:
@@ -39,6 +40,6 @@ class Consumer : public IProcessor {
   
   unsigned int packet_count_ = 0;
   inline static std::vector<std::array<float, 3>> samples;
-  inline static std::vector<std::chrono::steady_clock::time_point> recv_times;
-  inline static std::vector<std::chrono::steady_clock::time_point> source_times;
+  inline static std::vector<TimePoint> recv_times;
+  inline static std::vector<TimePoint> source_times;
 };

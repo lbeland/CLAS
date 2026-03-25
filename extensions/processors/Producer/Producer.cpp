@@ -51,7 +51,6 @@ void Producer::CompleteStreamInfo() {
 }
 
 void Producer::Process(ProcessingContext &context) {
-  using clock = std::chrono::steady_clock;
   MultiChannelType<float>::Data *data_out = nullptr;
 
   send_times.clear();
@@ -70,13 +69,13 @@ void Producer::Process(ProcessingContext &context) {
 
     // Set timestamp as value
     t = packet_count * (1.0 / fs_());  // Simulate a sample timestamp (e.g., 10 kHz sample rate)
-    sample = 1*sin(2 * PI * t * 10);  // Generate a sine wave with frequency of 10 Hz
+    sample = 1*sin(2 * PI * t * 10);  // + 0.2*sin(2 * PI * t * 40) + 0.2*sin(2 * PI * t * 100);  // Generate a sine wave with frequency of 10 Hz
     // int sample = i;
     for (int i=0;i<nchannels_();i++) {
       data_out->set_data_sample(0, i, sample);
     }
     
-    const auto source_timestamp_us = std::chrono::time_point_cast<std::chrono::microseconds>(clock::now());
+    const auto source_timestamp_us = std::chrono::time_point_cast<std::chrono::microseconds>(Clock::now());
         
     data_out->set_source_timestamp(source_timestamp_us);  // Set source timestamp to now
     const uint64_t hw_us = static_cast<uint64_t>(t*1e6);;

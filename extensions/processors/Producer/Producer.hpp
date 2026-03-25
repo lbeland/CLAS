@@ -21,6 +21,7 @@
 #include "iprocessor.hpp"
 #include "multichanneldata/multichanneldata.hpp"
 #include "options/options.hpp"
+#include "utilities/time.hpp"
 
 class Producer : public IProcessor {
  public:
@@ -40,5 +41,5 @@ class Producer : public IProcessor {
   options::Value<int, false> n_messages_{-1};
   options::Value<std::string, false> output_file_{"Producer.csv"};
   
-  inline static std::vector<std::chrono::steady_clock::time_point> send_times;
+  inline static std::vector<TimePoint> send_times;
 };

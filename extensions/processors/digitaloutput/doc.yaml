@@ -1,0 +1,44 @@
+Description: Take an EventData stream and sets digital outputs according to an event-specific.
+
+Long description: The protocols option specifies a map with  for each target event a map of actions for selected
+  digital output channels. Note that each channel can only be associated with a single action (even if it is listed more than once).
+  There are 4 possible actions (high, low, toggle and pulse). Events that are not in the protocols map are ignored.
+
+Example:
+  - protocols:
+      event_a:
+        high: [0,1]
+      event_b:
+        low: [0]
+        toggle: [1]
+      event_c:
+        pulse: [2]
+
+Input ports :
+  - name: events
+    type: EventData
+    slots: 1
+    description:
+
+
+Options:
+  - name: pulse width
+    type: unsigned int
+    default: 300 ms
+    description: duration of digital output pulse in microseconds
+  - name: device/type
+    type: string
+    default: "dummy"
+    description: dummy is the only type implemented yet.
+  - name: device/nchannels
+    type: unsigned int
+    default: 16
+    description: Number of digital channel on the device.
+  - name: protocols
+    type: yaml node
+    default: no default type value - Always specify in the graph config file.
+    description: protocols map (see example in the long description)
+  - name: event logging
+    type: bool
+    default: true
+    description:

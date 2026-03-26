@@ -8,3 +8,6 @@ fftw-3.3.10
 *.png
 _last_run
 _last_run_group
+
+*.filter
+*.svg

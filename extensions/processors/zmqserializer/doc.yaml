@@ -1,0 +1,26 @@
+Description: Serialize data streams to be send through the zmq network
+
+Input port:
+  - name: data
+    type: IData
+    slots: 1-256
+    description:
+
+Options:
+  - name: port
+    type: unsigned int
+    default: 7777
+    description: Local network port for data streaming. If interleave is false, then this is the first port in a sequence of ports used for streaming.
+  - name: encoding
+    type: string
+    default: "binary"
+    description: Only two acceptable keyword ('binary' or 'yaml')
+  - name: format
+    type: string
+    default: "full"
+    description: Only tree acceptable keyword ('full', 'nodata', 'compact')
+      See serializer.hpp for more informations on this mode
+  - name: interleave
+    type: bool
+    default: false
+    description: Interleave data streams from all input slots and stream to single network port.

@@ -1,0 +1,37 @@
+Description: Filter each channels from a multichannel datastream
+
+Input port:
+  - name: data
+    type: MultiChannelData <double>
+    slots: 1-256
+    description:
+
+Output port:
+  - name: data
+    type: MultiChannelData <double>
+    slots: 1-256
+    description:
+
+Options:
+  - name: filter
+    type: string OR definition structure
+    default: No default value - the definition of this parameter in the graph file is mandatory.
+    description: YAML filter definition or name of file that contains the filter description
+
+Example:
+  - filter:
+      file: filters://butter_lpf_0.1fs.filter
+
+  - filter:
+      type: biquad
+      gain: 3.405376527201278e-04
+      coefficients:
+        - "[1.0, 2.0, 1.0, 1.0, -1.032069405319709, 0.275707942472944]"
+        - "[1.0, 2.0, 1.0, 1.0, -1.142980502539903, 0.412801598096190]"
+        - "[1.0, 2.0, 1.0, 1.0, -1.404384890471583, 0.735915191196473]"
+      description: 6th order butterworth low pass filter with cutoff at 0.1 times the sampling frequency
+
+  - filter:
+      type: fir
+      description: 101 taps low pass filter with cutoff at 0.1 times the sampling frequency
+      coefficients: "[-6.24626469088e-19, -0.000309386982441, -0.000528204854007, ...]"

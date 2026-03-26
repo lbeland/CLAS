@@ -34,6 +34,8 @@
 PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH) {
   add_option("n_messages", n_messages_, "Number of packets to receive");
   add_option("n_fft", n_fft_, "FFT size");
+  add_option("calibrate", calibrate_, "Whether to apply calibration gain");
+  add_option("coeff_file", coeff_file_, "Path to bandpass filter coefficients file");
 }
 
 void PhaseEstimator::CreatePorts() {
@@ -63,15 +65,14 @@ void PhaseEstimator::CompleteStreamInfo() {
 }
 
 void PhaseEstimator::Preprocess(ProcessingContext &context) {
-  printf("\n");
   const auto& info = data_in_port_->streaminfo(0);
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
-  printf("Stream parameters - nchannels: %lu, nsamples: %lu, sample_rate: %f\n", p.nchannels, p.nsamples, p.sample_rate);
+  LOG(INFO) << "Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
   fs_ = p.sample_rate;
   f0_ = 10.0;
   int N = static_cast<int>(fs_ * (1.0/f0_)*2.0);  // 2 cycles of a 10 Hz sine wave
   sample_window.set_capacity(N);
-  printf("Sample window size set to %lu\n", sample_window.capacity());
+  LOG(INFO) << "Sample window size set to " << sample_window.capacity() << "\n";
 
   const int n_fft = static_cast<int>(n_fft_());
   if (n_fft < N) {
@@ -80,9 +81,8 @@ void PhaseEstimator::Preprocess(ProcessingContext &context) {
 
   coeffs_.reserve(static_cast<size_t>(n_fft));
 
-  std::string coeff_file =context.resolve_path("filters://echt_coefficients.txt");
-
-  // std::ifstream coeff_file("extensions/processors/PhaseEstimator/echt_coefficients.txt");
+  // Load bandpass filter coefficients for cecHT from file
+  std::string coeff_file = context.resolve_path(coeff_file_());
   std::ifstream coeffs;
   if (!coeffs.is_open()) {
     coeffs.open(coeff_file);
@@ -111,6 +111,95 @@ void PhaseEstimator::Preprocess(ProcessingContext &context) {
 
     coeffs_.emplace_back(real, imag);
   }
+
+  if (calibrate_()) {
+    LOG(INFO) << "Calculating calibration gain...";
+
+    // Calculate calibration gain
+    const int L = n_fft;
+    const int n = N - 1;
+    const double PI = std::acos(-1.0);
+    const double omega0 = 2.0 * PI * f0_ / fs_;
+
+    // Lambda for Dirichlet kernel: D_N(alpha) = sin(N*alpha/2) / sin(alpha/2) * exp(i*alpha*(N-1)/2)
+    auto dirichlet_N = [N](double alpha) -> std::complex<double> {
+      if (std::abs(alpha) < 1e-12) {
+        return std::complex<double>(static_cast<double>(N), 0.0);
+      }
+      double numerator = std::sin(0.5 * N * alpha);
+      double denominator = std::sin(0.5 * alpha);
+      if (std::abs(denominator) < 1e-12) {
+        return std::complex<double>(static_cast<double>(N), 0.0);
+      }
+      double phase_angle = alpha * (N - 1) * 0.5;
+      double mag = numerator / denominator;
+      return std::complex<double>(mag * std::cos(phase_angle), mag * std::sin(phase_angle));
+    };
+
+    std::complex<double> P_sum(0.0, 0.0);
+    std::complex<double> M_sum(0.0, 0.0);
+
+    std::vector<std::complex<float>> shifted_coeffs_(n_fft);
+    ifftshift(coeffs_, shifted_coeffs_, L);
+
+    for (int k = 0; k < L; ++k) {
+      double omega_k = 2.0 * PI * k / L;
+
+      // Compute Dirichlet kernels for +/- frequency components
+      std::complex<double> D_plus = dirichlet_N(omega0 - omega_k);
+      std::complex<double> D_minus = dirichlet_N(-omega0 - omega_k);
+
+      // X components (half-weighted)
+      std::complex<double> X_plus = 0.5 * D_plus;
+      std::complex<double> X_minus = 0.5 * D_minus;
+
+      // Hilbert multiplier: h[0]=1, h[Nyquist]=1 (if even L), h[other positive]=2
+      double h_mult = 1.0;
+      if (k > 0 && k < (L / 2)) {
+        h_mult = 2.0;
+      } else if (k == L / 2 && L % 2 == 0) {
+        h_mult = 1.0;
+      }
+
+      // Phase rotation for the n-th sample
+      std::complex<double> phase_exp(0.0, omega_k * n);
+      phase_exp = std::exp(phase_exp);
+
+      // Combine Hilbert multiplier with loaded bandpass coefficients
+      std::complex<double> coeff_k = std::complex<double>(
+          static_cast<double>(shifted_coeffs_[k].real()),
+          static_cast<double>(shifted_coeffs_[k].imag())
+      );
+      std::complex<double> G = h_mult * coeff_k;
+
+      // Accumulate weighted sums
+      P_sum += G * X_plus * phase_exp;
+      M_sum += G * X_minus * phase_exp;
+    }
+
+    // Normalize by FFT size
+    P_sum /= static_cast<double>(L);
+    M_sum /= static_cast<double>(L);
+
+    // Apply frequency shift to get analytic-aligned components
+    std::complex<double> phase_shift(0.0, -omega0 * n);
+    phase_shift = std::exp(phase_shift);
+    std::complex<double> Gplus = P_sum * phase_shift;
+    std::complex<double> Gminus = M_sum * phase_shift;
+
+    // Calculate MSE-optimal calibration gain: C_opt = conj(Gplus) / (|Gplus|^2 + |Gminus|^2)
+    double denom = std::norm(Gplus) + std::norm(Gminus);
+    if (denom > 1e-12) {
+      std::complex<double> C_opt = std::conj(Gplus) / denom;
+      c_gain_ = std::complex<float>(static_cast<float>(C_opt.real()),
+                                    static_cast<float>(C_opt.imag()));
+    } else {
+      c_gain_ = std::complex<float>(1.0f, 0.0f);  // fallback to unity gain
+    }
+  } else {
+    c_gain_ = std::complex<float>(1.0f, 0.0f);  // no calibration, unity gain
+  }
+  LOG(INFO) << "Calibration gain set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i\n";
 }
 
 int PhaseEstimator::get_max_bin(fftwf_complex* out, size_t out_size) {
@@ -170,6 +259,15 @@ void PhaseEstimator::ifftshift(const fftwf_complex* in, fftwf_complex* out, int 
         int src = (k + s) % L;
         out[k][0] = in[src][0];
         out[k][1] = in[src][1];
+    }
+}
+
+void PhaseEstimator::ifftshift(const std::vector<std::complex<float>>& in, std::vector<std::complex<float>>& out, int L)
+{
+    int s = (L + 1) / 2;  // ceil(L/2)
+    for (int k = 0; k < L; ++k) {
+        int src = (k + s) % L;
+        out[k] = in[src];
     }
 }
 
@@ -251,11 +349,15 @@ void PhaseEstimator::Process(ProcessingContext &context) {
       // IFFT
       fftwf_execute(p_inv);
 
-      // Normalize the output of the inverse FFT
+      // Normalize the output of the inverse FFT and multiply with calibration gain
       for (int i = 0; i < n_fft; i++) {
-        out[i][0] /= n_fft;
-        out[i][1] /= n_fft;
+        const float in_re = out[i][0];
+        const float in_im = out[i][1];
+
+        out[i][0] = (in_re * c_gain_.real() - in_im * c_gain_.imag()) / n_fft; //in_re / n_fft; //
+        out[i][1] = (in_re * c_gain_.imag() + in_im * c_gain_.real()) / n_fft; //in_im / n_fft; //
       }
+
 
       // Get phase and real part of the last sample (N-1) of the original signal
       phase = std::atan2(out[N-1][1], out[N-1][0]);
@@ -276,6 +378,7 @@ void PhaseEstimator::Process(ProcessingContext &context) {
   fftwf_destroy_plan(p_inv);
   fftwf_free(signal_in);
   fftwf_free(freq_half);
+  fftwf_free(freq_shifted);
   fftwf_free(freq);
   fftwf_free(out);
 }

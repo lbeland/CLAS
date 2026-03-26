@@ -32,6 +32,7 @@ class PhaseEstimator : public IProcessor {
     void construct_analytic_spectrum(int M, const fftwf_complex* half, fftwf_complex* full);
     void fftshift(const fftwf_complex* in, fftwf_complex* out, int L);
     void ifftshift(const fftwf_complex* in, fftwf_complex* out, int L);
+    void ifftshift(const std::vector<std::complex<float>>& in, std::vector<std::complex<float>>& out, int L);
 
   void CreatePorts() override;
   void CompleteStreamInfo() override;
@@ -46,6 +47,8 @@ class PhaseEstimator : public IProcessor {
 
   options::Value<unsigned int, false> n_messages_{0};
   options::Value<unsigned int, false> n_fft_{4096};
+  options::Value<bool> calibrate_{false};
+  options::Value<std::string> coeff_file_{"filters://echt_coefficients.txt"};
   
   unsigned int packet_count_ = 0;
   double first_timestamp_ = 0.0;
@@ -53,4 +56,5 @@ class PhaseEstimator : public IProcessor {
   float f0_ = 0.0;
   inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Preprocess
   std::vector<std::complex<float>> coeffs_;  // Filter coefficients of bandpass filter
+  std::complex<float> c_gain_;  // Calibration gain for cecHT
 };

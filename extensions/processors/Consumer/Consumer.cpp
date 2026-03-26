@@ -28,6 +28,7 @@
 
 Consumer::Consumer() : IProcessor(PRIORITY_HIGH) {
   add_option("n_messages", n_messages_, "Number of packets to receive (0 = infinite).");
+  add_option("window_size", window_size_, "Window size of PhaseEstimator (exclude the first window_size packets in statistics calculation).");
   add_option("output_file", output_file_, "Path to output CSV file.");
 }
 
@@ -115,11 +116,15 @@ void Consumer::Postprocess(ProcessingContext &context) {
   std::size_t max_idx = 0;
   double sum_sq_diff = 0.0;
   std::vector<double> recv_times_diff;
-  recv_times_diff.resize(packet_count_ -1);
 
-  for (std::size_t i = 0; i + 1 < recv_times.size(); i++) {
+  int start_idx = window_size_();  // Skip the first window_size packets because PhaseEstimator is not activ when window is not full
+  int n_times = recv_times.size() - start_idx;
+
+  recv_times_diff.resize(static_cast<std::size_t>(n_times-1));
+
+  for (std::size_t i = start_idx; i + 1 < recv_times.size(); i++) {
     const double diff_us = std::chrono::duration<double, std::micro>(recv_times[i+1] - recv_times[i]).count();
-    recv_times_diff[i] = diff_us;
+    recv_times_diff[i-start_idx] = diff_us;
     sum_diff_us += diff_us;
     sum_sq_diff += diff_us * diff_us;
     if (diff_us > max_diff_us) {
@@ -127,14 +132,12 @@ void Consumer::Postprocess(ProcessingContext &context) {
           max_idx = i;
       }
   }
-  const std::size_t n_periods = recv_times_diff.size();
+
   double avg_period = 0.0;
   double std_period = 0.0;
-  if (n_periods > 0) {
-    avg_period = sum_diff_us / static_cast<double>(n_periods);
-    const double variance = (sum_sq_diff / static_cast<double>(n_periods)) - (avg_period * avg_period);
-    std_period = sqrt(fmax(0.0, variance));
-  }
+  avg_period = sum_diff_us / static_cast<double>(n_times);
+  const double variance = (sum_sq_diff / static_cast<double>(n_times)) - (avg_period * avg_period);
+  std_period = sqrt(fmax(0.0, variance));
 
   statistic_print << "\n Average receive period (us): " << avg_period;
   statistic_print << "\n Max receive period (us): " << max_diff_us << ", idx: " << max_idx;
@@ -146,11 +149,11 @@ void Consumer::Postprocess(ProcessingContext &context) {
   max_idx = 0;
   double sum_sq_latency = 0.0;
   std::vector<double> process_times;
-  process_times.resize(packet_count_);
+  process_times.resize(static_cast<std::size_t>(n_times));
 
-  for (std::size_t i = 0; i < source_times.size(); i++) {
+  for (std::size_t i = start_idx; i < source_times.size(); i++) {
     const double latency_us = std::chrono::duration<double, std::micro>(recv_times[i] - source_times[i]).count();
-    process_times[i] = latency_us;
+    process_times[i-start_idx] = latency_us;
     sum_latency_us += latency_us;
     sum_sq_latency += latency_us * latency_us;
     if (latency_us > max_latency_us) {
@@ -158,8 +161,8 @@ void Consumer::Postprocess(ProcessingContext &context) {
           max_idx = i;
       }
   }
-  const double avg_latency = sum_latency_us / static_cast<double>(packet_count_);
-  const double variance_latency = (sum_sq_latency / static_cast<double>(packet_count_)) - (avg_latency * avg_latency);
+  const double avg_latency = sum_latency_us / (static_cast<double>(n_times));
+  const double variance_latency = (sum_sq_latency / static_cast<double>(n_times)) - (avg_latency * avg_latency);
   const double std_latency = sqrt(fmax(0.0, variance_latency));
 
   statistic_print << "\n Average latency (us): " << avg_latency;
@@ -168,13 +171,11 @@ void Consumer::Postprocess(ProcessingContext &context) {
 
   double throughput = 0.0;
   double elapsed_seconds = 0.0;
-  if (packet_count_ > 0) {
-    elapsed_seconds = std::chrono::duration<double>(recv_times.back() - source_times.front()).count();
-    if (elapsed_seconds > 0.0) {
-      throughput = static_cast<double>(packet_count_) / elapsed_seconds;
-    }
+  elapsed_seconds = std::chrono::duration<double>(recv_times.back() - source_times[start_idx]).count();
+  if (elapsed_seconds > 0.0) {
+    throughput = static_cast<double>(n_times) / elapsed_seconds;
   }
-  statistic_print << "\n Throughput (msg/s): " << packet_count_ << "/" << elapsed_seconds << " = " << throughput;
+  statistic_print << "\n Throughput (msg/s): " << n_times << "/" << elapsed_seconds << " = " << throughput;
 
   std::cout << statistic_print.str() << "\n";
 

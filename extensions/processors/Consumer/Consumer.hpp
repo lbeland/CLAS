@@ -36,6 +36,7 @@ class Consumer : public IProcessor {
   PortIn<MultiChannelType<float>> *data_in_port_;
 
   options::Value<unsigned int, false> n_messages_{0};
+  options::Value<int, false> window_size_{2000};
   options::Value<std::string, false> output_file_{"Consumer.csv"};
   
   unsigned int packet_count_ = 0;

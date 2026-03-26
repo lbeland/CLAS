@@ -55,13 +55,12 @@ void PhaseEstimator::CompleteStreamInfo() {
   const auto &input_params =
       input_info.parameters<MultiChannelType<float>::Parameters>();
 
-  dynamic_cast<StreamInfo<MultiChannelType<float>>&>(
-      data_out_port_->slot(0)->streaminfo())
-      .set_parameters(input_params);
+  for (int k = 0; k < data_out_port_->number_of_slots(); ++k) {
+    data_out_port_->streaminfo(k).set_stream_rate(data_in_port_->streaminfo(k).stream_rate());
+    dynamic_cast<StreamInfo<MultiChannelType<float>>&>(
+      data_out_port_->slot(k)->streaminfo()).set_parameters(input_params);
+  }
 
-  dynamic_cast<StreamInfo<MultiChannelType<float>>&>(
-      data_out_port_->slot(1)->streaminfo())
-      .set_parameters(input_params);
 }
 
 void PhaseEstimator::Preprocess(ProcessingContext &context) {
@@ -293,6 +292,7 @@ void PhaseEstimator::Process(ProcessingContext &context) {
 
   // Measurement phase
   while (!context.terminated()) {
+
     if (n_messages_() != -1 && packet_count_ >= n_messages_()) {
       break;
     }
@@ -301,6 +301,7 @@ void PhaseEstimator::Process(ProcessingContext &context) {
     if (!data_in_port_->slot(0)->RetrieveData(data_in)) {
       break;
     }
+    TimePoint start_time = Clock::now();
 
     sample = data_in->data_sample(0,0);  // Get the first sample of the first channel
     
@@ -354,8 +355,8 @@ void PhaseEstimator::Process(ProcessingContext &context) {
         const float in_re = out[i][0];
         const float in_im = out[i][1];
 
-        out[i][0] = (in_re * c_gain_.real() - in_im * c_gain_.imag()) / n_fft; //in_re / n_fft; //
-        out[i][1] = (in_re * c_gain_.imag() + in_im * c_gain_.real()) / n_fft; //in_im / n_fft; //
+        out[i][0] = (in_re * c_gain_.real() - in_im * c_gain_.imag()) / n_fft;
+        out[i][1] = (in_re * c_gain_.imag() + in_im * c_gain_.real()) / n_fft;
       }
 
 
@@ -367,11 +368,14 @@ void PhaseEstimator::Process(ProcessingContext &context) {
       data_real_out->set_data_sample(0,0, real_part);
     }
 
+    TimePoint end_time = Clock::now();
+    std::chrono::duration<double> elapsed = end_time - start_time;
+    // printf("Processed packet %d in %.9f microseconds\n", packet_count_, elapsed.count()*1e6);
+
     data_out_port_->slot(0)->PublishData();    
     data_out_port_->slot(1)->PublishData();
 
     packet_count_++;
-
   }
 
   fftwf_destroy_plan(p);

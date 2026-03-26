@@ -4,7 +4,7 @@ import pandas as pd
 from meegkit.phase import ECHT
 
 # Load data
-samples = np.arange(2000)
+samples = np.arange(2048)
 
 f0 = 10
 filt_BW = f0 / 2

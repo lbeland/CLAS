@@ -10,9 +10,6 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent
 WORKSPACE_FALCON_CONFIG = REPO_ROOT / ".falcon" / "config.yaml"
-# PRODUCER_ROOT = REPO_ROOT / "c-producer"
-# CONSUMER_ROOT = REPO_ROOT / "c-consumer"
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -33,66 +30,11 @@ def main():
    
     if os.path.exists(output_path + "_Consumer.csv") and not args.overwrite:
         return
-    
-    # graph = {
-    #     "graph": {
-    #     "name": "CLAS",
-    #     "processors": {
-    #         "Producer": {
-    #             "class": "Producer",
-    #             "options": {
-    #                 "fs": 1000,
-    #                 "nchannels": args.num_channels,
-    #                 "nsamples": args.msg_size,
-    #                 "n_messages": args.n_messages,
-    #                 "output_file": str(output_path)
-    #             },
-    #             "advanced":{
-    #                 "buffer_sizes": {
-    #                     "out": args.max_buffer_size
-    #                 },
-    #                 "thread_core": 7
-    #             }
-    #         },
-    #         "PhaseEstimator": {
-    #             "class": "PhaseEstimator",
-    #             "options": {
-    #                 "n_messages": args.n_messages
-    #             },
-    #             "advanced":{
-    #                 "buffer_sizes": {
-    #                     "out": args.max_buffer_size
-    #                 },
-    #                 "thread_core": 8
-    #             }
-    #         },
-    #         "Consumer": {
-    #             "class": "Consumer",
-    #             "options": {
-    #                 "n_messages": args.n_messages,
-    #                 "output_file": str(output_path)
-    #             },
-    #             "advanced":{
-    #                 "thread_core": 9
-    #             }
-    #         }
-    #     },
-    #     "connections": [
-    #         "Producer.out.0 = Consumer.in.1"
-    #         "Producer.out.0 = PhaseEstimator.in.0",
-    #         "PhaseEstimator.out.0 = Consumer.in.0"
-    #     ]
-    # }
-    # }
-
-    # with open("resources/graphs/simple_test.yaml", "w") as f:
-    #     yaml.safe_dump(graph, f, sort_keys=False)
 
     graph_process = subprocess.Popen(["sudo", "-E", "chrt", "-f", "99","./build/falcon/falcon", "SimulateCLAS.yaml", "--config", WORKSPACE_FALCON_CONFIG, "--autostart"]) 
-
     try:
         # 3) Wait for falcon to complete (processors will auto-exit after processing n_messages)
-        return_code = graph_process.wait()#timeout=20)
+        return_code = graph_process.wait()
         print(f"Falcon process exited with code {return_code}")
     except subprocess.TimeoutExpired:
         print("Timeout: Falcon did not complete within 10 seconds. Terminating...")

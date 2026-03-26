@@ -31,9 +31,11 @@ const double PI = std::acos(-1.0);
 
 Producer::Producer() : IProcessor(PRIORITY_HIGH) {
   add_option("fs", fs_, "Sample Frequency");
+  add_option("f0", f0_, "Frequency of the sine wave to generate.");
   add_option("nchannels", nchannels_, "Number of channels to generate.");
   add_option("nsamples", nsamples_, "Number of samples per packet.");
   add_option("n_messages", n_messages_, "Number of packets to generate (-1 = infinite).");
+  add_option("window_size", window_size_, "Window size of PhaseEstimator (exclude the first window_size packets in statistics calculation).");
   add_option("output_file", output_file_, "Path to output CSV file.");
 }
 
@@ -69,7 +71,7 @@ void Producer::Process(ProcessingContext &context) {
 
     // Set timestamp as value
     t = packet_count * (1.0 / fs_());  // Simulate a sample timestamp (e.g., 10 kHz sample rate)
-    sample = 1*sin(2 * PI * t * 9.8);  // + 0.2*sin(2 * PI * t * 40) + 0.2*sin(2 * PI * t * 100);  // Generate a sine wave with frequency of 10 Hz
+    sample = 1*sin(2 * PI * t * f0_());  // + 0.2*sin(2 * PI * t * 40) + 0.2*sin(2 * PI * t * 100);  // Generate a sine wave with frequency of 10 Hz
     // int sample = i;
     for (int i=0;i<nchannels_();i++) {
       data_out->set_data_sample(0, i, sample);
@@ -110,12 +112,15 @@ void Producer::Postprocess(ProcessingContext &context) {
   std::size_t max_idx = 0;
   double sum_sq_diff = 0.0;
   std::vector<double> send_times_diff;
-  send_times_diff.resize(send_times.size() - 1);
+  int start_idx = window_size_();  // Skip the first window_size packets because PhaseEstimator is not activ when window is not full
+  int n_times = send_times.size() - start_idx;
 
-  for (std::size_t i = 0; i + 1 < send_times.size(); i++) {
+  send_times_diff.resize(static_cast<std::size_t>(n_times-1));
+
+  for (std::size_t i = start_idx; i + 1 < send_times.size(); i++) {
       const double diff_us = std::chrono::duration<double, std::micro>(send_times[i+1] - send_times[i]).count();
       
-      send_times_diff[i] = diff_us;
+      send_times_diff[i-start_idx] = diff_us;
       sum_diff_us += diff_us;
       sum_sq_diff += diff_us * diff_us;
       if (diff_us > max_diff_us) {

@@ -36,9 +36,11 @@ class Producer : public IProcessor {
   PortOut<MultiChannelType<float>> *data_out_port_;
 
   options::Value<double, false> fs_{10000.0};
+  options::Value<unsigned int, false> f0_{10};
   options::Value<unsigned int, false> nchannels_{4};
   options::Value<unsigned int, false> nsamples_{100};
   options::Value<int, false> n_messages_{-1};
+  options::Value<int, false> window_size_{2000};
   options::Value<std::string, false> output_file_{"Producer.csv"};
   
   inline static std::vector<TimePoint> send_times;

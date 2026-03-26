@@ -25,6 +25,8 @@
 #include <chrono>
 #include <numeric>
 #include <limits>
+#include <sstream>
+#include <string>
 #include <fftw3.h>
 #include <complex>
 
@@ -74,6 +76,40 @@ void PhaseEstimator::Preprocess(ProcessingContext &context) {
   const int n_fft = static_cast<int>(n_fft_());
   if (n_fft < N) {
     throw std::runtime_error("PhaseEstimator: n_fft must be >= window length");
+  }
+
+  coeffs_.reserve(static_cast<size_t>(n_fft));
+
+  std::string coeff_file =context.resolve_path("filters://echt_coefficients.txt");
+
+  // std::ifstream coeff_file("extensions/processors/PhaseEstimator/echt_coefficients.txt");
+  std::ifstream coeffs;
+  if (!coeffs.is_open()) {
+    coeffs.open(coeff_file);
+  }
+  if (!coeffs.is_open()) {
+    throw std::runtime_error("PhaseEstimator: could not open coefficients file");
+  }
+
+  std::string line;
+  size_t line_number = 0;
+  while (std::getline(coeffs, line)) {
+    ++line_number;
+    if (line.empty()) {
+      continue;
+    }
+
+    std::stringstream ss(line);
+    float real = 0.0f;
+    float imag = 0.0f;
+    char comma = '\0';
+    if (!(ss >> real >> comma >> imag) || comma != ',') {
+      throw std::runtime_error(
+          "PhaseEstimator: invalid coefficient format at line " + std::to_string(line_number));
+    }
+    
+
+    coeffs_.emplace_back(real, imag);
   }
 }
 
@@ -151,6 +187,7 @@ void PhaseEstimator::Process(ProcessingContext &context) {
   float* signal_in = fftwf_alloc_real(n_fft);
   fftwf_complex* freq_half = fftwf_alloc_complex(n_fft/2 + 1);
   fftwf_complex* freq = fftwf_alloc_complex(n_fft);
+  fftwf_complex* freq_shifted = fftwf_alloc_complex(n_fft);
   fftwf_complex* out = fftwf_alloc_complex(n_fft);
 
   fftwf_plan p = fftwf_plan_dft_r2c_1d(n_fft, signal_in, freq_half, FFTW_ESTIMATE);
@@ -195,6 +232,21 @@ void PhaseEstimator::Process(ProcessingContext &context) {
 
       // Construct analytic signal spectrum
       construct_analytic_spectrum(n_fft, freq_half, freq);
+
+      // Shift the spectrum so that the DC component is at the center
+      fftshift(freq, freq_shifted, n_fft);
+
+      // Multiply with Bandpass filter
+      for (int k=0; k < n_fft; k++) {
+        const float in_re = freq_shifted[k][0];
+        const float in_im = freq_shifted[k][1];
+        const float c_re = coeffs_[k].real();
+        const float c_im = coeffs_[k].imag();
+
+        freq_shifted[k][0] = in_re * c_re - in_im * c_im;
+        freq_shifted[k][1] = in_re * c_im + in_im * c_re;
+      }
+      ifftshift(freq_shifted, freq, n_fft);
 
       // IFFT
       fftwf_execute(p_inv);

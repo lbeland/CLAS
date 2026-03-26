@@ -21,7 +21,9 @@
 #include "iprocessor.hpp"
 #include "multichanneldata/multichanneldata.hpp"
 #include <boost/circular_buffer.hpp>
+#include <complex>
 #include <fftw3.h>
+#include <vector>
 
 class PhaseEstimator : public IProcessor {
  public:
@@ -50,4 +52,5 @@ class PhaseEstimator : public IProcessor {
   float fs_ = 0.0;
   float f0_ = 0.0;
   inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Preprocess
+  std::vector<std::complex<float>> coeffs_;  // Filter coefficients of bandpass filter
 };

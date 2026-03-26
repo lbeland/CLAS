@@ -39,10 +39,9 @@ void Consumer::CreatePorts() {
 }
 
 void Consumer::Preprocess(ProcessingContext &context){
-  printf("\n");
   const auto& info = data_in_port_->streaminfo(0);
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
-  printf("Stream parameters - nchannels: %u, nsamples_orig: %u, sample_rate: %f\n", p.nchannels, p.nsamples, p.sample_rate);
+  LOG(INFO) << "Stream parameters - nchannels: " << p.nchannels << ", nsamples_orig: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
   packet_count_ = 0;
 }
 
@@ -68,8 +67,7 @@ void Consumer::Process(ProcessingContext &context) {
     // Try to retrieve data
     for (int slot_idx = 0; slot_idx < data_in_port_->number_of_slots(); slot_idx++) {
       if (!data_in_port_->slot(slot_idx)->RetrieveData(data_in_sample)) {
-        printf("\n %s. Failed to retrieve data from input slot %d, terminating processing loop.\n", name().c_str(), slot_idx);
-        perror("Failed");
+        LOG(ERROR) << name() << ". Failed to retrieve data from input slot " << slot_idx << ", terminating processing loop.\n";
         return;
       }
       receive_timestamp = Clock::now();
@@ -86,14 +84,14 @@ void Consumer::Process(ProcessingContext &context) {
     samples.push_back(sample_entry);
 
     // if (packet_count_ % 100 == 0) {
-    //   printf("\n %s. Received packet %u with sample %.2f at %.3f us (source timestamp: %.3f us, hardware timestamp: %lu us)", name().c_str(), packet_count_ + 1, sample, std::chrono::duration<double, std::micro>(receive_timestamp.time_since_epoch()).count(), std::chrono::duration<double, std::micro>(source_timestamp.time_since_epoch()).count(), hardware_timestamp);
+    //   LOG(INFO) << name() << ". Received packet " << packet_count_ + 1 << " with sample " << sample << " at " << std::chrono::duration<double, std::micro>(receive_timestamp.time_since_epoch()).count() << " us (source timestamp: " << std::chrono::duration<double, std::micro>(source_timestamp.time_since_epoch()).count() << " us, hardware timestamp: " << hardware_timestamp << " us)";
     // }
 
     
     recv_times.push_back(receive_timestamp);
     source_times.push_back(source_timestamp);
 
-    // printf("%s. Received packet %u with sample %f at %9f\n", name().c_str(), packet_count_ + 1, sample, now);
+    // LOG(INFO) << name() << ". Received packet " << packet_count_ + 1 << " with sample " << sample << " at " << std::chrono::duration<double, std::micro>(receive_timestamp.time_since_epoch()).count() << " us (source timestamp: " << std::chrono::duration<double, std::micro>(source_timestamp.time_since_epoch()).count() << " us, hardware timestamp: " << hardware_timestamp << " us)";
 
     packet_count_++;
 

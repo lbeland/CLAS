@@ -176,12 +176,11 @@ void SourceClient::Process(ProcessingContext &context) {
             first_sample_counter = pkt.sample_counter;
             sample_counter = pkt.sample_counter;
             first_timestamp = timestamp;
-            printf("\n First packet received. Sample counter: %u", sample_counter);
+            LOG(INFO) << "\n First packet received. Sample counter: " << sample_counter;
         }
         else {
             if ((pkt.sample_counter > sample_counter+1) || (sample_counter == std::numeric_limits<uint32_t>::max() && pkt.sample_counter != 0)) {
-                printf("\n Warning: Missed packet(s). Last sample counter: %d, current: %d", sample_counter, pkt.sample_counter);
-                perror("\n Error: Missed packet(s)");
+                LOG(WARNING) << "\n Missed packet(s). Last sample counter: " << sample_counter << ", current: " << pkt.sample_counter;
                 return;
             }
             else{
@@ -210,12 +209,12 @@ void SourceClient::Process(ProcessingContext &context) {
         const uint64_t hw_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(hardware_timestamp.time_since_epoch()).count());
 
         if (packet_count % 100 == 0) {
-            printf("\n %s. Received packet %u with sample %.2f with sample counter %u (hardware timestamp: %lu)", name().c_str(), packet_count + 1, pkt.eeg[0], pkt.sample_counter, hw_us);
+            LOG(INFO) << "\n " << name() << ". Received packet " << packet_count + 1 << " with sample " << std::fixed << std::setprecision(2) << pkt.eeg[0] << " with sample counter " << pkt.sample_counter << " (hardware timestamp: " << hw_us << ")";
         }
 
         data_out->set_hardware_timestamp(hw_us);
 
-        // printf("%s. Sent message %u with sample %f.\n", name().c_str(), i + 1, sample);
+        // LOG(INFO) << name() << ". Sent message " << i + 1 << " with sample " << sample << ".";
 
         // Publish data
         data_out_port_->slot(0)->PublishData();

@@ -27,7 +27,7 @@
 #include <cmath>
 #include <sstream>
 
-const double PI = 3.141592653589793;
+const double PI = std::acos(-1.0);
 
 Producer::Producer() : IProcessor(PRIORITY_HIGH) {
   add_option("fs", fs_, "Sample Frequency");
@@ -69,7 +69,7 @@ void Producer::Process(ProcessingContext &context) {
 
     // Set timestamp as value
     t = packet_count * (1.0 / fs_());  // Simulate a sample timestamp (e.g., 10 kHz sample rate)
-    sample = 1*sin(2 * PI * t * 10);  // + 0.2*sin(2 * PI * t * 40) + 0.2*sin(2 * PI * t * 100);  // Generate a sine wave with frequency of 10 Hz
+    sample = 1*sin(2 * PI * t * 9.8);  // + 0.2*sin(2 * PI * t * 40) + 0.2*sin(2 * PI * t * 100);  // Generate a sine wave with frequency of 10 Hz
     // int sample = i;
     for (int i=0;i<nchannels_();i++) {
       data_out->set_data_sample(0, i, sample);
@@ -82,7 +82,7 @@ void Producer::Process(ProcessingContext &context) {
 
     data_out->set_hardware_timestamp(hw_us);
 
-    // printf("%s. Sent message %u with sample %f.\n", name().c_str(), i + 1, sample);
+    // LOG(INFO) << name() << ". Sent message " << i + 1 << " with sample " << sample << ".";
 
     // Publish data
     data_out_port_->slot(0)->PublishData();

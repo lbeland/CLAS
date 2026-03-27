@@ -225,6 +225,11 @@ double FirFilter::process_channel(double input, unsigned int channel) {
   return result;
 }
 
+float FirFilter::process_channel(float input, unsigned int channel) {
+  return static_cast<float>(
+      process_channel(static_cast<double>(input), channel));
+}
+
 void FirFilter::process_sample(std::vector<double> &input,
                                std::vector<double> &output) {
   double result;
@@ -289,6 +294,69 @@ void FirFilter::process_sample(double *input, double *output) {
   }
 }
 
+void FirFilter::process_sample(std::vector<float> &input,
+                               std::vector<float> &output) {
+  float result;
+
+  for (unsigned int channel = 0; channel < nchannels_; ++channel) {
+    std::rotate(registers_[channel].rbegin(), registers_[channel].rbegin() + 1,
+                registers_[channel].rend());
+    registers_[channel][0] = input[0];
+
+    result = 0.0f;
+
+    for (unsigned int k = 0; k < ntaps_; ++k) {
+      result += static_cast<float>(coefficients_[k] * registers_[channel][k]);
+    }
+
+    output[channel] = result;
+  }
+}
+
+void FirFilter::process_sample(std::vector<float>::iterator input,
+                               std::vector<float>::iterator output) {
+  float result;
+
+  for (unsigned int channel = 0; channel < nchannels_; ++channel) {
+    std::rotate(registers_[channel].rbegin(), registers_[channel].rbegin() + 1,
+                registers_[channel].rend());
+    registers_[channel][0] = *input++;
+
+    result = 0.0f;
+
+    for (unsigned int k = 0; k < ntaps_; ++k) {
+      result += static_cast<float>(coefficients_[k] * registers_[channel][k]);
+    }
+
+    *output = result;
+    output++;
+  }
+}
+
+void FirFilter::process_sample(float *input, float *output) {
+  float result;
+  double *coef, *reg;
+
+  for (unsigned int channel = 0; channel < nchannels_; ++channel) {
+    reg = pregisters_[channel];
+
+    memmove((void *)(reg + 1), (void *)reg, (ntaps_ - 1) * sizeof(double));
+    *reg = *input;
+
+    coef = pcoefficients_;
+    result = 0.0f;
+
+    for (unsigned int k = 0; k < ntaps_; ++k) {
+      result += static_cast<float>(*coef++ * *reg++);
+    }
+
+    *output = result;
+
+    input++;
+    output++;
+  }
+}
+
 void FirFilter::process_channel(std::vector<double> &input,
                                 std::vector<double> &output,
                                 unsigned int channel) {
@@ -339,6 +407,55 @@ void FirFilter::process_channel(uint64_t nsamples, double *input,
   throw std::runtime_error("Not yet implemented.");
 }
 
+void FirFilter::process_channel(std::vector<float> &input,
+                                std::vector<float> &output,
+                                unsigned int channel) {
+  float result;
+
+  uint64_t nsamples = input.size();
+
+  for (uint64_t s = 0; s < nsamples; ++s) {
+    std::rotate(registers_[channel].rbegin(), registers_[channel].rbegin() + 1,
+                registers_[channel].rend());
+    registers_[channel][0] = input[s];
+
+    result = 0.0f;
+
+    for (unsigned int k = 0; k < ntaps_; ++k) {
+      result += static_cast<float>(coefficients_[k] * registers_[channel][k]);
+    }
+
+    output[s] = result;
+  }
+}
+
+void FirFilter::process_channel(uint64_t nsamples,
+                                std::vector<float>::iterator input,
+                                std::vector<float>::iterator output,
+                                unsigned int channel) {
+  float result;
+
+  for (uint64_t s = 0; s < nsamples; ++s) {
+    std::rotate(registers_[channel].rbegin(), registers_[channel].rbegin() + 1,
+                registers_[channel].rend());
+    registers_[channel][0] = *input++;
+
+    result = 0.0f;
+
+    for (unsigned int k = 0; k < ntaps_; ++k) {
+      result += static_cast<float>(coefficients_[k] * registers_[channel][k]);
+    }
+
+    *output = result;
+    output++;
+  }
+}
+
+void FirFilter::process_channel(uint64_t nsamples, float *input,
+                                float *output, unsigned int channel) {
+  throw std::runtime_error("Not yet implemented.");
+}
+
 void FirFilter::process_by_channel(std::vector<std::vector<double>> &input,
                                    std::vector<std::vector<double>> &output) {
   uint64_t nsamples = input.size();
@@ -368,6 +485,35 @@ void FirFilter::process_by_sample(uint64_t nsamples, double **input,
   }
 }
 
+void FirFilter::process_by_channel(std::vector<std::vector<float>> &input,
+                                   std::vector<std::vector<float>> &output) {
+  uint64_t nsamples = input.size();
+  for (uint64_t s = 0; s < nsamples; ++s) {
+    process_sample(input[s], output[s]);
+  }
+}
+
+void FirFilter::process_by_sample(std::vector<std::vector<float>> &input,
+                                  std::vector<std::vector<float>> &output) {
+  for (unsigned int c = 0; c < nchannels_; ++c) {
+    process_channel(input[c], output[c]);
+  }
+}
+
+void FirFilter::process_by_channel(uint64_t nsamples, float **input,
+                                   float **output) {
+  for (uint64_t s = 0; s < nsamples; ++s) {
+    process_sample(input[s], output[s]);
+  }
+}
+
+void FirFilter::process_by_sample(uint64_t nsamples, float **input,
+                                  float **output) {
+  for (unsigned int c = 0; c < nchannels_; ++c) {
+    process_channel(nsamples, input[c], output[c]);
+  }
+}
+
 void FirFilter::process_by_channel(uint64_t nsamples,
                                    std::vector<double> &input,
                                    std::vector<double> &output) {
@@ -384,6 +530,33 @@ void FirFilter::process_by_channel(uint64_t nsamples,
 
 void FirFilter::process_by_sample(uint64_t nsamples, std::vector<double> &input,
                                   std::vector<double> &output) {
+  assert(nsamples * nchannels_ == input.size() &&
+         input.size() == output.size());
+  auto in_it = input.begin();
+  auto out_it = output.begin();
+  for (unsigned int c = 0; c < nchannels_; ++c) {
+    process_channel(nsamples, in_it, out_it, c);
+    in_it += nsamples;
+    out_it += nsamples;
+  }
+}
+
+void FirFilter::process_by_channel(uint64_t nsamples,
+                                   std::vector<float> &input,
+                                   std::vector<float> &output) {
+  assert(nsamples * nchannels_ == input.size() &&
+         input.size() == output.size());
+  auto in_it = input.begin();
+  auto out_it = output.begin();
+  for (unsigned int s = 0; s < nsamples; ++s) {
+    process_sample(in_it, out_it);
+    in_it += nchannels_;
+    out_it += nchannels_;
+  }
+}
+
+void FirFilter::process_by_sample(uint64_t nsamples, std::vector<float> &input,
+                                  std::vector<float> &output) {
   assert(nsamples * nchannels_ == input.size() &&
          input.size() == output.size());
   auto in_it = input.begin();
@@ -501,6 +674,21 @@ double BiquadFilter::process_channel(double x, unsigned int c) {
   return y_n * gain_;
 }
 
+float BiquadFilter::process_channel(float x, unsigned int c) {
+  return static_cast<float>(process_channel(static_cast<double>(x), c));
+}
+
+void BiquadFilter::process_sample(std::vector<float> &input,
+                                  std::vector<float> &output) {
+  if (!realized_) {
+    throw std::runtime_error("Filter has not been realized yet.");
+  }
+
+  for (unsigned int c = 0; c < nchannels_; ++c) {
+    output[c] = process_channel(input[c], c);
+  }
+}
+
 void BiquadFilter::process_sample(std::vector<double>::iterator input,
                                   std::vector<double>::iterator output) {
   if (!realized_) {
@@ -514,6 +702,29 @@ void BiquadFilter::process_sample(std::vector<double>::iterator input,
 }
 
 void BiquadFilter::process_sample(double *input, double *output) {
+  if (!realized_) {
+    throw std::runtime_error("Filter has not been realized yet.");
+  }
+
+  for (unsigned int c = 0; c < nchannels_; ++c) {
+    *output = process_channel((*input++), c);
+    output++;
+  }
+}
+
+void BiquadFilter::process_sample(std::vector<float>::iterator input,
+                                  std::vector<float>::iterator output) {
+  if (!realized_) {
+    throw std::runtime_error("Filter has not been realized yet.");
+  }
+
+  for (unsigned int c = 0; c < nchannels_; ++c) {
+    *output = process_channel((*input++), c);
+    output++;
+  }
+}
+
+void BiquadFilter::process_sample(float *input, float *output) {
   if (!realized_) {
     throw std::runtime_error("Filter has not been realized yet.");
   }
@@ -551,6 +762,33 @@ void BiquadFilter::process_channel(uint64_t nsamples, double *input,
   }
 }
 
+void BiquadFilter::process_channel(std::vector<float> &input,
+                                   std::vector<float> &output,
+                                   unsigned int channel) {
+  uint64_t nsamples = input.size();
+
+  for (uint64_t s = 0; s < nsamples; ++s) {
+    output[s] = process_channel(input[s], channel);
+  }
+}
+
+void BiquadFilter::process_channel(uint64_t nsamples,
+                                   std::vector<float>::iterator input,
+                                   std::vector<float>::iterator output,
+                                   unsigned int channel) {
+  for (uint64_t s = 0; s < nsamples; ++s) {
+    *output = process_channel((*input++), channel);
+    output++;
+  }
+}
+
+void BiquadFilter::process_channel(uint64_t nsamples, float *input,
+                                   float *output, unsigned int channel) {
+  for (uint64_t s = 0; s < nsamples; ++s) {
+    output[s] = process_channel(input[s], channel);
+  }
+}
+
 void BiquadFilter::process_by_channel(
     std::vector<std::vector<double>> &input,
     std::vector<std::vector<double>> &output) {
@@ -582,6 +820,35 @@ void BiquadFilter::process_by_sample(uint64_t nsamples, double **input,
   }
 }
 
+void BiquadFilter::process_by_channel(std::vector<std::vector<float>> &input,
+                                      std::vector<std::vector<float>> &output) {
+  uint64_t nsamples = input.size();
+  for (uint64_t s = 0; s < nsamples; ++s) {
+    process_sample(input[s], output[s]);
+  }
+}
+
+void BiquadFilter::process_by_sample(std::vector<std::vector<float>> &input,
+                                     std::vector<std::vector<float>> &output) {
+  for (unsigned int c = 0; c < nchannels_; ++c) {
+    process_channel(input[c], output[c]);
+  }
+}
+
+void BiquadFilter::process_by_channel(uint64_t nsamples, float **input,
+                                      float **output) {
+  for (uint64_t s = 0; s < nsamples; ++s) {
+    process_sample(input[s], output[s]);
+  }
+}
+
+void BiquadFilter::process_by_sample(uint64_t nsamples, float **input,
+                                     float **output) {
+  for (unsigned int c = 0; c < nchannels_; ++c) {
+    process_channel(nsamples, input[c], output[c], c);
+  }
+}
+
 void BiquadFilter::process_by_channel(uint64_t nsamples,
                                       std::vector<double> &input,
                                       std::vector<double> &output) {
@@ -599,6 +866,34 @@ void BiquadFilter::process_by_channel(uint64_t nsamples,
 void BiquadFilter::process_by_sample(uint64_t nsamples,
                                      std::vector<double> &input,
                                      std::vector<double> &output) {
+  assert(nsamples * nchannels_ == input.size() &&
+         input.size() == output.size());
+  auto in_it = input.begin();
+  auto out_it = output.begin();
+  for (unsigned int c = 0; c < nchannels_; ++c) {
+    process_channel(nsamples, in_it, out_it, c);
+    in_it += nsamples;
+    out_it += nsamples;
+  }
+}
+
+void BiquadFilter::process_by_channel(uint64_t nsamples,
+                                      std::vector<float> &input,
+                                      std::vector<float> &output) {
+  assert(nsamples * nchannels_ == input.size() &&
+         input.size() == output.size());
+  auto in_it = input.begin();
+  auto out_it = output.begin();
+  for (unsigned int s = 0; s < nsamples; ++s) {
+    process_sample(in_it, out_it);
+    in_it += nchannels_;
+    out_it += nchannels_;
+  }
+}
+
+void BiquadFilter::process_by_sample(uint64_t nsamples,
+                                     std::vector<float> &input,
+                                     std::vector<float> &output) {
   assert(nsamples * nchannels_ == input.size() &&
          input.size() == output.size());
   auto in_it = input.begin();

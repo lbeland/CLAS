@@ -35,7 +35,7 @@ class Consumer : public IProcessor {
  protected:
   PortIn<MultiChannelType<float>> *data_in_port_;
 
-  options::Value<unsigned int, false> n_messages_{0};
+  options::Value<int, false> n_messages_{-1};
   options::Value<int, false> window_size_{2000};
   options::Value<std::string, false> output_file_{"Consumer.csv"};
   
@@ -43,4 +43,6 @@ class Consumer : public IProcessor {
   inline static std::vector<std::array<float, 3>> samples;
   inline static std::vector<TimePoint> recv_times;
   inline static std::vector<TimePoint> source_times;
+
+  const uint32_t MAX_NCHANNELS=384; 
 };

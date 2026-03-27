@@ -44,4 +44,6 @@ class Producer : public IProcessor {
   options::Value<std::string, false> output_file_{"Producer.csv"};
   
   inline static std::vector<TimePoint> send_times;
+
+  const uint32_t MAX_NCHANNELS=384;
 };

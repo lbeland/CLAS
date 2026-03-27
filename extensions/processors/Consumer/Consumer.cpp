@@ -27,7 +27,7 @@
 #include <sstream>
 
 Consumer::Consumer() : IProcessor(PRIORITY_HIGH) {
-  add_option("n_messages", n_messages_, "Number of packets to receive (0 = infinite).");
+  add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
   add_option("window_size", window_size_, "Window size of PhaseEstimator (exclude the first window_size packets in statistics calculation).");
   add_option("output_file", output_file_, "Path to output CSV file.");
 }
@@ -36,7 +36,7 @@ void Consumer::CreatePorts() {
   data_in_port_ = create_input_port<MultiChannelType<float>>(
       "in", 
       MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
-      PortInPolicy(SlotRange(3)));
+      PortInPolicy(SlotRange(0,MAX_NCHANNELS)));
 }
 
 void Consumer::Preprocess(ProcessingContext &context){

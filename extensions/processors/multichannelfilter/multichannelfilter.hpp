@@ -43,12 +43,13 @@ class MultiChannelFilter : public IProcessor {
 
   // DATA PORTS
  protected:
-  PortIn<MultiChannelType<double>> *data_in_port_;
-  PortOut<MultiChannelType<double>> *data_out_port_;
+  PortIn<MultiChannelType<float>> *data_in_port_;
+  PortOut<MultiChannelType<float>> *data_out_port_;
 
   // OPTIONS
  protected:
   options::Value<YAML::Node, false> filter_def_{};
+  options::Value<int, false> n_messages_{-1};
 
 
  const uint32_t MAX_NCHANNELS=384;

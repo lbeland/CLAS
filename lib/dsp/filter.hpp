@@ -57,12 +57,17 @@ public:
 
     // single channel, single sample
     virtual double process_channel(double, unsigned int channel) = 0;
+    virtual float process_channel(float, unsigned int channel) = 0;
 
     // all channels, single sample
     virtual void process_sample(std::vector<double> &, std::vector<double> &) = 0;
     virtual void process_sample(std::vector<double>::iterator,
                                 std::vector<double>::iterator) = 0;
     virtual void process_sample(double *, double *) = 0;
+    virtual void process_sample(std::vector<float> &, std::vector<float> &) = 0;
+    virtual void process_sample(std::vector<float>::iterator,
+                                std::vector<float>::iterator) = 0;
+    virtual void process_sample(float *, float *) = 0;
 
     // single channel, multiple samples
     virtual void process_channel(std::vector<double> &, std::vector<double> &,
@@ -71,6 +76,13 @@ public:
                                  std::vector<double>::iterator,
                                  unsigned int channel = 0) = 0;
     virtual void process_channel(uint64_t nsamples, double *, double *,
+                                 unsigned int channel) = 0;
+    virtual void process_channel(std::vector<float> &, std::vector<float> &,
+                                 unsigned int channel = 0) = 0;
+    virtual void process_channel(uint64_t nsamples, std::vector<float>::iterator,
+                                 std::vector<float>::iterator,
+                                 unsigned int channel = 0) = 0;
+    virtual void process_channel(uint64_t nsamples, float *, float *,
                                  unsigned int channel) = 0;
 
     // all channels, multiple samples
@@ -84,12 +96,28 @@ public:
                                     double **) = 0;  // samples<channels>
     virtual void process_by_sample(uint64_t nsamples, double **,
                                    double **) = 0;  // channels<samples>
+        virtual void process_by_channel(uint64_t nsamples, float **,
+                        float **) = 0;  // samples<channels>
+        virtual void process_by_sample(uint64_t nsamples, float **,
+                       float **) = 0;  // channels<samples>
     virtual void
     process_by_channel(uint64_t nsamples, std::vector<double> &,
                        std::vector<double> &) = 0;  // samples<channels>
     virtual void
     process_by_sample(uint64_t nsamples, std::vector<double> &,
                       std::vector<double> &) = 0;  // channels<samples>
+        virtual void
+        process_by_channel(uint64_t nsamples, std::vector<float> &,
+                   std::vector<float> &) = 0;  // samples<channels>
+        virtual void
+        process_by_sample(uint64_t nsamples, std::vector<float> &,
+                  std::vector<float> &) = 0;  // channels<samples>
+        virtual void process_by_channel(
+            std::vector<std::vector<float>> &,
+            std::vector<std::vector<float>> &) = 0;  // samples<channels>
+        virtual void process_by_sample(
+            std::vector<std::vector<float>> &,
+            std::vector<std::vector<float>> &) = 0;  // channels<samples>
 
 protected:
     virtual bool realize_filter(unsigned int nchannels, double init) = 0;
@@ -115,6 +143,7 @@ public:
 
     // single channel, single sample
     double process_channel(double input, unsigned int channel = 0) final;
+    float process_channel(float input, unsigned int channel = 0);
 
     // all channels, single sample
     void process_sample(std::vector<double> &input,
@@ -122,6 +151,11 @@ public:
     void process_sample(std::vector<double>::iterator input,
                         std::vector<double>::iterator output) final;
     void process_sample(double *input, double *output) final;
+    void process_sample(std::vector<float> &input,
+                        std::vector<float> &output);
+    void process_sample(std::vector<float>::iterator input,
+                        std::vector<float>::iterator output);
+    void process_sample(float *input, float *output);
 
     // single channel, multiple samples
     void process_channel(std::vector<double> &input, std::vector<double> &output,
@@ -130,6 +164,13 @@ public:
                          std::vector<double>::iterator output,
                          unsigned int channel = 0);
     void process_channel(uint64_t nsamples, double *input, double *output,
+                         unsigned int channel = 0);
+    void process_channel(std::vector<float> &input, std::vector<float> &output,
+                         unsigned int channel = 0);
+    void process_channel(uint64_t nsamples, std::vector<float>::iterator input,
+                         std::vector<float>::iterator output,
+                         unsigned int channel = 0);
+    void process_channel(uint64_t nsamples, float *input, float *output,
                          unsigned int channel = 0);
 
     // all channels, multiple samples
@@ -143,11 +184,23 @@ public:
                             double **output) final;
     void process_by_sample(uint64_t nsamples, double **input,
                            double **output) final;
+    void process_by_channel(uint64_t nsamples, float **input,
+                            float **output);
+    void process_by_sample(uint64_t nsamples, float **input,
+                           float **output);
 
     virtual void process_by_channel(uint64_t nsamples, std::vector<double> &input,
                                     std::vector<double> &output);
     virtual void process_by_sample(uint64_t nsamples, std::vector<double> &input,
                                    std::vector<double> &output);
+    virtual void process_by_channel(uint64_t nsamples, std::vector<float> &input,
+                                    std::vector<float> &output);
+    virtual void process_by_sample(uint64_t nsamples, std::vector<float> &input,
+                                   std::vector<float> &output);
+    void process_by_channel(std::vector<std::vector<float>> &input,
+                            std::vector<std::vector<float>> &output);
+    void process_by_sample(std::vector<std::vector<float>> &input,
+                           std::vector<std::vector<float>> &output);
 
 protected:
     bool realize_filter(unsigned int nchannels,
@@ -203,6 +256,7 @@ public:
 
     // single channel, single sample
     double process_channel(double x, unsigned int c = 0) final;
+    float process_channel(float x, unsigned int c = 0);
 
     // all channels, single sample
     void process_sample(std::vector<double> &input,
@@ -210,6 +264,11 @@ public:
     void process_sample(std::vector<double>::iterator input,
                         std::vector<double>::iterator output) final;
     void process_sample(double *input, double *output) final;
+    void process_sample(std::vector<float> &input,
+                        std::vector<float> &output);
+    void process_sample(std::vector<float>::iterator input,
+                        std::vector<float>::iterator output);
+    void process_sample(float *input, float *output);
 
     // single channel, multiple samples
     void process_channel(std::vector<double> &input, std::vector<double> &output,
@@ -219,6 +278,13 @@ public:
                          unsigned int channel = 0) final;
     void process_channel(uint64_t nsamples, double *input, double *output,
                          unsigned int channel = 0) final;
+    void process_channel(std::vector<float> &input, std::vector<float> &output,
+                         unsigned int channel = 0);
+    void process_channel(uint64_t nsamples, std::vector<float>::iterator input,
+                         std::vector<float>::iterator output,
+                         unsigned int channel = 0);
+    void process_channel(uint64_t nsamples, float *input, float *output,
+                         unsigned int channel = 0);
 
     // all channels, multiple samples
     void
@@ -231,11 +297,23 @@ public:
                             double **output) final;
     void process_by_sample(uint64_t nsamples, double **input,
                            double **output) final;
+    void process_by_channel(uint64_t nsamples, float **input,
+                            float **output);
+    void process_by_sample(uint64_t nsamples, float **input,
+                           float **output);
 
     virtual void process_by_channel(uint64_t nsamples, std::vector<double> &input,
                                     std::vector<double> &output);
     virtual void process_by_sample(uint64_t nsamples, std::vector<double> &input,
                                    std::vector<double> &output);
+    virtual void process_by_channel(uint64_t nsamples, std::vector<float> &input,
+                                    std::vector<float> &output);
+    virtual void process_by_sample(uint64_t nsamples, std::vector<float> &input,
+                                   std::vector<float> &output);
+    void process_by_channel(std::vector<std::vector<float>> &input,
+                            std::vector<std::vector<float>> &output);
+    void process_by_sample(std::vector<std::vector<float>> &input,
+                           std::vector<std::vector<float>> &output);
 
 protected:
     bool realize_filter(unsigned int nchannels,

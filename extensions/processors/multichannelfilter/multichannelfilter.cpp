@@ -26,6 +26,7 @@
 
 MultiChannelFilter::MultiChannelFilter() : IProcessor() {
   add_option("filter", filter_def_, "Filter definition.", true);
+  add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
 }
 
 void MultiChannelFilter::Configure(const GlobalContext &context) {
@@ -39,12 +40,12 @@ void MultiChannelFilter::Configure(const GlobalContext &context) {
 }
 
 void MultiChannelFilter::CreatePorts() {
-  data_in_port_ = create_input_port<MultiChannelType<double>>(
-      "data", MultiChannelType<double>::Capabilities(ChannelRange(1, MAX_NCHANNELS)),
+  data_in_port_ = create_input_port<MultiChannelType<float>>(
+      "in", MultiChannelType<float>::Capabilities(ChannelRange(1, MAX_NCHANNELS)),
       PortInPolicy(SlotRange(0, MAX_NCHANNELS)));
 
-  data_out_port_ = create_output_port<MultiChannelType<double>>(
-      "data", MultiChannelType<double>::Parameters(), PortOutPolicy(SlotRange(0, MAX_NCHANNELS)));
+  data_out_port_ = create_output_port<MultiChannelType<float>>(
+      "out", MultiChannelType<float>::Parameters(), PortOutPolicy(SlotRange(0, MAX_NCHANNELS)));
 }
 
 void MultiChannelFilter::CompleteStreamInfo() {
@@ -75,19 +76,23 @@ void MultiChannelFilter::Prepare(GlobalContext &context) {
   for (int k = 0; k < data_in_port_->number_of_slots(); ++k) {
     filters_.push_back(std::move(
         std::unique_ptr<dsp::filter::IFilter>(filter_template_->clone())));
-    const auto& info = data_in_port_->streaminfo(0);
+    const auto& info = data_in_port_->streaminfo(k);
     const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
     filters_.back()->realize(p.nchannels);
   }
 }
 
 void MultiChannelFilter::Process(ProcessingContext &context) {
-  MultiChannelType<double>::Data *data_in = nullptr;
-  MultiChannelType<double>::Data *data_out = nullptr;
+  MultiChannelType<float>::Data *data_in = nullptr;
+  MultiChannelType<float>::Data *data_out = nullptr;
   auto nslots = data_in_port_->number_of_slots();
   decltype(nslots) k = 0;
+  int packet_count_ = 0;
 
   while (!context.terminated()) {
+    if (n_messages_() != -1 && packet_count_ >= n_messages_()) {
+      break;
+    }
     // go through all slots
     for (k = 0; k < nslots; ++k) {
       // retrieve new data
@@ -109,6 +114,7 @@ void MultiChannelFilter::Process(ProcessingContext &context) {
       data_out_port_->slot(k)->PublishData();
       data_in_port_->slot(k)->ReleaseData();
     }
+    packet_count_++;
   }
 }
 

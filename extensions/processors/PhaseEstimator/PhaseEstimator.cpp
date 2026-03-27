@@ -32,7 +32,7 @@
 
 
 PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH) {
-  add_option("n_messages", n_messages_, "Number of packets to receive");
+  add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
   add_option("n_fft", n_fft_, "FFT size");
   add_option("calibrate", calibrate_, "Whether to apply calibration gain");
   add_option("coeff_file", coeff_file_, "Path to bandpass filter coefficients file");
@@ -42,12 +42,12 @@ void PhaseEstimator::CreatePorts() {
   data_in_port_ = create_input_port<MultiChannelType<float>>(
       "in", 
       MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
-      PortInPolicy(SlotRange(1)));
+      PortInPolicy(SlotRange(0,MAX_NCHANNELS)));
 
   data_out_port_ = create_output_port<MultiChannelType<float>>(
       "out",
       MultiChannelType<float>::Parameters(1,1,1), // Placeholder, will be set in CompleteStreamInfo
-      PortOutPolicy(SlotRange(2),200,WaitStrategy::kBlockingStrategy));
+      PortOutPolicy(SlotRange(0,MAX_NCHANNELS),200,WaitStrategy::kBlockingStrategy));
 }
 
 void PhaseEstimator::CompleteStreamInfo() {
@@ -56,7 +56,7 @@ void PhaseEstimator::CompleteStreamInfo() {
       input_info.parameters<MultiChannelType<float>::Parameters>();
 
   for (int k = 0; k < data_out_port_->number_of_slots(); ++k) {
-    data_out_port_->streaminfo(k).set_stream_rate(data_in_port_->streaminfo(k).stream_rate());
+    data_out_port_->streaminfo(k).set_stream_rate(data_in_port_->streaminfo(0).stream_rate());
     dynamic_cast<StreamInfo<MultiChannelType<float>>&>(
       data_out_port_->slot(k)->streaminfo()).set_parameters(input_params);
   }
@@ -388,7 +388,7 @@ void PhaseEstimator::Process(ProcessingContext &context) {
 }
 
 void PhaseEstimator::Postprocess(ProcessingContext &context) {
-  printf("\n PhaseEstimator:Total messages processed: %d", packet_count_);
+  printf("\n ---------------- \n PhaseEstimator: Total messages processed: %d", packet_count_);
 }
 
 REGISTERPROCESSOR(PhaseEstimator);

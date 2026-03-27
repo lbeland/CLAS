@@ -23,6 +23,9 @@ graph:
       options:
         filter: 
           file: filters://butter_lpf_0.1fs.filter
+        n_messages: *n_messages
+      advanced:
+        thread_core: 4
     PhaseEstimator:
       class: PhaseEstimator
       options:
@@ -44,7 +47,8 @@ graph:
         thread_core: 9
   connections:
   - Producer.out.0 = Consumer.in.0
-  - Producer.out.0 = PhaseEstimator.in.0
+  - Producer.out.0 = BandpassFilter.in.0
+  - BandpassFilter.out.0 = PhaseEstimator.in.0
   - PhaseEstimator.out.0 = Consumer.in.1
   - PhaseEstimator.out.1 = Consumer.in.2
 

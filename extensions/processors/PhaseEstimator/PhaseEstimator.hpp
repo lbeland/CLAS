@@ -45,7 +45,7 @@ class PhaseEstimator : public IProcessor {
   PortIn<MultiChannelType<float>> *data_in_port_;
   PortOut<MultiChannelType<float>> *data_out_port_;
 
-  options::Value<unsigned int, false> n_messages_{0};
+  options::Value<int, false> n_messages_{-1};
   options::Value<unsigned int, false> n_fft_{4096};
   options::Value<bool> calibrate_{false};
   options::Value<std::string> coeff_file_{"filters://echt_coefficients.txt"};
@@ -57,4 +57,6 @@ class PhaseEstimator : public IProcessor {
   inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Preprocess
   std::vector<std::complex<float>> coeffs_;  // Filter coefficients of bandpass filter
   std::complex<float> c_gain_;  // Calibration gain for cecHT
+
+  const uint32_t MAX_NCHANNELS=384;
 };

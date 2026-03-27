@@ -33,6 +33,7 @@ const std::string EVENTDATA = "events";
 namespace nsEventType {
 
 using Base = AnyType;
+class Data;
 
 struct Parameters : Base::Parameters {
   Parameters(std::string event = DEFAULT_EVENT)
@@ -43,6 +44,8 @@ struct Parameters : Base::Parameters {
 
 class Capabilities : public Base::Capabilities {
  public:
+  void Validate(const Data &prototype) const;
+
   virtual void Validate(const Parameters &parameters) const {
     if (parameters.default_event.size() == 0) {
       throw std::runtime_error("Default event string cannot be empty.");
@@ -88,6 +91,12 @@ class Data : public Base::Data {
 
   static const unsigned int EVENT_STRING_LENGTH = 128;
 };
+
+inline void Capabilities::Validate(const Data &prototype) const {
+  if (prototype.event().size() == 0) {
+    throw std::runtime_error("Event string cannot be empty.");
+  }
+}
 
 }  // namespace nsEventType
 

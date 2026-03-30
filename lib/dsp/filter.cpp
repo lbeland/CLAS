@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------
 
 #include "filter.hpp"
+#include <format>
 
 using namespace dsp::filter;
 
@@ -130,8 +131,8 @@ IFilter *dsp::filter::construct_from_file(std::string file) {
   } else if (header["type"] == "slope") {
       return SlopeFilter::FromStream(stream, header["description"], binary);
 
-  } else if (header["type"] == "biquad") {
-    return BiquadFilter::FromStream(stream, header["description"], binary);
+  } else if (header["type"] == "sos") {
+    return SOSFilter::FromStream(stream, header["description"], binary);
 
   } else {
     throw std::runtime_error("Unknown filter type in file.");
@@ -139,9 +140,9 @@ IFilter *dsp::filter::construct_from_file(std::string file) {
 }
 
 IFilter *dsp::filter::construct_from_yaml(const YAML::Node &node) {
-  // type: fir OR biquad OR slope
-  // gain: double (biquad only)
-  // coefficients: list of doubles (fir) or list of lists of 6 doubles (biquad)
+  // type: fir OR sos OR slope
+  // gain: double (sos only)
+  // coefficients: list of doubles (fir) or list of lists of 6 doubles (sos)
   // window size : 1 uint (slope filter only)
   // order : 1 uint (slope filter only)
   // derivative order: 1 uint (slope filter only)
@@ -157,20 +158,21 @@ IFilter *dsp::filter::construct_from_yaml(const YAML::Node &node) {
   if (filter_type == "fir") {
     std::vector<double> coef = node["coefficients"].as<std::vector<double>>();
     return new FirFilter(coef, desc);
-
+  // } else if (filter_type == "iir") {
+  //   return new SOSFilter(1,1,"test");
   } else if(filter_type == "slope"){
        uint32_t window_size = node["windows size"].as<unsigned int>(SlopeFilter::DEFAULT_WINDOW_SIZE);
        uint8_t derivative_order = node["derivative order"].as<unsigned int>(SlopeFilter::DEFAULT_ORDER);
        uint8_t order = node["order"].as<unsigned int>(SlopeFilter::DEFAULT_DERIVATIVE_ORDER);
        return new SlopeFilter(window_size, order, derivative_order, desc);
 
-  } else if (filter_type == "biquad") {
+  } else if (filter_type == "sos") {
     double gain = node["gain"].as<double>();
     std::vector<std::array<double, 6>> coef =
         node["coefficients"].as<std::vector<std::array<double, 6>>>();
     // std::vector<std::vector<double>> data =
     // node["coefficients"].as<std::vector<std::vector<double>>>();
-    return new BiquadFilter(gain, coef, desc);
+    return new SOSFilter(gain, coef, desc);
 
   } else {
     throw std::runtime_error("Unknown filter type in YAML.");
@@ -600,22 +602,22 @@ SlopeFilter *SlopeFilter::FromStream(std::istream &stream,
     return new SlopeFilter(window_size, order, derivative_order, description);
 };
 
-BiquadFilter::BiquadFilter(double gain,
+SOSFilter::SOSFilter(double gain,
                            std::vector<std::array<double, 6>> &coefficients,
                            std::string description)
     : IFilter(description), gain_(gain), coefficients_(coefficients) {
 
   nstages_ = coefficients_.size();
   if (nstages_ < 1) {
-    throw std::runtime_error("Invalid number of biquad stages.");
+    throw std::runtime_error("Invalid number of sos stages.");
   }
 }
 
-IFilter *BiquadFilter::clone() {
-  return new BiquadFilter(gain_, coefficients_, description_);
+IFilter *SOSFilter::clone() {
+  return new SOSFilter(gain_, coefficients_, description_);
 }
 
-BiquadFilter *BiquadFilter::FromStream(std::istream &stream,
+SOSFilter *SOSFilter::FromStream(std::istream &stream,
                                        std::string description,
                                        bool binary = false) {
   if (binary) {
@@ -635,10 +637,10 @@ BiquadFilter *BiquadFilter::FromStream(std::istream &stream,
     data.push_back(value);
   }
 
-  // determine number of biquad stages
+  // determine number of sos stages
   if (data.size() % 6 != 0) {
     throw std::runtime_error(
-        "Each biquad stage requires exactly 6 coefficients");
+        "Each sos stage requires exactly 6 coefficients");
   }
 
   unsigned int nstages = data.size() / 6;
@@ -652,12 +654,12 @@ BiquadFilter *BiquadFilter::FromStream(std::istream &stream,
     }
   }
 
-  return new BiquadFilter(gain, coefficients, description);
+  return new SOSFilter(gain, coefficients, description);
 }
 
-unsigned int BiquadFilter::order() const { return nstages_ * 2; }
+unsigned int SOSFilter::order() const { return nstages_ * 2; }
 
-double BiquadFilter::process_channel(double x, unsigned int c) {
+double SOSFilter::process_channel(double x, unsigned int c) {
   double u_n, y_n = 0.0;
 
   for (unsigned int s = 0; s < nstages_; ++s) {
@@ -674,11 +676,22 @@ double BiquadFilter::process_channel(double x, unsigned int c) {
   return y_n * gain_;
 }
 
-float BiquadFilter::process_channel(float x, unsigned int c) {
+float SOSFilter::process_channel(float x, unsigned int c) {
   return static_cast<float>(process_channel(static_cast<double>(x), c));
 }
 
-void BiquadFilter::process_sample(std::vector<float> &input,
+void SOSFilter::process_sample(std::vector<double> &input,
+                                  std::vector<double> &output) {
+  if (!realized_) {
+    throw std::runtime_error("Filter has not been realized yet.");
+  }
+
+  for (unsigned int c = 0; c < nchannels_; ++c) {
+    output[c] = process_channel(input[c], c);
+  }
+}
+
+void SOSFilter::process_sample(std::vector<float> &input,
                                   std::vector<float> &output) {
   if (!realized_) {
     throw std::runtime_error("Filter has not been realized yet.");
@@ -689,7 +702,7 @@ void BiquadFilter::process_sample(std::vector<float> &input,
   }
 }
 
-void BiquadFilter::process_sample(std::vector<double>::iterator input,
+void SOSFilter::process_sample(std::vector<double>::iterator input,
                                   std::vector<double>::iterator output) {
   if (!realized_) {
     throw std::runtime_error("Filter has not been realized yet.");
@@ -701,7 +714,7 @@ void BiquadFilter::process_sample(std::vector<double>::iterator input,
   }
 }
 
-void BiquadFilter::process_sample(double *input, double *output) {
+void SOSFilter::process_sample(double *input, double *output) {
   if (!realized_) {
     throw std::runtime_error("Filter has not been realized yet.");
   }
@@ -712,7 +725,7 @@ void BiquadFilter::process_sample(double *input, double *output) {
   }
 }
 
-void BiquadFilter::process_sample(std::vector<float>::iterator input,
+void SOSFilter::process_sample(std::vector<float>::iterator input,
                                   std::vector<float>::iterator output) {
   if (!realized_) {
     throw std::runtime_error("Filter has not been realized yet.");
@@ -724,7 +737,7 @@ void BiquadFilter::process_sample(std::vector<float>::iterator input,
   }
 }
 
-void BiquadFilter::process_sample(float *input, float *output) {
+void SOSFilter::process_sample(float *input, float *output) {
   if (!realized_) {
     throw std::runtime_error("Filter has not been realized yet.");
   }
@@ -735,7 +748,7 @@ void BiquadFilter::process_sample(float *input, float *output) {
   }
 }
 
-void BiquadFilter::process_channel(std::vector<double> &input,
+void SOSFilter::process_channel(std::vector<double> &input,
                                    std::vector<double> &output,
                                    unsigned int channel) {
   uint64_t nsamples = input.size();
@@ -745,7 +758,7 @@ void BiquadFilter::process_channel(std::vector<double> &input,
   }
 }
 
-void BiquadFilter::process_channel(uint64_t nsamples,
+void SOSFilter::process_channel(uint64_t nsamples,
                                    std::vector<double>::iterator input,
                                    std::vector<double>::iterator output,
                                    unsigned int channel) {
@@ -755,14 +768,14 @@ void BiquadFilter::process_channel(uint64_t nsamples,
   }
 }
 
-void BiquadFilter::process_channel(uint64_t nsamples, double *input,
+void SOSFilter::process_channel(uint64_t nsamples, double *input,
                                    double *output, unsigned int channel) {
   for (uint64_t s = 0; s < nsamples; ++s) {
     output[s] = process_channel(input[s], channel);
   }
 }
 
-void BiquadFilter::process_channel(std::vector<float> &input,
+void SOSFilter::process_channel(std::vector<float> &input,
                                    std::vector<float> &output,
                                    unsigned int channel) {
   uint64_t nsamples = input.size();
@@ -772,7 +785,7 @@ void BiquadFilter::process_channel(std::vector<float> &input,
   }
 }
 
-void BiquadFilter::process_channel(uint64_t nsamples,
+void SOSFilter::process_channel(uint64_t nsamples,
                                    std::vector<float>::iterator input,
                                    std::vector<float>::iterator output,
                                    unsigned int channel) {
@@ -782,14 +795,14 @@ void BiquadFilter::process_channel(uint64_t nsamples,
   }
 }
 
-void BiquadFilter::process_channel(uint64_t nsamples, float *input,
+void SOSFilter::process_channel(uint64_t nsamples, float *input,
                                    float *output, unsigned int channel) {
   for (uint64_t s = 0; s < nsamples; ++s) {
     output[s] = process_channel(input[s], channel);
   }
 }
 
-void BiquadFilter::process_by_channel(
+void SOSFilter::process_by_channel(
     std::vector<std::vector<double>> &input,
     std::vector<std::vector<double>> &output) {
 
@@ -799,28 +812,28 @@ void BiquadFilter::process_by_channel(
   }
 }
 
-void BiquadFilter::process_by_sample(std::vector<std::vector<double>> &input,
+void SOSFilter::process_by_sample(std::vector<std::vector<double>> &input,
                                      std::vector<std::vector<double>> &output) {
   for (unsigned int c = 0; c < nchannels_; ++c) {
     process_channel(input[c], output[c]);
   }
 }
 
-void BiquadFilter::process_by_channel(uint64_t nsamples, double **input,
+void SOSFilter::process_by_channel(uint64_t nsamples, double **input,
                                       double **output) {
   for (uint64_t s = 0; s < nsamples; ++s) {
     process_sample(input[s], output[s]);
   }
 }
 
-void BiquadFilter::process_by_sample(uint64_t nsamples, double **input,
+void SOSFilter::process_by_sample(uint64_t nsamples, double **input,
                                      double **output) {
   for (unsigned int c = 0; c < nchannels_; ++c) {
     process_channel(nsamples, input[c], output[c], c);
   }
 }
 
-void BiquadFilter::process_by_channel(std::vector<std::vector<float>> &input,
+void SOSFilter::process_by_channel(std::vector<std::vector<float>> &input,
                                       std::vector<std::vector<float>> &output) {
   uint64_t nsamples = input.size();
   for (uint64_t s = 0; s < nsamples; ++s) {
@@ -828,28 +841,28 @@ void BiquadFilter::process_by_channel(std::vector<std::vector<float>> &input,
   }
 }
 
-void BiquadFilter::process_by_sample(std::vector<std::vector<float>> &input,
+void SOSFilter::process_by_sample(std::vector<std::vector<float>> &input,
                                      std::vector<std::vector<float>> &output) {
   for (unsigned int c = 0; c < nchannels_; ++c) {
     process_channel(input[c], output[c]);
   }
 }
 
-void BiquadFilter::process_by_channel(uint64_t nsamples, float **input,
+void SOSFilter::process_by_channel(uint64_t nsamples, float **input,
                                       float **output) {
   for (uint64_t s = 0; s < nsamples; ++s) {
     process_sample(input[s], output[s]);
   }
 }
 
-void BiquadFilter::process_by_sample(uint64_t nsamples, float **input,
+void SOSFilter::process_by_sample(uint64_t nsamples, float **input,
                                      float **output) {
   for (unsigned int c = 0; c < nchannels_; ++c) {
     process_channel(nsamples, input[c], output[c], c);
   }
 }
 
-void BiquadFilter::process_by_channel(uint64_t nsamples,
+void SOSFilter::process_by_channel(uint64_t nsamples,
                                       std::vector<double> &input,
                                       std::vector<double> &output) {
   assert(nsamples * nchannels_ == input.size() &&
@@ -863,7 +876,7 @@ void BiquadFilter::process_by_channel(uint64_t nsamples,
   }
 }
 
-void BiquadFilter::process_by_sample(uint64_t nsamples,
+void SOSFilter::process_by_sample(uint64_t nsamples,
                                      std::vector<double> &input,
                                      std::vector<double> &output) {
   assert(nsamples * nchannels_ == input.size() &&
@@ -877,7 +890,7 @@ void BiquadFilter::process_by_sample(uint64_t nsamples,
   }
 }
 
-void BiquadFilter::process_by_channel(uint64_t nsamples,
+void SOSFilter::process_by_channel(uint64_t nsamples,
                                       std::vector<float> &input,
                                       std::vector<float> &output) {
   assert(nsamples * nchannels_ == input.size() &&
@@ -891,7 +904,7 @@ void BiquadFilter::process_by_channel(uint64_t nsamples,
   }
 }
 
-void BiquadFilter::process_by_sample(uint64_t nsamples,
+void SOSFilter::process_by_sample(uint64_t nsamples,
                                      std::vector<float> &input,
                                      std::vector<float> &output) {
   assert(nsamples * nchannels_ == input.size() &&
@@ -905,7 +918,7 @@ void BiquadFilter::process_by_sample(uint64_t nsamples,
   }
 }
 
-bool BiquadFilter::realize_filter(unsigned int nchannels, double init) {
+bool SOSFilter::realize_filter(unsigned int nchannels, double init) {
   for (unsigned int k = 0; k < nchannels; ++k) {
     registers_.push_back(std::vector<std::array<double, 2>>(nstages_));
     for (auto &it : registers_.back()) {
@@ -916,4 +929,4 @@ bool BiquadFilter::realize_filter(unsigned int nchannels, double init) {
   return true;
 }
 
-void BiquadFilter::unrealize_filter() { registers_.clear(); }
+void SOSFilter::unrealize_filter() { registers_.clear(); }

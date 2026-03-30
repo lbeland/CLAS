@@ -132,7 +132,7 @@ protected:
 class FirFilter : public IFilter {
 public:
     FirFilter(const std::vector<double> &coefficients, std::string description = "");
-    virtual IFilter *clone();
+    virtual IFilter *clone() override;
 
     static FirFilter *FromStream(std::istream &stream, std::string description,
                                  bool binary = false);
@@ -142,65 +142,65 @@ public:
     std::size_t group_delay() const;
 
     // single channel, single sample
-    double process_channel(double input, unsigned int channel = 0) final;
-    float process_channel(float input, unsigned int channel = 0);
+    double process_channel(double input, unsigned int channel = 0) override;
+    float process_channel(float input, unsigned int channel = 0) override;
 
     // all channels, single sample
     void process_sample(std::vector<double> &input,
-                        std::vector<double> &output) final;
+                        std::vector<double> &output) override;
     void process_sample(std::vector<double>::iterator input,
-                        std::vector<double>::iterator output) final;
-    void process_sample(double *input, double *output) final;
+                        std::vector<double>::iterator output) override;
+    void process_sample(double *input, double *output) override;
     void process_sample(std::vector<float> &input,
-                        std::vector<float> &output);
+                        std::vector<float> &output) override;
     void process_sample(std::vector<float>::iterator input,
-                        std::vector<float>::iterator output);
-    void process_sample(float *input, float *output);
+                        std::vector<float>::iterator output) override;
+    void process_sample(float *input, float *output) override;
 
     // single channel, multiple samples
     void process_channel(std::vector<double> &input, std::vector<double> &output,
-                         unsigned int channel = 0) final;
+                         unsigned int channel = 0) override;
     void process_channel(uint64_t nsamples, std::vector<double>::iterator input,
                          std::vector<double>::iterator output,
-                         unsigned int channel = 0);
+                         unsigned int channel = 0) override;
     void process_channel(uint64_t nsamples, double *input, double *output,
-                         unsigned int channel = 0);
+                         unsigned int channel = 0) override;
     void process_channel(std::vector<float> &input, std::vector<float> &output,
-                         unsigned int channel = 0);
+                         unsigned int channel = 0) override;
     void process_channel(uint64_t nsamples, std::vector<float>::iterator input,
                          std::vector<float>::iterator output,
-                         unsigned int channel = 0);
+                         unsigned int channel = 0) override;
     void process_channel(uint64_t nsamples, float *input, float *output,
-                         unsigned int channel = 0);
+                         unsigned int channel = 0) override;
 
     // all channels, multiple samples
     void
     process_by_channel(std::vector<std::vector<double>> &input,
-                       std::vector<std::vector<double>> &output) final;
+                       std::vector<std::vector<double>> &output) override;
     void
     process_by_sample(std::vector<std::vector<double>> &input,
-                      std::vector<std::vector<double>> &output) final;
+                      std::vector<std::vector<double>> &output) override;
     void process_by_channel(uint64_t nsamples, double **input,
-                            double **output) final;
+                            double **output) override;
     void process_by_sample(uint64_t nsamples, double **input,
-                           double **output) final;
+                           double **output) override;
     void process_by_channel(uint64_t nsamples, float **input,
-                            float **output);
+                            float **output) override;
     void process_by_sample(uint64_t nsamples, float **input,
-                           float **output);
+                           float **output) override;
 
     virtual void process_by_channel(uint64_t nsamples, std::vector<double> &input,
-                                    std::vector<double> &output);
+                                    std::vector<double> &output) override;
     virtual void process_by_sample(uint64_t nsamples, std::vector<double> &input,
-                                   std::vector<double> &output);
+                                   std::vector<double> &output) override;
     virtual void process_by_channel(uint64_t nsamples, std::vector<float> &input,
-                                    std::vector<float> &output);
+                                    std::vector<float> &output) override;
     virtual void process_by_sample(uint64_t nsamples, std::vector<float> &input,
-                                   std::vector<float> &output);
+                                   std::vector<float> &output) override;
     void process_by_channel(std::vector<std::vector<float>> &input,
-                            std::vector<std::vector<float>> &output);
+                            std::vector<std::vector<float>> &output) override;
     void process_by_sample(std::vector<std::vector<float>> &input,
-                           std::vector<std::vector<float>> &output);
+                           std::vector<std::vector<float>> &output) override;
 
 protected:
     bool realize_filter(unsigned int nchannels,
@@ -243,77 +243,77 @@ public:
     static constexpr uint8_t DEFAULT_DERIVATIVE_ORDER = 1;
 };
 
-class BiquadFilter : public IFilter {
+class SOSFilter : public IFilter {
 public:
-    BiquadFilter(double gain, std::vector<std::array<double, 6>> &coefficients,
+    SOSFilter(double gain, std::vector<std::array<double, 6>> &coefficients,
                  std::string description = "");
-    virtual IFilter *clone();
+    virtual IFilter *clone() override;
 
-    static BiquadFilter *FromStream(std::istream &stream, std::string description,
+    static SOSFilter *FromStream(std::istream &stream, std::string description,
                                     bool binary);
 
     unsigned int order() const final;
 
     // single channel, single sample
-    double process_channel(double x, unsigned int c = 0) final;
-    float process_channel(float x, unsigned int c = 0);
+    double process_channel(double x, unsigned int c = 0) override;
+    float process_channel(float x, unsigned int c = 0) override;
 
     // all channels, single sample
     void process_sample(std::vector<double> &input,
-                        std::vector<double> &output) final{};
+                        std::vector<double> &output) override;
     void process_sample(std::vector<double>::iterator input,
-                        std::vector<double>::iterator output) final;
-    void process_sample(double *input, double *output) final;
+                        std::vector<double>::iterator output) override;
+    void process_sample(double *input, double *output) override;
     void process_sample(std::vector<float> &input,
-                        std::vector<float> &output);
+                        std::vector<float> &output) override;
     void process_sample(std::vector<float>::iterator input,
-                        std::vector<float>::iterator output);
-    void process_sample(float *input, float *output);
+                        std::vector<float>::iterator output) override;
+    void process_sample(float *input, float *output) override;
 
     // single channel, multiple samples
     void process_channel(std::vector<double> &input, std::vector<double> &output,
-                         unsigned int channel = 0) final;
+                         unsigned int channel = 0) override;
     void process_channel(uint64_t nsamples, std::vector<double>::iterator input,
                          std::vector<double>::iterator output,
-                         unsigned int channel = 0) final;
+                         unsigned int channel = 0) override;
     void process_channel(uint64_t nsamples, double *input, double *output,
-                         unsigned int channel = 0) final;
+                         unsigned int channel = 0) override;
     void process_channel(std::vector<float> &input, std::vector<float> &output,
-                         unsigned int channel = 0);
+                         unsigned int channel = 0) override;
     void process_channel(uint64_t nsamples, std::vector<float>::iterator input,
                          std::vector<float>::iterator output,
-                         unsigned int channel = 0);
+                         unsigned int channel = 0) override;
     void process_channel(uint64_t nsamples, float *input, float *output,
-                         unsigned int channel = 0);
+                         unsigned int channel = 0) override;
 
     // all channels, multiple samples
     void
     process_by_channel(std::vector<std::vector<double>> &input,
-                       std::vector<std::vector<double>> &output) final;
+                       std::vector<std::vector<double>> &output) override;
     void
     process_by_sample(std::vector<std::vector<double>> &input,
-                      std::vector<std::vector<double>> &output) final;
+                      std::vector<std::vector<double>> &output) override;
     void process_by_channel(uint64_t nsamples, double **input,
-                            double **output) final;
+                            double **output) override;
     void process_by_sample(uint64_t nsamples, double **input,
-                           double **output) final;
+                           double **output) override;
     void process_by_channel(uint64_t nsamples, float **input,
-                            float **output);
+                            float **output) override;
     void process_by_sample(uint64_t nsamples, float **input,
-                           float **output);
+                           float **output) override;
 
     virtual void process_by_channel(uint64_t nsamples, std::vector<double> &input,
-                                    std::vector<double> &output);
+                                    std::vector<double> &output) override;
     virtual void process_by_sample(uint64_t nsamples, std::vector<double> &input,
-                                   std::vector<double> &output);
+                                   std::vector<double> &output) override;
     virtual void process_by_channel(uint64_t nsamples, std::vector<float> &input,
-                                    std::vector<float> &output);
+                                    std::vector<float> &output) override;
     virtual void process_by_sample(uint64_t nsamples, std::vector<float> &input,
-                                   std::vector<float> &output);
+                                   std::vector<float> &output) override;
     void process_by_channel(std::vector<std::vector<float>> &input,
-                            std::vector<std::vector<float>> &output);
+                            std::vector<std::vector<float>> &output) override;
     void process_by_sample(std::vector<std::vector<float>> &input,
-                           std::vector<std::vector<float>> &output);
+                           std::vector<std::vector<float>> &output) override;
 
 protected:
     bool realize_filter(unsigned int nchannels,

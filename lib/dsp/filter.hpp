@@ -245,7 +245,13 @@ public:
 
 class SOSFilter : public IFilter {
 public:
-    SOSFilter(double gain, std::vector<std::array<double, 6>> &coefficients,
+    struct SOSSection {
+        unsigned int order;   // 1 or 2
+        double b0, b1, b2;
+        double a0, a1, a2;
+    };
+
+    SOSFilter(double gain, std::vector<SOSSection> coefficients,
                  std::string description = "");
     virtual IFilter *clone() override;
 
@@ -322,7 +328,8 @@ protected:
 
 protected:
     double gain_;
-    std::vector<std::array<double, 6>> coefficients_;
+    std::vector<SOSSection> coefficients_;
+    // std::vector<std::array<double, 6>> coefficients_; 
 
     unsigned int nstages_;
 

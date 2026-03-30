@@ -31,10 +31,18 @@ MultiChannelFilter::MultiChannelFilter() : IProcessor() {
 
 void MultiChannelFilter::Configure(const GlobalContext &context) {
   if (!filter_def_()["file"]) {
-    filter_template_.reset(dsp::filter::construct_from_yaml(filter_def_()));
+    // filter_template_.reset(dsp::filter::construct_from_yaml(filter_def_()));
+    int N = filter_def_()["N"].as<int>(1);
+    float low_cutoff = filter_def_()["low_cutoff"].as<float>();
+    float high_cutoff = filter_def_()["high_cutoff"].as<float>();
+    int fs = filter_def_()["fs"].as<int>();
+    std::string filename;
+    filename = std::to_string(N) + "_" + std::format("{:.1f}", low_cutoff) + "_" + std::format("{:.1f}", high_cutoff) + "_" + std::to_string(fs) + ".txt";      
+
+    std::string f = context.resolve_path(filename, "filters");
+    filter_template_.reset(dsp::filter::construct_from_file(f));
   } else {
-    std::string f = context.resolve_path(
-        filter_def_()["file"].as<std::string>(), "filters");
+    std::string f = context.resolve_path(filter_def_()["file"].as<std::string>(), "filters");
     filter_template_.reset(dsp::filter::construct_from_file(f));
   }
 }
@@ -99,6 +107,7 @@ void MultiChannelFilter::Process(ProcessingContext &context) {
       if (!data_in_port_->slot(k)->RetrieveData(data_in)) {
         break;
       }
+      TimePoint start_time = Clock::now();
 
       // claim output data buckets
       data_out = data_out_port_->slot(k)->ClaimData(false);
@@ -109,6 +118,10 @@ void MultiChannelFilter::Process(ProcessingContext &context) {
 
       data_out->set_sample_timestamps(data_in->sample_timestamps());
       data_out->CloneTimestamps(*data_in);
+
+      TimePoint end_time = Clock::now();
+      auto processing_time = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
+      // printf("Processed packet %d from slot %d in %ld microseconds\n", packet_count_, k, processing_time);
 
       // publish and release data
       data_out_port_->slot(k)->PublishData();

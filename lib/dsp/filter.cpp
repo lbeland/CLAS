@@ -167,13 +167,57 @@ IFilter *dsp::filter::construct_from_yaml(const YAML::Node &node) {
        return new SlopeFilter(window_size, order, derivative_order, desc);
 
   } else if (filter_type == "sos") {
-    double gain = node["gain"].as<double>();
-    std::vector<std::array<double, 6>> coef =
-        node["coefficients"].as<std::vector<std::array<double, 6>>>();
-    // std::vector<std::vector<double>> data =
-    // node["coefficients"].as<std::vector<std::vector<double>>>();
-    return new SOSFilter(gain, coef, desc);
+        double gain = node["gain"].as<double>(1.0);
 
+    if (!node["sections"] || !node["sections"].IsSequence()) {
+      throw std::runtime_error("SOS filter requires a 'sections' sequence.");
+    }
+
+    std::vector<SOSFilter::SOSSection> sections;
+    sections.reserve(node["sections"].size());
+
+    for (const auto& sec_node : node["sections"]) {
+      if (!sec_node["b"] || !sec_node["a"]) {
+        throw std::runtime_error("Each SOS section must contain 'b' and 'a'.");
+      }
+
+      std::vector<double> b = sec_node["b"].as<std::vector<double>>();
+      std::vector<double> a = sec_node["a"].as<std::vector<double>>();
+
+      if (b.size() != a.size()) {
+        throw std::runtime_error("SOS section requires 'b' and 'a' of equal length.");
+      }
+
+      if (b.size() != 2 && b.size() != 3) {
+        throw std::runtime_error("SOS section must be first- or second-order.");
+      }
+
+      SOSFilter::SOSSection sec{};
+
+      if (b.size() == 2) {
+        sec.order = 1;
+        sec.b0 = b[0];
+        sec.b1 = b[1];
+        sec.b2 = 0.0;
+
+        sec.a0 = a[0];
+        sec.a1 = a[1];
+        sec.a2 = 0.0;
+      } else { // size == 3
+        sec.order = 2;
+        sec.b0 = b[0];
+        sec.b1 = b[1];
+        sec.b2 = b[2];
+
+        sec.a0 = a[0];
+        sec.a1 = a[1];
+        sec.a2 = a[2];
+      }
+
+      sections.push_back(sec);
+    }
+
+    return new SOSFilter(gain, sections, desc);
   } else {
     throw std::runtime_error("Unknown filter type in YAML.");
   }
@@ -603,13 +647,33 @@ SlopeFilter *SlopeFilter::FromStream(std::istream &stream,
 };
 
 SOSFilter::SOSFilter(double gain,
-                           std::vector<std::array<double, 6>> &coefficients,
+                           std::vector<SOSFilter::SOSSection> coefficients,
                            std::string description)
     : IFilter(description), gain_(gain), coefficients_(coefficients) {
+
 
   nstages_ = coefficients_.size();
   if (nstages_ < 1) {
     throw std::runtime_error("Invalid number of sos stages.");
+  }
+
+  for (auto& sec : coefficients_) {
+
+    if (sec.a0 == 0.0) {
+      throw std::runtime_error("SOS section has invalid a0 = 0.");
+    }
+
+    sec.b0 /= sec.a0;
+    sec.b1 /= sec.a0;
+    sec.b2 /= sec.a0;
+    sec.a1 /= sec.a0;
+    sec.a2 /= sec.a0;
+    sec.a0 = 1.0;
+
+    if (sec.order == 1) {
+      sec.b2 = 0.0;
+      sec.a2 = 0.0;
+    }
   }
 }
 
@@ -644,32 +708,67 @@ SOSFilter *SOSFilter::FromStream(std::istream &stream,
   }
 
   unsigned int nstages = data.size() / 6;
-  std::vector<std::array<double, 6>> coefficients(nstages);
+  std::vector<SOSFilter::SOSSection> coefficients;
+  coefficients.reserve(nstages);
 
   auto data_it = data.begin();
 
+  constexpr double eps = 1e-15;
+
   for (unsigned int stage = 0; stage < nstages; ++stage) {
-    for (unsigned int coef = 0; coef < 6; ++coef) {
-      coefficients[stage][coef] = (*data_it++);
+    SOSFilter::SOSSection section;
+    section.b0 = *data_it++;
+    section.b1 = *data_it++;
+    section.b2 = *data_it++;
+    section.a0 = *data_it++;
+    section.a1 = *data_it++;
+    section.a2 = *data_it++;
+    if (std::abs(section.b2) < eps && std::abs(section.a2) < eps) {
+      section.order = 1;
+    } else {
+      section.order = 2;
     }
+    coefficients.push_back(section);
   }
 
   return new SOSFilter(gain, coefficients, description);
 }
 
-unsigned int SOSFilter::order() const { return nstages_ * 2; }
+unsigned int SOSFilter::order() const {
+  unsigned int total = 0;
+  for (const auto& sec : coefficients_) {
+    total += sec.order;
+  }
+  return total;
+}
 
 double SOSFilter::process_channel(double x, unsigned int c) {
-  double u_n, y_n = 0.0;
+  if (!realized_) {
+    throw std::runtime_error("Filter has not been realized yet.");
+  }
+
+  double u_n = 0.0;
+  double y_n = 0.0;
 
   for (unsigned int s = 0; s < nstages_; ++s) {
-    u_n = x - coefficients_[s][4] * registers_[c][s][0] -
-          coefficients_[s][5] * registers_[c][s][1];
-    y_n = coefficients_[s][0] * u_n +
-          coefficients_[s][1] * registers_[c][s][0] +
-          coefficients_[s][2] * registers_[c][s][1];
-    registers_[c][s][1] = registers_[c][s][0];
-    registers_[c][s][0] = u_n;
+    const auto& sec = coefficients_[s];
+    auto& z1 = registers_[c][s][0];
+    auto& z2 = registers_[c][s][1];
+
+    if (sec.order == 1) {
+      u_n = x - sec.a1 * z1;
+      y_n = sec.b0 * u_n + sec.b1 * z1;
+
+      z1 = u_n;
+      z2 = 0.0;
+    } else if (sec.order == 2) {
+      u_n = x - sec.a1 * z1 - sec.a2 * z2;
+      y_n = sec.b0 * u_n + sec.b1 * z1 + sec.b2 * z2;
+
+      z2 = z1;
+      z1 = u_n;
+    }
+
     x = y_n;
   }
 

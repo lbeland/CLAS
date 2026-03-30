@@ -35,7 +35,27 @@ PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH) {
   add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
   add_option("n_fft", n_fft_, "FFT size");
   add_option("calibrate", calibrate_, "Whether to apply calibration gain");
-  add_option("coeff_file", coeff_file_, "Path to bandpass filter coefficients file");
+  add_option("filter", filter_def_, "Filter definition.", true);
+}
+
+void PhaseEstimator::Configure(const GlobalContext &context) {
+  if (!filter_def_()["file"]) {
+    float iaf = 10.0;  // Initial guess for individual alpha frequency, will be used to determine initial filter parameters
+    int N = filter_def_()["N"].as<int>(1);
+    float bandwith = filter_def_()["bandwidth"].as<float>(4.0);
+    float low_cutoff = iaf - bandwith/2.0;
+    float high_cutoff = iaf + bandwith/2.0;
+    int fs = filter_def_()["fs"].as<int>(10000);
+    int window_size = filter_def_()["length"].as<int>(n_fft_());
+    std::string filename;
+    filename = std::to_string(N) + "_" + std::format("{:.1f}", low_cutoff) + "_" + std::format("{:.1f}", high_cutoff) + "_" + std::to_string(fs) + "_" + std::to_string(window_size) + ".txt";      
+
+    coeff_file_ = context.resolve_path(filename, "filters");
+    
+  } else {
+    coeff_file_ = context.resolve_path(
+        filter_def_()["file"].as<std::string>(), "filters");
+  }
 }
 
 void PhaseEstimator::CreatePorts() {
@@ -63,59 +83,13 @@ void PhaseEstimator::CompleteStreamInfo() {
 
 }
 
-void PhaseEstimator::Preprocess(ProcessingContext &context) {
-  const auto& info = data_in_port_->streaminfo(0);
-  const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
-  LOG(INFO) << "Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
-  fs_ = p.sample_rate;
-  f0_ = 10.0;
-  int N = static_cast<int>(fs_ * (1.0/f0_)*2.0);  // 2 cycles of a 10 Hz sine wave
-  sample_window.set_capacity(N);
-  LOG(INFO) << "Sample window size set to " << sample_window.capacity() << "\n";
-
-  const int n_fft = static_cast<int>(n_fft_());
-  if (n_fft < N) {
-    throw std::runtime_error("PhaseEstimator: n_fft must be >= window length");
-  }
-
-  coeffs_.reserve(static_cast<size_t>(n_fft));
-
-  // Load bandpass filter coefficients for cecHT from file
-  std::string coeff_file = context.resolve_path(coeff_file_());
-  std::ifstream coeffs;
-  if (!coeffs.is_open()) {
-    coeffs.open(coeff_file);
-  }
-  if (!coeffs.is_open()) {
-    throw std::runtime_error("PhaseEstimator: could not open coefficients file");
-  }
-
-  std::string line;
-  size_t line_number = 0;
-  while (std::getline(coeffs, line)) {
-    ++line_number;
-    if (line.empty()) {
-      continue;
-    }
-
-    std::stringstream ss(line);
-    float real = 0.0f;
-    float imag = 0.0f;
-    char comma = '\0';
-    if (!(ss >> real >> comma >> imag) || comma != ',') {
-      throw std::runtime_error(
-          "PhaseEstimator: invalid coefficient format at line " + std::to_string(line_number));
-    }
-    
-
-    coeffs_.emplace_back(real, imag);
-  }
+void PhaseEstimator::calibrate_gain(const int N) {
+  // This function calculates the MSE-optimal calibration gain for cecHT based on the provided bandpass filter coefficients.
 
   if (calibrate_()) {
-    LOG(INFO) << "Calculating calibration gain...";
 
     // Calculate calibration gain
-    const int L = n_fft;
+    const int L = n_fft_();
     const int n = N - 1;
     const double PI = std::acos(-1.0);
     const double omega0 = 2.0 * PI * f0_ / fs_;
@@ -137,9 +111,6 @@ void PhaseEstimator::Preprocess(ProcessingContext &context) {
 
     std::complex<double> P_sum(0.0, 0.0);
     std::complex<double> M_sum(0.0, 0.0);
-
-    std::vector<std::complex<float>> shifted_coeffs_(n_fft);
-    ifftshift(coeffs_, shifted_coeffs_, L);
 
     for (int k = 0; k < L; ++k) {
       double omega_k = 2.0 * PI * k / L;
@@ -166,8 +137,8 @@ void PhaseEstimator::Preprocess(ProcessingContext &context) {
 
       // Combine Hilbert multiplier with loaded bandpass coefficients
       std::complex<double> coeff_k = std::complex<double>(
-          static_cast<double>(shifted_coeffs_[k].real()),
-          static_cast<double>(shifted_coeffs_[k].imag())
+          static_cast<double>(coeffs_[k].real()),
+          static_cast<double>(coeffs_[k].imag())
       );
       std::complex<double> G = h_mult * coeff_k;
 
@@ -201,6 +172,52 @@ void PhaseEstimator::Preprocess(ProcessingContext &context) {
   LOG(INFO) << "Calibration gain set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i\n";
 }
 
+void PhaseEstimator::load_filter_coeffs() {
+  coeffs_.reserve(static_cast<size_t>(n_fft_()));
+
+  // Load bandpass filter coefficients for cecHT from file
+  std::ifstream stream(coeff_file_);
+
+  if (!stream.good()) {
+    throw std::runtime_error("PhaseEstimator: Cannot open filter coefficients file");
+  }
+
+  auto header = dsp::filter::parse_file_header(stream);
+
+  if (header["type"] != "frequency response") {
+    throw std::runtime_error("PhaseEstimator: Expected frequency response in file");
+  }
+
+  float real = 0.0f;
+  float imag = 0.0f;
+  while (stream >> real >> imag) {
+    coeffs_.emplace_back(real, imag);
+  }
+
+  if (coeffs_.size() < static_cast<size_t>(n_fft_())) {
+    throw std::runtime_error(
+        "PhaseEstimator: coefficient file has fewer bins than n_fft");
+  }
+}
+
+void PhaseEstimator::Preprocess(ProcessingContext &context) {
+  const auto& info = data_in_port_->streaminfo(0);
+  const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
+  LOG(INFO) << "Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
+  fs_ = p.sample_rate;
+  f0_ = 10.0;
+  int N = static_cast<int>(fs_ * (1.0/f0_)*2.0);  // 2 cycles of a 10 Hz sine wave
+  sample_window.set_capacity(N);
+  LOG(INFO) << "Sample window size set to " << sample_window.capacity() << "\n";
+
+  const int n_fft = static_cast<int>(n_fft_());
+  if (n_fft < N) {
+    throw std::runtime_error("PhaseEstimator: n_fft must be >= window length");
+  }
+  load_filter_coeffs();
+  calibrate_gain(N);
+}
+
 int PhaseEstimator::get_max_bin(fftwf_complex* out, size_t out_size) {
   int max_bin = -1;
   double max_mag2 = -1.0;
@@ -218,12 +235,7 @@ int PhaseEstimator::get_max_bin(fftwf_complex* out, size_t out_size) {
   return max_bin;
 }
 
-
 void PhaseEstimator::construct_analytic_spectrum(int n_fft, const fftwf_complex* half, fftwf_complex* full){
-  for (int k = 0; k < n_fft; ++k) {
-      full[k][0] = 0.0;
-      full[k][1] = 0.0;
-  }
 
   full[0][0] = half[0][0];
   full[0][1] = half[0][1];
@@ -236,10 +248,19 @@ void PhaseEstimator::construct_analytic_spectrum(int n_fft, const fftwf_complex*
 
       full[n_fft / 2][0] = half[n_fft / 2][0];
       full[n_fft / 2][1] = half[n_fft / 2][1];
+
+      for (int k = n_fft / 2 + 1; k < n_fft; ++k) {
+          full[k][0] = 0.0;
+          full[k][1] = 0.0;
+      }
   } else {
       for (int k = 1; k <= (n_fft - 1) / 2; ++k) {
           full[k][0] = 2.0 * half[k][0];
           full[k][1] = 2.0 * half[k][1];
+      }
+      for (int k = (n_fft + 1) / 2; k < n_fft; ++k) {
+          full[k][0] = 0.0;
+          full[k][1] = 0.0;
       }
   }
 }
@@ -252,6 +273,7 @@ void PhaseEstimator::fftshift(const fftwf_complex* in, fftwf_complex* out, int L
         out[k][1] = in[src][1];
     }
 }
+
 void PhaseEstimator::ifftshift(const fftwf_complex* in, fftwf_complex* out, int L) {
     int s = (L + 1) / 2;  // ceil(L/2)
     for (int k = 0; k < L; ++k) {
@@ -284,7 +306,7 @@ void PhaseEstimator::Process(ProcessingContext &context) {
   float* signal_in = fftwf_alloc_real(n_fft);
   fftwf_complex* freq_half = fftwf_alloc_complex(n_fft/2 + 1);
   fftwf_complex* freq = fftwf_alloc_complex(n_fft);
-  fftwf_complex* freq_shifted = fftwf_alloc_complex(n_fft);
+  // fftwf_complex* freq_shifted = fftwf_alloc_complex(n_fft);
   fftwf_complex* out = fftwf_alloc_complex(n_fft);
 
   fftwf_plan p = fftwf_plan_dft_r2c_1d(n_fft, signal_in, freq_half, FFTW_ESTIMATE);
@@ -333,19 +355,19 @@ void PhaseEstimator::Process(ProcessingContext &context) {
       construct_analytic_spectrum(n_fft, freq_half, freq);
 
       // Shift the spectrum so that the DC component is at the center
-      fftshift(freq, freq_shifted, n_fft);
+      // fftshift(freq, freq_shifted, n_fft);
 
       // Multiply with Bandpass filter
       for (int k=0; k < n_fft; k++) {
-        const float in_re = freq_shifted[k][0];
-        const float in_im = freq_shifted[k][1];
+        const float in_re = freq[k][0];
+        const float in_im = freq[k][1];
         const float c_re = coeffs_[k].real();
         const float c_im = coeffs_[k].imag();
 
-        freq_shifted[k][0] = in_re * c_re - in_im * c_im;
-        freq_shifted[k][1] = in_re * c_im + in_im * c_re;
+        freq[k][0] = in_re * c_re - in_im * c_im;
+        freq[k][1] = in_re * c_im + in_im * c_re;
       }
-      ifftshift(freq_shifted, freq, n_fft);
+      // ifftshift(freq_shifted, freq, n_fft);
 
       // IFFT
       fftwf_execute(p_inv);
@@ -382,7 +404,7 @@ void PhaseEstimator::Process(ProcessingContext &context) {
   fftwf_destroy_plan(p_inv);
   fftwf_free(signal_in);
   fftwf_free(freq_half);
-  fftwf_free(freq_shifted);
+  // fftwf_free(freq_shifted);
   fftwf_free(freq);
   fftwf_free(out);
 }

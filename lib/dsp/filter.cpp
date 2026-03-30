@@ -162,8 +162,8 @@ IFilter *dsp::filter::construct_from_yaml(const YAML::Node &node) {
   //   return new SOSFilter(1,1,"test");
   } else if(filter_type == "slope"){
        uint32_t window_size = node["windows size"].as<unsigned int>(SlopeFilter::DEFAULT_WINDOW_SIZE);
-       uint8_t derivative_order = node["derivative order"].as<unsigned int>(SlopeFilter::DEFAULT_ORDER);
-       uint8_t order = node["order"].as<unsigned int>(SlopeFilter::DEFAULT_DERIVATIVE_ORDER);
+       uint8_t derivative_order = node["derivative order"].as<unsigned int>(SlopeFilter::DEFAULT_DERIVATIVE_ORDER);
+       uint8_t order = node["order"].as<unsigned int>(SlopeFilter::DEFAULT_ORDER);
        return new SlopeFilter(window_size, order, derivative_order, desc);
 
   } else if (filter_type == "sos") {

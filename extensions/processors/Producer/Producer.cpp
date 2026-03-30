@@ -114,6 +114,11 @@ void Producer::Postprocess(ProcessingContext &context) {
   std::vector<double> send_times_diff;
   int start_idx = window_size_();  // Skip the first window_size packets because PhaseEstimator is not activ when window is not full
   int n_times = send_times.size() - start_idx;
+  if (n_times <= 0) {
+      statistic_print << "\n Not enough messages to calculate statistics after skipping the first " << window_size_() << " packets.";
+      std::cout << statistic_print.str();
+      return;
+  }
 
   send_times_diff.resize(static_cast<std::size_t>(n_times-1));
 

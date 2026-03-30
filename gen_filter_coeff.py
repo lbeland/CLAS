@@ -1,20 +1,81 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-from meegkit.phase import ECHT
+from scipy.signal import butter, freqz_sos
+import os
 
-# Load data
-samples = np.arange(2048)
+def gen_bandpass(N, low_cutoff, high_cutoff, fs, length, output_folder):
 
-f0 = 10
-filt_BW = f0 / 2
-l_freq = f0 - filt_BW / 2
-h_freq = f0 + filt_BW / 2
+    filename = f"{N}_{low_cutoff:.1f}_{high_cutoff:.1f}_{fs}{'_' + str(length) if length is not None else ''}.txt"
+    output_path = f"{output_folder}/{filename}"
+    if os.path.exists(output_path):
+        return
 
-echt = ECHT(l_freq, h_freq, 10000, filt_order=1)
-Xf = echt.fit(samples)
+    print(f"Generating coefficients for {low_cutoff:.2f}-{high_cutoff:.2f}Hz")
+    Wn = [low_cutoff / (fs / 2), high_cutoff / (fs / 2)]
+    sos = butter(N=N, Wn=Wn, btype="band", output="sos")
 
-plt.plot(echt.coef_)
-plt.show()
-np.savetxt('echt_coefficients.txt', np.vstack((np.real(echt.coef_[:,0]), np.imag(echt.coef_[:,0]))).T, delimiter=',')
+    if length is not None:
+        # Store frequency response of bandpass filter (for PhaseEstimator)
+        filt_freq = np.fft.fftfreq(length, d=1 / fs)
+        _, H_center = freqz_sos(sos, worN=filt_freq, fs=fs)
+        coeffs = H_center[:, None]
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("##\n")
+            f.write("# type = frequency response\n")
+            f.write(f"# description = Frequency response of bandpass filter {low_cutoff:.2f}-{high_cutoff:.2f}Hz @ {fs}Hz ({length} samples)\n")
+            f.write("# format = text\n")
+            f.write("##\n")
+
+            for i in range(len(filt_freq)):
+                f.write(f"{H_center[i].real:.18g} {H_center[i].imag:.18g}\n")
+        # np.savetxt(output_path, np.vstack((np.real(coeffs[:,0]), np.imag(coeffs[:,0]))).T, delimiter=',')
+    else:
+        # Store filter coefficients (for MultiChannelFilter)
+        description = (
+            f"Bandpass SOS {low_cutoff:.2f}-{high_cutoff:.2f}Hz @ {fs}Hz"
+        )
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            # Header format expected by parse_file_header in lib/dsp/filter.cpp.
+            f.write("##\n")
+            f.write("# type = sos\n")
+            f.write(f"# description = {description}\n")
+            f.write("# format = text\n")
+            f.write("##\n")
+
+            # SOSFilter::FromStream expects: gain on first numeric line,
+            # then flattened SOS rows as whitespace-separated values.
+            f.write("1.0\n")
+            for row in sos:
+                f.write(" ".join(f"{coef:.18g}" for coef in row) + "\n")
+
+    return
+
+
+if __name__ == "__main__":
+    # gen_bandpass(8, 12, 10000,2000)
+    gen_bandpass(6,8,12,10000,output_folder=".")
+
+    # window_size = 2000
+    # fs = 10000
+    # sos = butter(3, 0.2, output='sos')
+    # filt_freq = np.fft.fftshift(np.fft.fftfreq(window_size, d=1 / fs))
+    # plt.plot(filt_freq, freqz_sos(sos, worN=filt_freq, fs=fs)[1], '-.', label='scipy sos freq response')
+
+    # b,a = butter(3, 0.2)
+    # plt.plot(filt_freq, freqz(b, a, worN=filt_freq, fs=fs)[1], '--',label='scipy ba freq response')
+
+    # plt.legend()
+    # plt.show()
+
+
+    # gain = sos[0, 0]
+    # sos_matlab_style = sos.copy()
+    # sos_matlab_style[0, :3] /= gain
+
+    # print("sos =")
+    # print(sos_matlab_style)
+    # print("gain =")
+    # print(gain)
 

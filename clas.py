@@ -2,42 +2,64 @@
 import argparse
 import os
 import signal
+import numpy as np
 import time
 import subprocess
 from pathlib import Path
 import yaml
+from gen_filter_coeff import gen_bandpass
 
 
 REPO_ROOT = Path(__file__).resolve().parent
 WORKSPACE_FALCON_CONFIG = REPO_ROOT / ".falcon" / "config.yaml"
+GRAPH_CONFIG = "SimulateCLAS.yaml"
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--n_messages", type=int, default=2000)
-    parser.add_argument("--msg_size", type=int, default=1)
-    parser.add_argument("--num_channels", type=int, default=10)
-    parser.add_argument("--max_buffer_size", type=int, default=16)
-    parser.add_argument("--overwrite", action="store_true")
-    parser.add_argument("--output_file", type=str, default="Producer.csv")
+    parser.add_argument("--overwrite", action="store_true", default=True)
     args = parser.parse_args()
 
-    results_folder = "rt_c_results"
+    # Load the Falcon configuration
+    with open(WORKSPACE_FALCON_CONFIG, "r") as f:
+        config = yaml.safe_load(f)
+        server_config = config.get("server_side_storage", {})
+        resources_folder = server_config.get("resources", "")
 
-    os.makedirs(results_folder, exist_ok=True)
+    graph_path = os.path.join(resources_folder, "graphs", GRAPH_CONFIG)
+    print(f"Using graph file: {graph_path}")
 
-    # 1) Start consumer first
-    output_path = str(REPO_ROOT / results_folder / f"{args.num_channels}_{args.msg_size}")
-   
-    if os.path.exists(output_path + "_Consumer.csv") and not args.overwrite:
-        return
+    with open(graph_path, "r") as f:
+        graph_config = yaml.safe_load(f)
+        
+        for processor in graph_config.get("graph", {}).get("processors", []):
+            processor_config = graph_config.get("graph", {}).get("processors", {}).get(processor, {})
+            if processor_config.get("class") == "MultiChannelFilter":
+                # Check if processor MultiChannelFilter is configured to use a non-file-based filter
+                filter_config = processor_config.get("options", {}).get("filter", {})
+                if "file" not in filter_config:
+                    N = filter_config.get("N", 1)
+                    low_cutoff = filter_config.get("low_cutoff")
+                    high_cutoff = filter_config.get("high_cutoff")
+                    fs = filter_config.get("fs")
+                    gen_bandpass(N, low_cutoff, high_cutoff, fs, length=None, output_folder=os.path.join(resources_folder, "filters"))
+            elif processor_config.get("class") == "PhaseEstimator":
+                # Check if processor PhaseEstimator is configured to use a non-file-based filter
+                filter_config = processor_config.get("options", {}).get("filter", {})
+                if "file" not in filter_config:
+                    for iaf in np.arange(9,10.1,0.1):
+                        bandwidth = filter_config.get("bandwith", 4)
+                        fs = filter_config.get("fs")
+                        length = filter_config.get("length")
+                        gen_bandpass(1, iaf-bandwidth/2, iaf+bandwidth/2, fs, length, output_folder=os.path.join(resources_folder, "filters"))
 
-    graph_process = subprocess.Popen(["sudo", "-E", "chrt", "-f", "99","./build/falcon/falcon", "SimulateCLAS.yaml", "--config", WORKSPACE_FALCON_CONFIG, "--autostart"]) 
+
+    graph_process = subprocess.Popen(["sudo", "-E", "chrt", "-f", "99","./build/falcon/falcon", GRAPH_CONFIG, "--config", WORKSPACE_FALCON_CONFIG, "--autostart"]) 
     try:
-        # 3) Wait for falcon to complete (processors will auto-exit after processing n_messages)
+        # Wait for falcon to complete (processors will auto-exit after processing n_messages)
         return_code = graph_process.wait()
         print(f"Falcon process exited with code {return_code}")
     except subprocess.TimeoutExpired:
-        print("Timeout: Falcon did not complete within 10 seconds. Terminating...")
+        print("Timeout: Falcon did not complete within Timeout. Terminating...")
         terminate(graph_process)
     except KeyboardInterrupt:
         print("Interrupted by user")

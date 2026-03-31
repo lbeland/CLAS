@@ -83,7 +83,7 @@ int main()
   for (int i = 0; i < signal_length; ++i)
   {
     const double t = static_cast<double>(i) / static_cast<double>(fs);
-    x[i] = std::sin(2.0 * PI * 10.0 * t);
+    x[i] = std::sin(2.0 * PI * 10.0 * t) + 0.1 * ((static_cast<double>(rand()) / RAND_MAX) - 0.5); // 10 Hz sine wave + noise
   }
 
   const size_t m = static_cast<size_t>(window_length / 2);
@@ -100,27 +100,27 @@ int main()
   std::vector<std::complex<double>> X_sdft(m);
   std::copy(X_sdft_matrix.end() - static_cast<std::ptrdiff_t>(m), X_sdft_matrix.end(), X_sdft.begin());
 
-  std::cout << "Initial spectrum shape: (" << window_length << ", " << m << ")" << std::endl;
-
   std::vector<double> y_sdfts;
   std::vector<double> y_fulls;
 
   y_sdfts.reserve(static_cast<size_t>(n_iterations));
   y_fulls.reserve(static_cast<size_t>(n_iterations));
 
-  const auto t0_sdft = std::chrono::high_resolution_clock::now();
+  const auto t0_sdft = std::chrono::steady_clock::now();
+  double new_sample;
+  double y_sdft;
 
   for (int start = 1; start < signal_length - window_length; ++start)
   {
-    const double new_sample = x[static_cast<size_t>(start + window_length - 1)];
+    new_sample = x[static_cast<size_t>(start + window_length - 1)];
 
     sdft.sdft(new_sample, X_sdft.data());
-    const double y_sdft = sdft.isdft(X_sdft.data());
+    y_sdft = sdft.isdft(X_sdft.data());
 
     y_sdfts.push_back(y_sdft);
   }
 
-  const auto t1_sdft = std::chrono::high_resolution_clock::now();
+  const auto t1_sdft = std::chrono::steady_clock::now();
   const auto sdft_ms = std::chrono::duration<double, std::milli>(t1_sdft - t0_sdft).count() / static_cast<double>(n_iterations);
 
   std::cout << "SDFT processing time per iteration: " << sdft_ms << " ms" << std::endl;
@@ -132,36 +132,24 @@ int main()
   fftw_plan plan_fwd = fftw_plan_dft_r2c_1d(window_length, fft_in.data(), fft_bins.data(), FFTW_ESTIMATE);
   fftw_plan plan_inv = fftw_plan_dft_c2r_1d(window_length, fft_bins.data(), ifft_out.data(), FFTW_ESTIMATE);
 
-  if (plan_fwd == nullptr || plan_inv == nullptr)
-  {
-    std::cerr << "Failed to create FFTW plans." << std::endl;
-    if (plan_fwd != nullptr)
-    {
-      fftw_destroy_plan(plan_fwd);
-    }
-    if (plan_inv != nullptr)
-    {
-      fftw_destroy_plan(plan_inv);
-    }
-    return 1;
-  }
-
-  const auto t0_fft = std::chrono::high_resolution_clock::now();
+  const auto t0_fft = std::chrono::steady_clock::now();
+  std::vector<double>::iterator wb;
+  double y_full;
 
   for (int start = 1; start < signal_length - window_length; ++start)
   {
-    const auto wb = x.begin() + start;
+    wb = x.begin() + start;
     std::copy(wb, wb + window_length, fft_in.begin());
 
     fftw_execute(plan_fwd);
     fftw_execute(plan_inv);
 
-    const double y_full = ifft_out[static_cast<size_t>(window_length - 1)] / static_cast<double>(window_length);
+    y_full = ifft_out[static_cast<size_t>(window_length - 1)] / static_cast<double>(window_length);
 
     y_fulls.push_back(y_full);
   }
 
-  const auto t1_fft = std::chrono::high_resolution_clock::now();
+  const auto t1_fft = std::chrono::steady_clock::now();
   const auto fft_ms = std::chrono::duration<double, std::milli>(t1_fft - t0_fft).count() / static_cast<double>(n_iterations);
 
   fftw_destroy_plan(plan_fwd);

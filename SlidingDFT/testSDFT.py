@@ -12,7 +12,7 @@ fs = 10000.0
 t = np.arange(signal_length) / fs
 
 # Example: 10 Hz sine wave
-x = np.sin(2 * np.pi * 10 * t)  # one cycle every 1000 samples
+x = np.sin(2 * np.pi * 10 * t) + 0.2 * np.random.rand(signal_length)  # one cycle every 1000 samples
 
 
 m = window_length//2  # DFT size (and SDFT internal state size)
@@ -30,8 +30,8 @@ y_sdfts = []
 y_fulls = []
 
 # fig_freq, ax_freq = plt.subplots(num='Frequency Domain')
-# fig_time, ax_time = plt.subplots(num='Time Domain')
-# ax_time.plot(x, '--',label='Input Signal')
+fig_time, ax_time = plt.subplots(num='Time Domain')
+ax_time.plot(x, '--',label='Input Signal')
 
 
 # --- Sliding DFT ---
@@ -44,7 +44,7 @@ for start in range(1, signal_length - window_length):
 
     y_sdfts.append(y_sdft)
     # ax_freq.plot(X_sdft, 'o', alpha=0.5)
-    # ax_time.plot(window_length + start - 1, y_sdft, 'o', color='blue', alpha=0.5)
+    ax_time.plot(window_length + start - 1, y_sdft, 'o', color='blue', alpha=0.5)
 end_time  = time.time()
 print(f"SDFT processing time per iteration: {(end_time  - start_time) / n_iterations * 1000:.4f} ms")
 
@@ -59,7 +59,7 @@ for start in range(1, signal_length - window_length):
     y_fulls.append(y_full)
 
     # ax_freq.plot(X_full/window_length, 'x', alpha=0.5)
-    # ax_time.plot(window_length + start - 1, y_full, 'x', color='red', alpha=0.5)
+    ax_time.plot(window_length + start - 1, y_full, 'x', color='red', alpha=0.5)
 end_time  = time.time()
 print(f"Full FFT processing time per iteration: {(end_time  - start_time) / n_iterations * 1000:.4f} ms")
 

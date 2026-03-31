@@ -306,7 +306,6 @@ void PhaseEstimator::Process(ProcessingContext &context) {
   float* signal_in = fftwf_alloc_real(n_fft);
   fftwf_complex* freq_half = fftwf_alloc_complex(n_fft/2 + 1);
   fftwf_complex* freq = fftwf_alloc_complex(n_fft);
-  // fftwf_complex* freq_shifted = fftwf_alloc_complex(n_fft);
   fftwf_complex* out = fftwf_alloc_complex(n_fft);
 
   fftwf_plan p = fftwf_plan_dft_r2c_1d(n_fft, signal_in, freq_half, FFTW_ESTIMATE);
@@ -323,7 +322,7 @@ void PhaseEstimator::Process(ProcessingContext &context) {
     if (!data_in_port_->slot(0)->RetrieveData(data_in)) {
       break;
     }
-    TimePoint start_time = Clock::now();
+    // TimePoint start_time = Clock::now();
 
     sample = data_in->data_sample(0,0);  // Get the first sample of the first channel
     
@@ -347,15 +346,17 @@ void PhaseEstimator::Process(ProcessingContext &context) {
       for (int i = N; i < n_fft; ++i) {
           signal_in[i] = 0.0f;
       }
+      // TimePoint start_time = Clock::now();
 
       // FFT
       fftwf_execute(p);
 
+      // TimePoint end_time = Clock::now();
+      // std::chrono::duration<double> elapsed = end_time - start_time;
+      // printf("Processed packet %d in %.9f microseconds\n", packet_count_, elapsed.count()*1e6);
+
       // Construct analytic signal spectrum
       construct_analytic_spectrum(n_fft, freq_half, freq);
-
-      // Shift the spectrum so that the DC component is at the center
-      // fftshift(freq, freq_shifted, n_fft);
 
       // Multiply with Bandpass filter
       for (int k=0; k < n_fft; k++) {
@@ -367,7 +368,6 @@ void PhaseEstimator::Process(ProcessingContext &context) {
         freq[k][0] = in_re * c_re - in_im * c_im;
         freq[k][1] = in_re * c_im + in_im * c_re;
       }
-      // ifftshift(freq_shifted, freq, n_fft);
 
       // IFFT
       fftwf_execute(p_inv);
@@ -381,18 +381,19 @@ void PhaseEstimator::Process(ProcessingContext &context) {
         out[i][1] = (in_re * c_gain_.imag() + in_im * c_gain_.real()) / n_fft;
       }
 
-
       // Get phase and real part of the last sample (N-1) of the original signal
       phase = std::atan2(out[N-1][1], out[N-1][0]);
       real_part = out[N-1][0];
 
       data_phase_out->set_data_sample(0,0, phase);
       data_real_out->set_data_sample(0,0, real_part);
-    }
 
-    TimePoint end_time = Clock::now();
-    std::chrono::duration<double> elapsed = end_time - start_time;
+
+    // TimePoint end_time = Clock::now();
+    // std::chrono::duration<double> elapsed = end_time - start_time;
     // printf("Processed packet %d in %.9f microseconds\n", packet_count_, elapsed.count()*1e6);
+
+    }
 
     data_out_port_->slot(0)->PublishData();    
     data_out_port_->slot(1)->PublishData();
@@ -404,7 +405,6 @@ void PhaseEstimator::Process(ProcessingContext &context) {
   fftwf_destroy_plan(p_inv);
   fftwf_free(signal_in);
   fftwf_free(freq_half);
-  // fftwf_free(freq_shifted);
   fftwf_free(freq);
   fftwf_free(out);
 }

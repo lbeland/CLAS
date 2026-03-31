@@ -4,16 +4,15 @@ import matplotlib.pyplot as plt
 import time
 
 
-signal_length = 510
-window_length = 500
-hop = 1
+signal_length = 1000
+window_length = 100 # one full cycle
 n_iterations = signal_length - window_length  # 2000
 
 fs = 1000.0
 t = np.arange(signal_length) / fs
 
 # Example: 10 Hz sine wave
-x = np.sin(2 * np.pi * 10 * t)
+x = np.sin(2 * np.pi * 10 * t)  # one cycle every 100 samples
 
 
 m = window_length//2  # DFT size (and SDFT internal state size)
@@ -33,7 +32,7 @@ y_fulls = []
 
 print(f"Initial spectrum shape: {X_sdft.shape}")
 
-fig_freq, ax_freq = plt.subplots(num='Frequency Domain')
+# fig_freq, ax_freq = plt.subplots(num='Frequency Domain')
 fig_time, ax_time = plt.subplots(num='Time Domain')
 ax_time.plot(x, '--',label='Input Signal')
 
@@ -47,7 +46,7 @@ for start in range(1, signal_length - L):
     y_sdft = sdft.isdft(X_sdft)[0]
 
     y_sdfts.append(y_sdft)
-    ax_freq.plot(X_sdft, 'o', alpha=0.5)
+    # ax_freq.plot(X_sdft, 'o', alpha=0.5)
     ax_time.plot(window_length + start - 1, y_sdft, 'o', alpha=0.5)
 end_time  = time.time()
 print(f"SDFT processing time for {n_iterations} updates: {end_time  - start_time :.4f} seconds")
@@ -62,7 +61,7 @@ for start in range(1, signal_length - L):
 
     y_fulls.append(y_full)
 
-    ax_freq.plot(X_full/L, 'x', alpha=0.5)
+    # ax_freq.plot(X_full/L, 'x', alpha=0.5)
     ax_time.plot(window_length + start - 1, y_full, 'x', alpha=0.5)
 end_time  = time.time()
 print(f"Full FFT processing time for {n_iterations} updates: {end_time  - start_time :.4f} seconds")

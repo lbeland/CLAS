@@ -18,6 +18,7 @@ Also requires Graphviz installed on the system:
 from __future__ import annotations
 
 import argparse
+from itertools import combinations
 import re
 import sys
 from pathlib import Path
@@ -41,6 +42,8 @@ CONNECTION_RE = re.compile(
     """,
     re.VERBOSE,
 )
+
+STATE_REF_RE = re.compile(r"^\s*(?P<proc>[A-Za-z_]\w*)\.(?P<state>[A-Za-z_]\w*)\s*$")
 
 
 def parse_args() -> argparse.Namespace:
@@ -107,6 +110,18 @@ def parse_connection(connection: str) -> Tuple[str, str, int, str, str, int]:
     return src_proc, src_port, src_idx, dst_proc, dst_port, dst_idx
 
 
+def parse_state_reference(reference: str) -> Tuple[str, str]:
+    """
+    Parse strings like:
+        IAFEstimator.iaf
+    """
+    match = STATE_REF_RE.match(reference)
+    if not match:
+        raise ValueError(f"Invalid state reference syntax: {reference!r}")
+
+    return match.group("proc"), match.group("state")
+
+
 def make_processor_label(name: str, spec: Dict[str, Any]) -> str:
     """
     Build an HTML-like Graphviz label with:
@@ -168,12 +183,16 @@ def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
     graph_name = graph.get("name", "Flowchart")
     processors = graph.get("processors", {})
     connections = graph.get("connections", [])
+    states = graph.get("states", [])
 
     if not isinstance(processors, dict):
         raise SystemExit("'graph.processors' must be a mapping/object.")
 
     if not isinstance(connections, list):
         raise SystemExit("'graph.connections' must be a list.")
+
+    if not isinstance(states, list):
+        raise SystemExit("'graph.states' must be a list.")
 
     dot = Digraph(name=graph_name, format="svg", engine=engine)
     dot.attr(rankdir="LR", splines="spline", nodesep="0.6", ranksep="0.9")
@@ -224,6 +243,55 @@ def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
 
         edge_label = f"out.{src_idx} → in.{dst_idx}"
         dot.edge(src_proc, dst_proc, label=edge_label)
+
+    # Add dashed undirected links between processors that share one or more states.
+    shared_state_pairs: Dict[Tuple[str, str], List[str]] = {}
+    for state_item in states:
+        if not isinstance(state_item, dict) or len(state_item) != 1:
+            raise SystemExit(
+                "Each element in 'graph.states' must be a mapping with a single state name key."
+            )
+
+        state_name, state_spec = next(iter(state_item.items()))
+        if not isinstance(state_spec, dict):
+            raise SystemExit(f"State '{state_name}' must be a mapping/object.")
+
+        refs = state_spec.get("states", [])
+        if not isinstance(refs, list):
+            raise SystemExit(f"State '{state_name}.states' must be a list.")
+
+        processors_for_state = set()
+        for ref in refs:
+            if not isinstance(ref, str):
+                raise SystemExit(
+                    f"State '{state_name}' references must be strings, got: {ref!r}"
+                )
+            proc_name, _ = parse_state_reference(ref)
+            if proc_name not in processors:
+                raise SystemExit(
+                    f"State '{state_name}' references unknown processor: {proc_name}"
+                )
+            processors_for_state.add(proc_name)
+
+        for left, right in combinations(sorted(processors_for_state), 2):
+            pair = (left, right)
+            shared_state_pairs.setdefault(pair, []).append(str(state_name))
+
+    for (left, right), state_names in shared_state_pairs.items():
+        label = "state: " + ", ".join(sorted(set(state_names)))
+        dot.edge(
+            left,
+            right,
+            label=label,
+            style="dotted",
+            color="red3",
+            fontcolor="red4",
+            dir="both",
+            arrowhead="dot",
+            arrowtail="dot",
+            arrowsize="0.8",
+            constraint="false",
+        )
 
     return dot
 

@@ -91,7 +91,7 @@ void SourceClient::CompleteStreamInfo() {
       .set_parameters(MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
 }
 
-void SourceClient::Preprocess(ProcessingContext &context) {
+void SourceClient::Prepare(GlobalContext &context) {
 
     send_times.clear();
 

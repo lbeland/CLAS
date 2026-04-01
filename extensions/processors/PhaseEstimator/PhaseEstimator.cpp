@@ -29,7 +29,17 @@
 #include <string>
 #include <fftw3.h>
 #include <complex>
+#include <dsp/fftw_planner_mutex.hpp>
 
+float round(float var, float precision)
+{
+    // 37.66666 * 100 =3766.66
+    // 3766.66 + .5 =3767.16    for rounding off value
+    // then type cast to int so value is 3767
+    // then divided by 100 so the value converted into 37.67
+    float value = (int)(var * (1.0f / precision) + 0.5f);
+    return (float)value * precision;
+}
 
 PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH) {
   add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
@@ -45,23 +55,7 @@ PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH) {
 }
 
 void PhaseEstimator::Configure(const GlobalContext &context) {
-  const float iaf = iaf_state_->get();
-  if (!filter_def_()["file"]) {
-    int N = filter_def_()["N"].as<int>(1);
-    float bandwith = filter_def_()["bandwidth"].as<float>(4.0);
-    float low_cutoff = iaf - bandwith/2.0;
-    float high_cutoff = iaf + bandwith/2.0;
-    int fs = filter_def_()["fs"].as<int>(10000);
-    int window_size = filter_def_()["length"].as<int>(n_fft_());
-    std::string filename;
-    filename = std::to_string(N) + "_" + std::format("{:.1f}", low_cutoff) + "_" + std::format("{:.1f}", high_cutoff) + "_" + std::to_string(fs) + "_" + std::to_string(window_size) + ".txt";      
-
-    coeff_file_ = context.resolve_path(filename, "filters");
-    
-  } else {
-    coeff_file_ = context.resolve_path(
-        filter_def_()["file"].as<std::string>(), "filters");
-  }
+  return;
 }
 
 void PhaseEstimator::CreatePorts() {
@@ -93,7 +87,7 @@ void PhaseEstimator::calibrate_gain(const int N) {
   // This function calculates the MSE-optimal calibration gain for cecHT based on the provided bandpass filter coefficients.
 
   if (calibrate_()) {
-
+    printf("Calculating calibration gain for cecHT with N=%d, f0=%f, fs=%f\n", N, f0_, fs_);
     // Calculate calibration gain
     const int L = n_fft_();
     const int n = N - 1;
@@ -178,7 +172,25 @@ void PhaseEstimator::calibrate_gain(const int N) {
   LOG(INFO) << "Calibration gain set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i\n";
 }
 
-void PhaseEstimator::load_filter_coeffs() {
+void PhaseEstimator::load_filter_coeffs(const StorageContext& context) {
+  const float iaf = iaf_state_->get();
+  if (!filter_def_()["file"]) {
+    int N = filter_def_()["N"].as<int>(1);
+    float bandwith = filter_def_()["bandwidth"].as<float>(4.0);
+    float low_cutoff = iaf - bandwith/2.0;
+    float high_cutoff = iaf + bandwith/2.0;
+    int window_size = filter_def_()["length"].as<int>(n_fft_());
+    std::string filename;
+    filename = std::to_string(N) + "_" + std::format("{:.1f}", low_cutoff) + "_" + std::format("{:.1f}", high_cutoff) + "_" + std::to_string(fs_) + "_" + std::to_string(window_size) + ".txt";      
+
+    coeff_file_ = context.resolve_path(filename, "filters");
+    
+  } else {
+    coeff_file_ = context.resolve_path(
+        filter_def_()["file"].as<std::string>(), "filters");
+  }
+
+  coeffs_.clear();
   coeffs_.reserve(static_cast<size_t>(n_fft_()));
 
   // Load bandpass filter coefficients for cecHT from file
@@ -206,7 +218,7 @@ void PhaseEstimator::load_filter_coeffs() {
   }
 }
 
-void PhaseEstimator::Preprocess(ProcessingContext &context) {
+void PhaseEstimator::Prepare(GlobalContext &context) {
   const auto& info = data_in_port_->streaminfo(0);
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
   LOG(INFO) << "Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
@@ -220,25 +232,9 @@ void PhaseEstimator::Preprocess(ProcessingContext &context) {
   if (n_fft < N) {
     throw std::runtime_error("PhaseEstimator: n_fft must be >= window length");
   }
-  load_filter_coeffs();
+
+  load_filter_coeffs(context);
   calibrate_gain(N);
-}
-
-int PhaseEstimator::get_max_bin(fftwf_complex* out, size_t out_size) {
-  int max_bin = -1;
-  double max_mag2 = -1.0;
-
-  for (size_t k = 0; k < out_size; ++k) {
-    double re = out[k][0];
-    double im = out[k][1];
-    double mag2 = re * re + im * im;
-
-    if (mag2 > max_mag2) {
-      max_mag2 = mag2;
-      max_bin = static_cast<int>(k);
-    }
-  }
-  return max_bin;
 }
 
 void PhaseEstimator::construct_analytic_spectrum(int n_fft, const fftwf_complex* half, fftwf_complex* full){
@@ -314,8 +310,13 @@ void PhaseEstimator::Process(ProcessingContext &context) {
   fftwf_complex* freq = fftwf_alloc_complex(n_fft);
   fftwf_complex* out = fftwf_alloc_complex(n_fft);
 
-  fftwf_plan p = fftwf_plan_dft_r2c_1d(n_fft, signal_in, freq_half, FFTW_ESTIMATE);
-  fftwf_plan p_inv = fftwf_plan_dft_1d(n_fft, freq, out, FFTW_BACKWARD, FFTW_ESTIMATE);
+  fftwf_plan p;
+  fftwf_plan p_inv;
+  {
+    std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
+    p = fftwf_plan_dft_r2c_1d(n_fft, signal_in, freq_half, FFTW_ESTIMATE);
+    p_inv = fftwf_plan_dft_1d(n_fft, freq, out, FFTW_BACKWARD, FFTW_ESTIMATE);
+  }
 
   // Measurement phase
   while (!context.terminated()) {
@@ -331,9 +332,14 @@ void PhaseEstimator::Process(ProcessingContext &context) {
 
     if (iaf_read_interval_() > 0 && (packet_count_ % iaf_read_interval_()) == 0) {
       const float new_f0 = iaf_state_->get();
-      if (std::abs(new_f0 - f0_) > 1e-6f) {
-        f0_ = new_f0;
+      printf("\n Packet %d: Read shared IAF value: %.2f Hz", packet_count_, new_f0);
+      if (std::abs(new_f0 - f0_) > 0.05f) {  // Only update if IAF has changed by more than 0.05 Hz to avoid unnecessary recalibration
+        f0_ = round(new_f0, 0.1f);  // Round to nearest 0.1 Hz for stability
+        load_filter_coeffs(context);
         calibrate_gain(N);
+      }
+      else {
+        printf(" - No need for calibration");
       }
     }
     // TimePoint start_time = Clock::now();
@@ -415,8 +421,11 @@ void PhaseEstimator::Process(ProcessingContext &context) {
     packet_count_++;
   }
 
-  fftwf_destroy_plan(p);
-  fftwf_destroy_plan(p_inv);
+  {
+    std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
+    fftwf_destroy_plan(p);
+    fftwf_destroy_plan(p_inv);
+  }
   fftwf_free(signal_in);
   fftwf_free(freq_half);
   fftwf_free(freq);

@@ -39,7 +39,7 @@ void Consumer::CreatePorts() {
       PortInPolicy(SlotRange(0,MAX_NCHANNELS)));
 }
 
-void Consumer::Preprocess(ProcessingContext &context){
+void Consumer::Prepare(GlobalContext &context){
   const auto& info = data_in_port_->streaminfo(0);
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
   LOG(INFO) << "Stream parameters - nchannels: " << p.nchannels << ", nsamples_orig: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";

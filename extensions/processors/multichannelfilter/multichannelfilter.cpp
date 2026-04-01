@@ -27,33 +27,11 @@
 MultiChannelFilter::MultiChannelFilter() : IProcessor() {
   add_option("filter", filter_def_, "Filter definition.", true);
   add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
-  add_option("iaf", iaf_, "Individual alpha frequency used for runtime adaptation state.");
-  iaf_state_ = create_broadcaster_state<float>(
-      "iaf", iaf_(), Permission::NONE,
-      "Individual alpha frequency shared with downstream processors.");
 }
 
 void MultiChannelFilter::Configure(const GlobalContext &context) {
-  current_iaf_ = iaf_();
 
-  if (!filter_def_()["file"]) {
-    // filter_template_.reset(dsp::filter::construct_from_yaml(filter_def_()));
-    int N = filter_def_()["N"].as<int>(1);
-    float low_cutoff = filter_def_()["low_cutoff"].as<float>();
-    float high_cutoff = filter_def_()["high_cutoff"].as<float>();
-    current_iaf_ = 0.5f * (low_cutoff + high_cutoff);
-    int fs = filter_def_()["fs"].as<int>();
-    std::string filename;
-    filename = std::to_string(N) + "_" + std::format("{:.1f}", low_cutoff) + "_" + std::format("{:.1f}", high_cutoff) + "_" + std::to_string(fs) + ".txt";      
-
-    std::string f = context.resolve_path(filename, "filters");
-    filter_template_.reset(dsp::filter::construct_from_file(f));
-  } else {
-    std::string f = context.resolve_path(filter_def_()["file"].as<std::string>(), "filters");
-    filter_template_.reset(dsp::filter::construct_from_file(f));
-  }
-
-  iaf_state_->set(current_iaf_);
+  return;
 }
 
 void MultiChannelFilter::CreatePorts() {
@@ -87,6 +65,26 @@ void MultiChannelFilter::CompleteStreamInfo() {
 }
 
 void MultiChannelFilter::Prepare(GlobalContext &context) {
+  const auto& info = data_in_port_->streaminfo(0);
+  const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
+  LOG(INFO) << "Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
+  float fs_ = p.sample_rate;
+
+  if (!filter_def_()["file"]) {
+    // filter_template_.reset(dsp::filter::construct_from_yaml(filter_def_()));
+    int N = filter_def_()["N"].as<int>(1);
+    float low_cutoff = filter_def_()["low_cutoff"].as<float>();
+    float high_cutoff = filter_def_()["high_cutoff"].as<float>();
+    std::string filename;
+    filename = std::to_string(N) + "_" + std::format("{:.1f}", low_cutoff) + "_" + std::format("{:.1f}", high_cutoff) + "_" + std::to_string(fs_) + ".txt";      
+
+    std::string f = context.resolve_path(filename, "filters");
+    filter_template_.reset(dsp::filter::construct_from_file(f));
+  } else {
+    std::string f = context.resolve_path(filter_def_()["file"].as<std::string>(), "filters");
+    filter_template_.reset(dsp::filter::construct_from_file(f));
+  }
+
   // realize filter for each input slot, dependent on the number of channels
   // upstream is sending
   filters_.clear();
@@ -110,8 +108,6 @@ void MultiChannelFilter::Process(ProcessingContext &context) {
     if (n_messages_() != -1 && packet_count_ >= n_messages_()) {
       break;
     }
-
-    iaf_state_->set(current_iaf_);
 
     // go through all slots
     for (k = 0; k < nslots; ++k) {

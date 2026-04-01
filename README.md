@@ -32,6 +32,10 @@ make install
 - there exist several compile flags for specializations (float or double precision, threads enabled etc. https://www.fftw.org/fftw2_doc/fftw_6.html )
 - check later if some of these could lead to faster execution
 
+./configure --enable-float --enable-threads --enable-openmp --enable-sse2 --enable-avx --enable-avx2 CFLAGS="-O3 -march=native -mtune=native"
+(used on WSL Windows)
+
+
 
 ## Start Benchmark
 ```bash

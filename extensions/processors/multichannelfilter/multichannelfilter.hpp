@@ -50,11 +50,6 @@ class MultiChannelFilter : public IProcessor {
  protected:
   options::Value<YAML::Node, false> filter_def_{};
   options::Value<int, false> n_messages_{-1};
-  options::Value<float, false> iaf_{10.0f};
-
-  BroadcasterState<float>* iaf_state_ = nullptr;
-  float current_iaf_ = 10.0f;
-
 
  const uint32_t MAX_NCHANNELS=384;
 };

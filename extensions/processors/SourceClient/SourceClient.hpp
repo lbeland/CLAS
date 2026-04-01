@@ -40,7 +40,7 @@ class SourceClient : public IProcessor {
 
   void CreatePorts() override;
   void CompleteStreamInfo() override;
-  void Preprocess(ProcessingContext &context) override;
+  void Prepare(GlobalContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
 

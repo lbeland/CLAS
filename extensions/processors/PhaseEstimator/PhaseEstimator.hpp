@@ -29,18 +29,17 @@
 class PhaseEstimator : public IProcessor {
   public:
     PhaseEstimator();
-    int get_max_bin(fftwf_complex* out, size_t out_size);
     void construct_analytic_spectrum(int M, const fftwf_complex* half, fftwf_complex* full);
     void fftshift(const fftwf_complex* in, fftwf_complex* out, int L);
     void ifftshift(const fftwf_complex* in, fftwf_complex* out, int L);
     void ifftshift(const std::vector<std::complex<float>>& in, std::vector<std::complex<float>>& out, int L);
     void calibrate_gain(const int N);
-    void load_filter_coeffs();
+    void load_filter_coeffs(const StorageContext& context);
 
   void Configure(const GlobalContext &context) override;
   void CreatePorts() override;
   void CompleteStreamInfo() override;
-  void Preprocess(ProcessingContext &context) override;
+  void Prepare(GlobalContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
 
@@ -68,7 +67,7 @@ class PhaseEstimator : public IProcessor {
     options::Value<unsigned int, false> n_fft_{4096};
     options::Value<bool> calibrate_{false};
     options::Value<float, false> iaf_default_{10.0f};
-    options::Value<unsigned int, false> iaf_read_interval_{256};
+    options::Value<unsigned int, false> iaf_read_interval_{500};
     options::Value<YAML::Node, false> filter_def_{};
 
     FollowerState<float>* iaf_state_ = nullptr;

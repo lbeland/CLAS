@@ -28,7 +28,7 @@ class Consumer : public IProcessor {
     Consumer();
 
   void CreatePorts() override;
-  void Preprocess(ProcessingContext &context) override;
+  void Prepare(GlobalContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
 

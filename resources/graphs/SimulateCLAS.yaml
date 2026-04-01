@@ -51,4 +51,11 @@ graph:
   - BandpassFilter.out.0 = PhaseEstimator.in.0
   - PhaseEstimator.out.0 = Consumer.in.1
   - PhaseEstimator.out.1 = Consumer.in.2
+  states:
+  - IAF:
+      permission: write
+      description: Shared individual alpha frequency between BandpassFilter and PhaseEstimator
+      states:
+      - BandpassFilter.iaf
+      - PhaseEstimator.iaf
 

@@ -35,12 +35,18 @@ PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH) {
   add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
   add_option("n_fft", n_fft_, "FFT size");
   add_option("calibrate", calibrate_, "Whether to apply calibration gain");
+  add_option("iaf_default", iaf_default_, "Default individual alpha frequency before shared state updates.");
+  add_option("iaf_read_interval", iaf_read_interval_, "Packets between shared IAF polling steps.");
   add_option("filter", filter_def_, "Filter definition.", true);
+
+  iaf_state_ = create_follower_state<float>(
+      "iaf", iaf_default_(), Permission::NONE,
+      "Individual alpha frequency shared by an upstream processor.");
 }
 
 void PhaseEstimator::Configure(const GlobalContext &context) {
+  const float iaf = iaf_state_->get();
   if (!filter_def_()["file"]) {
-    float iaf = 10.0;  // Initial guess for individual alpha frequency, will be used to determine initial filter parameters
     int N = filter_def_()["N"].as<int>(1);
     float bandwith = filter_def_()["bandwidth"].as<float>(4.0);
     float low_cutoff = iaf - bandwith/2.0;
@@ -205,7 +211,7 @@ void PhaseEstimator::Preprocess(ProcessingContext &context) {
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
   LOG(INFO) << "Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
   fs_ = p.sample_rate;
-  f0_ = 10.0;
+  f0_ = iaf_state_->get();
   int N = static_cast<int>(fs_ * (1.0/f0_)*2.0);  // 2 cycles of a 10 Hz sine wave
   sample_window.set_capacity(N);
   LOG(INFO) << "Sample window size set to " << sample_window.capacity() << "\n";
@@ -321,6 +327,14 @@ void PhaseEstimator::Process(ProcessingContext &context) {
     // Try to retrieve data
     if (!data_in_port_->slot(0)->RetrieveData(data_in)) {
       break;
+    }
+
+    if (iaf_read_interval_() > 0 && (packet_count_ % iaf_read_interval_()) == 0) {
+      const float new_f0 = iaf_state_->get();
+      if (std::abs(new_f0 - f0_) > 1e-6f) {
+        f0_ = new_f0;
+        calibrate_gain(N);
+      }
     }
     // TimePoint start_time = Clock::now();
 

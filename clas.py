@@ -30,6 +30,7 @@ def main():
 
     with open(graph_path, "r") as f:
         graph_config = yaml.safe_load(f)
+        fs = graph_config.get("graph", {}).get("defaults", {}).get("fs", None)  # Default to 1000 Hz if not specified
         
         for processor in graph_config.get("graph", {}).get("processors", []):
             processor_config = graph_config.get("graph", {}).get("processors", {}).get(processor, {})
@@ -40,15 +41,13 @@ def main():
                     N = filter_config.get("N", 1)
                     low_cutoff = filter_config.get("low_cutoff")
                     high_cutoff = filter_config.get("high_cutoff")
-                    fs = filter_config.get("fs")
                     gen_bandpass(N, low_cutoff, high_cutoff, fs, length=None, output_folder=os.path.join(resources_folder, "filters"))
             elif processor_config.get("class") == "PhaseEstimator":
                 # Check if processor PhaseEstimator is configured to use a non-file-based filter
                 filter_config = processor_config.get("options", {}).get("filter", {})
                 if "file" not in filter_config:
-                    for iaf in np.arange(9,10.1,0.1):
+                    for iaf in np.arange(7,12.1,0.1):
                         bandwidth = filter_config.get("bandwith", 4)
-                        fs = filter_config.get("fs")
                         length = filter_config.get("length")
                         gen_bandpass(1, iaf-bandwidth/2, iaf+bandwidth/2, fs, length, output_folder=os.path.join(resources_folder, "filters"))
 

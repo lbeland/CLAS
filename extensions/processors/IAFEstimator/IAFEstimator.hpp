@@ -30,17 +30,14 @@ class IAFEstimator : public IProcessor {
   public:
     IAFEstimator();
     int get_max_bin(fftwf_complex* out, size_t out_size);
-    void construct_analytic_spectrum(int M, const fftwf_complex* half, fftwf_complex* full);
     void fftshift(const fftwf_complex* in, fftwf_complex* out, int L);
     void ifftshift(const fftwf_complex* in, fftwf_complex* out, int L);
     void ifftshift(const std::vector<std::complex<float>>& in, std::vector<std::complex<float>>& out, int L);
-    void calibrate_gain(const int N);
-    void load_filter_coeffs();
 
   void Configure(const GlobalContext &context) override;
   void CreatePorts() override;
   void CompleteStreamInfo() override;
-  void Preprocess(ProcessingContext &context) override;
+  void Prepare(GlobalContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
 
@@ -49,11 +46,7 @@ class IAFEstimator : public IProcessor {
     unsigned int packet_count_ = 0;
     double first_timestamp_ = 0.0;
     float fs_ = 0.0;
-    float f0_ = 0.0;
-    inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Preprocess
-    std::string coeff_file_;  // Path to bandpass filter coefficients file
-    std::vector<std::complex<float>> coeffs_;  // Filter coefficients of bandpass filter
-    std::complex<float> c_gain_;  // Calibration gain for cecHT
+    inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Prepare
 
     const uint32_t MAX_NCHANNELS=384;
 
@@ -66,10 +59,7 @@ class IAFEstimator : public IProcessor {
   protected:
     options::Value<int, false> n_messages_{-1};
     options::Value<unsigned int, false> n_fft_{4096};
-    options::Value<bool> calibrate_{false};
-    options::Value<float, false> iaf_default_{10.0f};
-    options::Value<unsigned int, false> iaf_read_interval_{256};
-    options::Value<YAML::Node, false> filter_def_{};
 
-    FollowerState<float>* iaf_state_ = nullptr;
+    BroadcasterState<float>* iaf_state_ = nullptr;
+    float current_iaf_ = 10.0f;
 };

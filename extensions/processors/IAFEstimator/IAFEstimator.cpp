@@ -29,39 +29,20 @@
 #include <string>
 #include <fftw3.h>
 #include <complex>
+#include <dsp/fftw_planner_mutex.hpp>
 
 
 IAFEstimator::IAFEstimator() : IProcessor(PRIORITY_HIGH) {
   add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
   add_option("n_fft", n_fft_, "FFT size");
-  add_option("calibrate", calibrate_, "Whether to apply calibration gain");
-  add_option("iaf_default", iaf_default_, "Default individual alpha frequency before shared state updates.");
-  add_option("iaf_read_interval", iaf_read_interval_, "Packets between shared IAF polling steps.");
-  add_option("filter", filter_def_, "Filter definition.", true);
 
-  iaf_state_ = create_follower_state<float>(
-      "iaf", iaf_default_(), Permission::NONE,
-      "Individual alpha frequency shared by an upstream processor.");
+  iaf_state_ = create_broadcaster_state<float>(
+      "iaf", current_iaf_, Permission::NONE,
+      "Individual alpha frequency shared with downstream processors.");
 }
 
 void IAFEstimator::Configure(const GlobalContext &context) {
-  const float iaf = iaf_state_->get();
-  if (!filter_def_()["file"]) {
-    int N = filter_def_()["N"].as<int>(1);
-    float bandwith = filter_def_()["bandwidth"].as<float>(4.0);
-    float low_cutoff = iaf - bandwith/2.0;
-    float high_cutoff = iaf + bandwith/2.0;
-    int fs = filter_def_()["fs"].as<int>(10000);
-    int window_size = filter_def_()["length"].as<int>(n_fft_());
-    std::string filename;
-    filename = std::to_string(N) + "_" + std::format("{:.1f}", low_cutoff) + "_" + std::format("{:.1f}", high_cutoff) + "_" + std::to_string(fs) + "_" + std::to_string(window_size) + ".txt";      
-
-    coeff_file_ = context.resolve_path(filename, "filters");
-    
-  } else {
-    coeff_file_ = context.resolve_path(
-        filter_def_()["file"].as<std::string>(), "filters");
-  }
+  iaf_state_->set(current_iaf_);
 }
 
 void IAFEstimator::CreatePorts() {
@@ -89,130 +70,12 @@ void IAFEstimator::CompleteStreamInfo() {
 
 }
 
-void IAFEstimator::calibrate_gain(const int N) {
-  // This function calculates the MSE-optimal calibration gain for cecHT based on the provided bandpass filter coefficients.
-
-  if (calibrate_()) {
-
-    // Calculate calibration gain
-    const int L = n_fft_();
-    const int n = N - 1;
-    const double PI = std::acos(-1.0);
-    const double omega0 = 2.0 * PI * f0_ / fs_;
-
-    // Lambda for Dirichlet kernel: D_N(alpha) = sin(N*alpha/2) / sin(alpha/2) * exp(i*alpha*(N-1)/2)
-    auto dirichlet_N = [N](double alpha) -> std::complex<double> {
-      if (std::abs(alpha) < 1e-12) {
-        return std::complex<double>(static_cast<double>(N), 0.0);
-      }
-      double numerator = std::sin(0.5 * N * alpha);
-      double denominator = std::sin(0.5 * alpha);
-      if (std::abs(denominator) < 1e-12) {
-        return std::complex<double>(static_cast<double>(N), 0.0);
-      }
-      double phase_angle = alpha * (N - 1) * 0.5;
-      double mag = numerator / denominator;
-      return std::complex<double>(mag * std::cos(phase_angle), mag * std::sin(phase_angle));
-    };
-
-    std::complex<double> P_sum(0.0, 0.0);
-    std::complex<double> M_sum(0.0, 0.0);
-
-    for (int k = 0; k < L; ++k) {
-      double omega_k = 2.0 * PI * k / L;
-
-      // Compute Dirichlet kernels for +/- frequency components
-      std::complex<double> D_plus = dirichlet_N(omega0 - omega_k);
-      std::complex<double> D_minus = dirichlet_N(-omega0 - omega_k);
-
-      // X components (half-weighted)
-      std::complex<double> X_plus = 0.5 * D_plus;
-      std::complex<double> X_minus = 0.5 * D_minus;
-
-      // Hilbert multiplier: h[0]=1, h[Nyquist]=1 (if even L), h[other positive]=2
-      double h_mult = 1.0;
-      if (k > 0 && k < (L / 2)) {
-        h_mult = 2.0;
-      } else if (k == L / 2 && L % 2 == 0) {
-        h_mult = 1.0;
-      }
-
-      // Phase rotation for the n-th sample
-      std::complex<double> phase_exp(0.0, omega_k * n);
-      phase_exp = std::exp(phase_exp);
-
-      // Combine Hilbert multiplier with loaded bandpass coefficients
-      std::complex<double> coeff_k = std::complex<double>(
-          static_cast<double>(coeffs_[k].real()),
-          static_cast<double>(coeffs_[k].imag())
-      );
-      std::complex<double> G = h_mult * coeff_k;
-
-      // Accumulate weighted sums
-      P_sum += G * X_plus * phase_exp;
-      M_sum += G * X_minus * phase_exp;
-    }
-
-    // Normalize by FFT size
-    P_sum /= static_cast<double>(L);
-    M_sum /= static_cast<double>(L);
-
-    // Apply frequency shift to get analytic-aligned components
-    std::complex<double> phase_shift(0.0, -omega0 * n);
-    phase_shift = std::exp(phase_shift);
-    std::complex<double> Gplus = P_sum * phase_shift;
-    std::complex<double> Gminus = M_sum * phase_shift;
-
-    // Calculate MSE-optimal calibration gain: C_opt = conj(Gplus) / (|Gplus|^2 + |Gminus|^2)
-    double denom = std::norm(Gplus) + std::norm(Gminus);
-    if (denom > 1e-12) {
-      std::complex<double> C_opt = std::conj(Gplus) / denom;
-      c_gain_ = std::complex<float>(static_cast<float>(C_opt.real()),
-                                    static_cast<float>(C_opt.imag()));
-    } else {
-      c_gain_ = std::complex<float>(1.0f, 0.0f);  // fallback to unity gain
-    }
-  } else {
-    c_gain_ = std::complex<float>(1.0f, 0.0f);  // no calibration, unity gain
-  }
-  LOG(INFO) << "Calibration gain set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i\n";
-}
-
-void IAFEstimator::load_filter_coeffs() {
-  coeffs_.reserve(static_cast<size_t>(n_fft_()));
-
-  // Load bandpass filter coefficients for cecHT from file
-  std::ifstream stream(coeff_file_);
-
-  if (!stream.good()) {
-    throw std::runtime_error("IAFEstimator: Cannot open filter coefficients file");
-  }
-
-  auto header = dsp::filter::parse_file_header(stream);
-
-  if (header["type"] != "frequency response") {
-    throw std::runtime_error("IAFEstimator: Expected frequency response in file");
-  }
-
-  float real = 0.0f;
-  float imag = 0.0f;
-  while (stream >> real >> imag) {
-    coeffs_.emplace_back(real, imag);
-  }
-
-  if (coeffs_.size() < static_cast<size_t>(n_fft_())) {
-    throw std::runtime_error(
-        "IAFEstimator: coefficient file has fewer bins than n_fft");
-  }
-}
-
-void IAFEstimator::Preprocess(ProcessingContext &context) {
+void IAFEstimator::Prepare(GlobalContext &context) {
   const auto& info = data_in_port_->streaminfo(0);
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
   LOG(INFO) << "Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
   fs_ = p.sample_rate;
-  f0_ = iaf_state_->get();
-  int N = static_cast<int>(fs_ * (1.0/f0_)*2.0);  // 2 cycles of a 10 Hz sine wave
+  int N = static_cast<int>(fs_ * 0.5);  // 0.5 seconds
   sample_window.set_capacity(N);
   LOG(INFO) << "Sample window size set to " << sample_window.capacity() << "\n";
 
@@ -220,8 +83,6 @@ void IAFEstimator::Preprocess(ProcessingContext &context) {
   if (n_fft < N) {
     throw std::runtime_error("IAFEstimator: n_fft must be >= window length");
   }
-  load_filter_coeffs();
-  calibrate_gain(N);
 }
 
 int IAFEstimator::get_max_bin(fftwf_complex* out, size_t out_size) {
@@ -241,35 +102,6 @@ int IAFEstimator::get_max_bin(fftwf_complex* out, size_t out_size) {
   return max_bin;
 }
 
-void IAFEstimator::construct_analytic_spectrum(int n_fft, const fftwf_complex* half, fftwf_complex* full){
-
-  full[0][0] = half[0][0];
-  full[0][1] = half[0][1];
-
-  if (n_fft % 2 == 0) {
-      for (int k = 1; k < n_fft / 2; ++k) {
-          full[k][0] = 2.0 * half[k][0];
-          full[k][1] = 2.0 * half[k][1];
-      }
-
-      full[n_fft / 2][0] = half[n_fft / 2][0];
-      full[n_fft / 2][1] = half[n_fft / 2][1];
-
-      for (int k = n_fft / 2 + 1; k < n_fft; ++k) {
-          full[k][0] = 0.0;
-          full[k][1] = 0.0;
-      }
-  } else {
-      for (int k = 1; k <= (n_fft - 1) / 2; ++k) {
-          full[k][0] = 2.0 * half[k][0];
-          full[k][1] = 2.0 * half[k][1];
-      }
-      for (int k = (n_fft + 1) / 2; k < n_fft; ++k) {
-          full[k][0] = 0.0;
-          full[k][1] = 0.0;
-      }
-  }
-}
 
 void IAFEstimator::fftshift(const fftwf_complex* in, fftwf_complex* out, int L) {
     int s = L / 2;  // floor(L/2)
@@ -299,23 +131,20 @@ void IAFEstimator::ifftshift(const std::vector<std::complex<float>>& in, std::ve
 }
 
 void IAFEstimator::Process(ProcessingContext &context) {
-  MultiChannelType<float>::Data* data_in;
-  MultiChannelType<float>::Data *data_real_out = nullptr;
-  MultiChannelType<float>::Data *data_phase_out = nullptr;
+  std::vector<MultiChannelType<float>::Data*> data_in;
 
   // FFTW output spectrum
-  float sample;
-  float phase;
-  float real_part;
   const int N = static_cast<int>(sample_window.capacity());
   const int n_fft = n_fft_();  // FFT size
   float* signal_in = fftwf_alloc_real(n_fft);
   fftwf_complex* freq_half = fftwf_alloc_complex(n_fft/2 + 1);
   fftwf_complex* freq = fftwf_alloc_complex(n_fft);
-  fftwf_complex* out = fftwf_alloc_complex(n_fft);
 
-  fftwf_plan p = fftwf_plan_dft_r2c_1d(n_fft, signal_in, freq_half, FFTW_ESTIMATE);
-  fftwf_plan p_inv = fftwf_plan_dft_1d(n_fft, freq, out, FFTW_BACKWARD, FFTW_ESTIMATE);
+  fftwf_plan p;
+  {
+    std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
+    p = fftwf_plan_dft_r2c_1d(n_fft, signal_in, freq_half, FFTW_ESTIMATE);
+  }
 
   // Measurement phase
   while (!context.terminated()) {
@@ -325,32 +154,20 @@ void IAFEstimator::Process(ProcessingContext &context) {
     }
   
     // Try to retrieve data
-    if (!data_in_port_->slot(0)->RetrieveData(data_in)) {
+    if (!data_in_port_->slot(0)->RetrieveDataAll(data_in)) {
       break;
     }
 
-    if (iaf_read_interval_() > 0 && (packet_count_ % iaf_read_interval_()) == 0) {
-      const float new_f0 = iaf_state_->get();
-      if (std::abs(new_f0 - f0_) > 1e-6f) {
-        f0_ = new_f0;
-        calibrate_gain(N);
+    for (const auto* packet : data_in) {
+      for (size_t s = 0; s < packet->nsamples(); ++s) {
+        sample_window.push_back(packet->data_sample(s, 0));
+        packet_count_++;
       }
     }
-    // TimePoint start_time = Clock::now();
-
-    sample = data_in->data_sample(0,0);  // Get the first sample of the first channel
-    
-    // Copy timestamps to both output slots
-    data_phase_out = data_out_port_->slot(0)->ClaimData(false);
-    data_phase_out->CloneTimestamps(*data_in);
-    data_real_out = data_out_port_->slot(1)->ClaimData(false);
-    data_real_out->CloneTimestamps(*data_in);
-
-    sample_window.push_back(sample);
 
     data_in_port_->slot(0)->ReleaseData();
 
-    if ((sample_window.size() == sample_window.capacity())) { //} && (packet_count_ % (sample_window.capacity()/2) == 0)) {
+    if ((sample_window.size() == sample_window.capacity()) && (packet_count_ % (sample_window.capacity()/2) == 0)) {
 
       // Convert circular buffer<float> to continuous array for FFTW input and zero-pad to n_fft
       // signal_in = sample_window.linearize();
@@ -360,67 +177,30 @@ void IAFEstimator::Process(ProcessingContext &context) {
       for (int i = N; i < n_fft; ++i) {
           signal_in[i] = 0.0f;
       }
-      // TimePoint start_time = Clock::now();
 
       // FFT
       fftwf_execute(p);
-
-      // TimePoint end_time = Clock::now();
-      // std::chrono::duration<double> elapsed = end_time - start_time;
-      // printf("Processed packet %d in %.9f microseconds\n", packet_count_, elapsed.count()*1e6);
-
-      // Construct analytic signal spectrum
-      construct_analytic_spectrum(n_fft, freq_half, freq);
-
-      // Multiply with Bandpass filter
-      for (int k=0; k < n_fft; k++) {
-        const float in_re = freq[k][0];
-        const float in_im = freq[k][1];
-        const float c_re = coeffs_[k].real();
-        const float c_im = coeffs_[k].imag();
-
-        freq[k][0] = in_re * c_re - in_im * c_im;
-        freq[k][1] = in_re * c_im + in_im * c_re;
+      // Get max bin and convert to frequency
+      int max_bin = get_max_bin(freq_half, n_fft/2 + 1);
+      float freq_resolution = static_cast<float>(fs_) / n_fft;
+      if (std::abs(max_bin * freq_resolution - current_iaf_) > 1e-6f) {
+        current_iaf_ = max_bin * freq_resolution;
+        printf("\n Packet %d: Estimated IAF = %.2f Hz (max bin: %d)", packet_count_, current_iaf_, max_bin);
+        
+        iaf_state_->set(current_iaf_);  
       }
-
-      // IFFT
-      fftwf_execute(p_inv);
-
-      // Normalize the output of the inverse FFT and multiply with calibration gain
-      for (int i = 0; i < n_fft; i++) {
-        const float in_re = out[i][0];
-        const float in_im = out[i][1];
-
-        out[i][0] = (in_re * c_gain_.real() - in_im * c_gain_.imag()) / n_fft;
-        out[i][1] = (in_re * c_gain_.imag() + in_im * c_gain_.real()) / n_fft;
-      }
-
-      // Get phase and real part of the last sample (N-1) of the original signal
-      phase = std::atan2(out[N-1][1], out[N-1][0]);
-      real_part = out[N-1][0];
-
-      data_phase_out->set_data_sample(0,0, phase);
-      data_real_out->set_data_sample(0,0, real_part);
-
-
-    // TimePoint end_time = Clock::now();
-    // std::chrono::duration<double> elapsed = end_time - start_time;
-    // printf("Processed packet %d in %.9f microseconds\n", packet_count_, elapsed.count()*1e6);
-
     }
 
-    data_out_port_->slot(0)->PublishData();    
-    data_out_port_->slot(1)->PublishData();
 
-    packet_count_++;
   }
 
-  fftwf_destroy_plan(p);
-  fftwf_destroy_plan(p_inv);
+  {
+    std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
+    fftwf_destroy_plan(p);
+  }
   fftwf_free(signal_in);
   fftwf_free(freq_half);
   fftwf_free(freq);
-  fftwf_free(out);
 }
 
 void IAFEstimator::Postprocess(ProcessingContext &context) {

@@ -57,7 +57,13 @@ class SDFT:
         if self.latency == 1:
 
             # circular shift in time domain or multiplication of each dft bin by (-1)**n
-            self.twiddles_synthesis = numpy.array([-1 if n % 2 else +1 for n in numpy.arange(dftsize)])
+            # self.twiddles_synthesis = numpy.array([-1 if n % 2 else +1 for n in numpy.arange(dftsize)])
+
+            L = 2 * dftsize
+            k = numpy.arange(dftsize)
+
+            # reconstruct last sample (index L-1)
+            self.twiddles_synthesis = numpy.exp(1j * 2 * numpy.pi * k * (L - 1) / L)
 
         else:
 
@@ -140,12 +146,7 @@ class SDFT:
 
 
 
-        N = self.size
-        L = 2 * N
-        k = numpy.arange(N)
-
-        # reconstruct last sample (index L-1)
-        twiddles = numpy.exp(1j * 2 * numpy.pi * k * (L - 1) / L)
+        twiddles = self.twiddles_synthesis
 
         samples = numpy.sum(numpy.real(dfts * twiddles), axis=-1)
         return samples * 2

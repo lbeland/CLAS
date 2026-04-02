@@ -48,8 +48,7 @@ void Producer::CreatePorts() {
 
 void Producer::CompleteStreamInfo() {
   // Set the parameters for the output stream
-  dynamic_cast<StreamInfo<MultiChannelType<float>>&>(data_out_port_->slot(0)->streaminfo())
-      .set_parameters(MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
+  data_out_port_->slot(0)->streaminfo().set_parameters(MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
 }
 
 void Producer::Process(ProcessingContext &context) {
@@ -84,7 +83,7 @@ void Producer::Process(ProcessingContext &context) {
 
     data_out->set_hardware_timestamp(hw_us);
 
-    // LOG(INFO) << name() << ". Sent message " << i + 1 << " with sample " << sample << ".";
+    // LOG(INFO) << name() << ". Sent message " << packet_count + 1 << " with sample " << sample << ".";
 
     // Publish data
     data_out_port_->slot(0)->PublishData();

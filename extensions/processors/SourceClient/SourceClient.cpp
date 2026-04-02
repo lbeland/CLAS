@@ -87,8 +87,7 @@ void SourceClient::CreatePorts() {
 
 void SourceClient::CompleteStreamInfo() {
   // Set the parameters for the output stream
-  dynamic_cast<StreamInfo<MultiChannelType<float>>&>(data_out_port_->slot(0)->streaminfo())
-      .set_parameters(MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
+  data_out_port_->slot(0)->streaminfo().set_parameters(MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
 }
 
 void SourceClient::Prepare(GlobalContext &context) {

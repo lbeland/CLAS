@@ -67,7 +67,7 @@ void MultiChannelFilter::CompleteStreamInfo() {
 void MultiChannelFilter::Prepare(GlobalContext &context) {
   const auto& info = data_in_port_->streaminfo(0);
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
-  LOG(INFO) << "Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
+  LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
   float fs_ = p.sample_rate;
 
   if (!filter_def_()["file"]) {

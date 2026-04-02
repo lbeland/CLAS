@@ -61,8 +61,8 @@ void PhaseEstimator::Configure(const GlobalContext &context) {
 void PhaseEstimator::CreatePorts() {
   data_in_port_ = create_input_port<MultiChannelType<float>>(
       "in", 
-      MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
-      PortInPolicy(SlotRange(0,MAX_NCHANNELS)));
+      MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),  // Accept only one channel
+      PortInPolicy(SlotRange(0, MAX_NCHANNELS)));
 
   data_out_port_ = create_output_port<MultiChannelType<float>>(
       "out",
@@ -71,23 +71,18 @@ void PhaseEstimator::CreatePorts() {
 }
 
 void PhaseEstimator::CompleteStreamInfo() {
-  const auto &input_info = data_in_port_->slot(0)->streaminfo();
-  const auto &input_params =
-      input_info.parameters<MultiChannelType<float>::Parameters>();
+  const auto &input_params = data_in_port_->slot(0)->streaminfo().parameters<MultiChannelType<float>::Parameters>();
 
   for (int k = 0; k < data_out_port_->number_of_slots(); ++k) {
+    data_out_port_->streaminfo(k).set_parameters(input_params);
     data_out_port_->streaminfo(k).set_stream_rate(data_in_port_->streaminfo(0).stream_rate());
-    dynamic_cast<StreamInfo<MultiChannelType<float>>&>(
-      data_out_port_->slot(k)->streaminfo()).set_parameters(input_params);
   }
-
 }
 
 void PhaseEstimator::calibrate_gain(const int N) {
   // This function calculates the MSE-optimal calibration gain for cecHT based on the provided bandpass filter coefficients.
 
   if (calibrate_()) {
-    printf("Calculating calibration gain for cecHT with N=%d, f0=%f, fs=%f\n", N, f0_, fs_);
     // Calculate calibration gain
     const int L = n_fft_();
     const int n = N - 1;
@@ -169,7 +164,7 @@ void PhaseEstimator::calibrate_gain(const int N) {
   } else {
     c_gain_ = std::complex<float>(1.0f, 0.0f);  // no calibration, unity gain
   }
-  LOG(INFO) << "Calibration gain set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i\n";
+  LOG(INFO) << "Calibration gain for " << f0_ << " Hz set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i\n";
 }
 
 void PhaseEstimator::load_filter_coeffs(const StorageContext& context) {
@@ -221,12 +216,12 @@ void PhaseEstimator::load_filter_coeffs(const StorageContext& context) {
 void PhaseEstimator::Prepare(GlobalContext &context) {
   const auto& info = data_in_port_->streaminfo(0);
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
-  LOG(INFO) << "Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
+  LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
   fs_ = p.sample_rate;
   f0_ = iaf_state_->get();
   int N = static_cast<int>(fs_ * (1.0/f0_)*2.0);  // 2 cycles of a 10 Hz sine wave
   sample_window.set_capacity(N);
-  LOG(INFO) << "Sample window size set to " << sample_window.capacity() << "\n";
+  LOG(INFO) << name() << " Sample window size set to " << sample_window.capacity() << "\n";
 
   const int n_fft = static_cast<int>(n_fft_());
   if (n_fft < N) {
@@ -321,7 +316,7 @@ void PhaseEstimator::Process(ProcessingContext &context) {
   // Measurement phase
   while (!context.terminated()) {
 
-    if (n_messages_() != -1 && packet_count_ >= n_messages_()) {
+    if (n_messages_() != -1 && packet_count_ >= static_cast<size_t>(n_messages_())) {
       break;
     }
   
@@ -332,15 +327,15 @@ void PhaseEstimator::Process(ProcessingContext &context) {
 
     if (iaf_read_interval_() > 0 && (packet_count_ % iaf_read_interval_()) == 0) {
       const float new_f0 = iaf_state_->get();
-      printf("\n Packet %d: Read shared IAF value: %.2f Hz", packet_count_, new_f0);
+      // printf("\n Packet %d: Read shared IAF value: %.2f Hz", packet_count_, new_f0);
       if (std::abs(new_f0 - f0_) > 0.05f) {  // Only update if IAF has changed by more than 0.05 Hz to avoid unnecessary recalibration
         f0_ = round(new_f0, 0.1f);  // Round to nearest 0.1 Hz for stability
         load_filter_coeffs(context);
         calibrate_gain(N);
       }
-      else {
-        printf(" - No need for calibration");
-      }
+      // else {
+      //   printf(" - No need for calibration");
+      // }
     }
     // TimePoint start_time = Clock::now();
 

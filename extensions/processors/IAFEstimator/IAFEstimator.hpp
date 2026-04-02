@@ -34,9 +34,7 @@ class IAFEstimator : public IProcessor {
     void ifftshift(const fftwf_complex* in, fftwf_complex* out, int L);
     void ifftshift(const std::vector<std::complex<float>>& in, std::vector<std::complex<float>>& out, int L);
 
-  void Configure(const GlobalContext &context) override;
   void CreatePorts() override;
-  void CompleteStreamInfo() override;
   void Prepare(GlobalContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
@@ -53,7 +51,6 @@ class IAFEstimator : public IProcessor {
   // DATA PORTS
   protected:
     PortIn<MultiChannelType<float>> *data_in_port_;
-    PortOut<MultiChannelType<float>> *data_out_port_;
 
   // OPTIONS
   protected:

@@ -41,48 +41,28 @@ IAFEstimator::IAFEstimator() : IProcessor(PRIORITY_HIGH) {
       "Individual alpha frequency shared with downstream processors.");
 }
 
-void IAFEstimator::Configure(const GlobalContext &context) {
-  iaf_state_->set(current_iaf_);
-}
-
 void IAFEstimator::CreatePorts() {
   data_in_port_ = create_input_port<MultiChannelType<float>>(
       "in", 
       MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
       PortInPolicy(SlotRange(0,MAX_NCHANNELS)));
-
-  data_out_port_ = create_output_port<MultiChannelType<float>>(
-      "out",
-      MultiChannelType<float>::Parameters(1,1,1), // Placeholder, will be set in CompleteStreamInfo
-      PortOutPolicy(SlotRange(0,MAX_NCHANNELS),200,WaitStrategy::kBlockingStrategy));
-}
-
-void IAFEstimator::CompleteStreamInfo() {
-  const auto &input_info = data_in_port_->slot(0)->streaminfo();
-  const auto &input_params =
-      input_info.parameters<MultiChannelType<float>::Parameters>();
-
-  for (int k = 0; k < data_out_port_->number_of_slots(); ++k) {
-    data_out_port_->streaminfo(k).set_stream_rate(data_in_port_->streaminfo(0).stream_rate());
-    dynamic_cast<StreamInfo<MultiChannelType<float>>&>(
-      data_out_port_->slot(k)->streaminfo()).set_parameters(input_params);
-  }
-
 }
 
 void IAFEstimator::Prepare(GlobalContext &context) {
   const auto& info = data_in_port_->streaminfo(0);
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
-  LOG(INFO) << "Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
+  LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
   fs_ = p.sample_rate;
   int N = static_cast<int>(fs_ * 1);  // 1 second
   sample_window.set_capacity(N);
-  LOG(INFO) << "Sample window size set to " << sample_window.capacity() << "\n";
+  LOG(INFO) << name() << " Sample window size set to " << sample_window.capacity() << "\n";
 
   const int n_fft = static_cast<int>(n_fft_());
   if (n_fft < N) {
     throw std::runtime_error("IAFEstimator: n_fft must be >= window length");
   }
+
+  iaf_state_->set(current_iaf_);
 }
 
 int IAFEstimator::get_max_bin(fftwf_complex* freq, size_t N) {

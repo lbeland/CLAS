@@ -54,7 +54,7 @@ void Consumer::Process(ProcessingContext &context) {
 
   float sample;
   TimePoint source_timestamp;
-  uint64_t hardware_timestamp;
+  // uint64_t hardware_timestamp;
 
   std::array<float, 3> sample_entry;
 
@@ -67,20 +67,18 @@ void Consumer::Process(ProcessingContext &context) {
     
     // Try to retrieve data
     for (int slot_idx = 0; slot_idx < data_in_port_->number_of_slots(); slot_idx++) {
-      if (!data_in_port_->slot(slot_idx)->RetrieveData(data_in_sample)) {
-        LOG(ERROR) << name() << ". Failed to retrieve data from input slot " << slot_idx << ", terminating processing loop.\n";
-        return;
-      }
-      receive_timestamp = Clock::now();
+      data_in_port_->slot(slot_idx)->RetrieveData(data_in_sample);
+      
       sample = data_in_sample->data_sample(0,0);  // Get the first sample of the first channel
       source_timestamp = data_in_sample->source_timestamp();
-      hardware_timestamp = data_in_sample->hardware_timestamp();
+      // hardware_timestamp = data_in_sample->hardware_timestamp();
 
       // Release data
       data_in_port_->slot(slot_idx)->ReleaseData();
 
       sample_entry[slot_idx] = sample;
     }
+    receive_timestamp = Clock::now();
 
     samples.push_back(sample_entry);
 

@@ -46,7 +46,7 @@ FileSerializer::FileSerializer() : IProcessor() {
 
 void FileSerializer::CreatePorts() {
   data_port_ =
-      create_input_port<AnyType>("data", AnyType::Capabilities(),
+      create_input_port<AnyType>("in", AnyType::Capabilities(),
                                  PortInPolicy(SlotRange(1, 256), false));
 }
 

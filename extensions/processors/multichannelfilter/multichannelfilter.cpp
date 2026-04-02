@@ -102,7 +102,6 @@ void MultiChannelFilter::Process(ProcessingContext &context) {
   MultiChannelType<float>::Data *data_out = nullptr;
   auto nslots = data_in_port_->number_of_slots();
   decltype(nslots) k = 0;
-  int packet_count_ = 0;
 
   while (!context.terminated()) {
     if (n_messages_() != -1 && packet_count_ >= n_messages_()) {
@@ -137,6 +136,10 @@ void MultiChannelFilter::Process(ProcessingContext &context) {
     }
     packet_count_++;
   }
+}
+
+void MultiChannelFilter::Postprocess(ProcessingContext &context) {
+  printf("\n ---------------- \n MultiChannelFilter: Total messages processed: %d", packet_count_);
 }
 
 REGISTERPROCESSOR(MultiChannelFilter)

@@ -134,15 +134,16 @@ void FileSerializer::Process(ProcessingContext &context) {
 
   while (!context.terminated()) {
     for (int k = 0; k < nslots; ++k) {
-      if (!data_port_->slot(k)->RetrieveDataAll(data)) {
-        break;
+      if (!data_port_->slot(k)->RetrieveDataAll(data,1000000)) {    // timeout of 1 second, to allow for graceful shutdown
+        return;
       }
 
       nread = data_port_->slot(k)->status_read();
 
+      // Timeout -> return (end falcon process)
       if (nread == 0) {
         data_port_->slot(k)->ReleaseData();
-        continue;
+        return;
       }
 
       if (!throttle_()) {

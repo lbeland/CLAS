@@ -48,15 +48,13 @@ void Consumer::Prepare(GlobalContext &context){
 
 void Consumer::Process(ProcessingContext &context) {
   // MultiChannelType<float>::Data *data_in_phase = nullptr;
-  MultiChannelType<float>::Data *data_in_sample = nullptr;
+  MultiChannelType<float>::Data *data_in = nullptr;
 
   TimePoint receive_timestamp;
 
   float sample;
   TimePoint source_timestamp;
   // uint64_t hardware_timestamp;
-
-  std::array<float, 3> sample_entry;
 
 
   // Measurement phase
@@ -67,21 +65,17 @@ void Consumer::Process(ProcessingContext &context) {
     
     // Try to retrieve data
     for (int slot_idx = 0; slot_idx < data_in_port_->number_of_slots(); slot_idx++) {
-      data_in_port_->slot(slot_idx)->RetrieveData(data_in_sample);
+      data_in_port_->slot(slot_idx)->RetrieveData(data_in);
+      receive_timestamp = Clock::now();
       
-      sample = data_in_sample->data_sample(0,0);  // Get the first sample of the first channel
-      source_timestamp = data_in_sample->source_timestamp();
-      // hardware_timestamp = data_in_sample->hardware_timestamp();
+      source_timestamp = data_in->source_timestamp();
+      // hardware_timestamp = data_in->hardware_timestamp();
 
       // Release data
       data_in_port_->slot(slot_idx)->ReleaseData();
 
-      sample_entry[slot_idx] = sample;
     }
-    receive_timestamp = Clock::now();
-
-    samples.push_back(sample_entry);
-
+    
     // if (packet_count_ % 100 == 0) {
     //   LOG(INFO) << name() << ". Received packet " << packet_count_ + 1 << " with sample " << sample << " at " << std::chrono::duration<double, std::micro>(receive_timestamp.time_since_epoch()).count() << " us (source timestamp: " << std::chrono::duration<double, std::micro>(source_timestamp.time_since_epoch()).count() << " us, hardware timestamp: " << hardware_timestamp << " us)";
     // }
@@ -89,12 +83,7 @@ void Consumer::Process(ProcessingContext &context) {
     
     recv_times.push_back(receive_timestamp);
     source_times.push_back(source_timestamp);
-
-    // LOG(INFO) << name() << ". Received packet " << packet_count_ + 1 << " with sample " << sample << " at " << std::chrono::duration<double, std::micro>(receive_timestamp.time_since_epoch()).count() << " us (source timestamp: " << std::chrono::duration<double, std::micro>(source_timestamp.time_since_epoch()).count() << " us, hardware timestamp: " << hardware_timestamp << " us)";
-
     packet_count_++;
-
-    // custom_sleep_for(100);
   }
 
 }
@@ -211,17 +200,6 @@ void Consumer::Postprocess(ProcessingContext &context) {
       process_times_output << t << "\n";
   }
   process_times_output.close();
-
-  append = "_samples.csv";
-  std::ofstream samples_output;
-  samples_output << std::fixed << std::setprecision(17);
-  samples_output.open(output_file_().c_str() + append);
-  samples_output << "Orig,Phase,Real\n";
-  for (const std::array<float, 3>& s : samples) {
-      samples_output << s[0] << "," << s[1] << "," << s[2] << "\n";
-  }
-  samples_output.close();
-
 }
 
 REGISTERPROCESSOR(Consumer);

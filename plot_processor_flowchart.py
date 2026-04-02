@@ -32,18 +32,19 @@ CONNECTION_RE = re.compile(
     r"""
     ^\s*
     (?P<src_proc>[A-Za-z_]\w*)\.
-    (?P<src_port>out|in)\.
-    (?P<src_idx>\d+)
+    (?P<src_port>out|in)
+    (?:\.(?P<src_idx>\d+))?
     \s*=\s*
     (?P<dst_proc>[A-Za-z_]\w*)\.
-    (?P<dst_port>out|in)\.
-    (?P<dst_idx>\d+)
+    (?P<dst_port>out|in)
+    (?:\.(?P<dst_idx>\d+))?
     \s*$
     """,
     re.VERBOSE,
 )
 
 STATE_REF_RE = re.compile(r"^\s*(?P<proc>[A-Za-z_]\w*)\.(?P<state>[A-Za-z_]\w*)\s*$")
+PROCESSOR_RANGE_RE = re.compile(r"^\s*(?P<base>[A-Za-z_]\w*)\((?P<start>\d+)\s*-\s*(?P<end>\d+)\)\s*$")
 
 
 def parse_args() -> argparse.Namespace:
@@ -102,10 +103,10 @@ def parse_connection(connection: str) -> Tuple[str, str, int, str, str, int]:
 
     src_proc = match.group("src_proc")
     src_port = match.group("src_port")
-    src_idx = int(match.group("src_idx"))
+    src_idx = int(match.group("src_idx")) if match.group("src_idx") is not None else 0
     dst_proc = match.group("dst_proc")
     dst_port = match.group("dst_port")
-    dst_idx = int(match.group("dst_idx"))
+    dst_idx = int(match.group("dst_idx")) if match.group("dst_idx") is not None else 0
 
     return src_proc, src_port, src_idx, dst_proc, dst_port, dst_idx
 
@@ -120,6 +121,54 @@ def parse_state_reference(reference: str) -> Tuple[str, str]:
         raise ValueError(f"Invalid state reference syntax: {reference!r}")
 
     return match.group("proc"), match.group("state")
+
+
+def extract_state_refs(state_name: str, state_spec: Any) -> List[str]:
+    # New simplified format: {StateName: ["Proc.state", ...]}
+    if isinstance(state_spec, list):
+        refs = state_spec
+    # Backward-compatible format: {StateName: {states: ["Proc.state", ...], ...}}
+    elif isinstance(state_spec, dict):
+        refs = state_spec.get("states", [])
+    else:
+        raise SystemExit(
+            f"State '{state_name}' must be either a list of refs or a mapping/object."
+        )
+
+    if not isinstance(refs, list):
+        raise SystemExit(f"State '{state_name}' references must be a list.")
+
+    return refs
+
+
+def expand_processors(processors: Dict[str, Any]) -> Dict[str, Any]:
+    expanded: Dict[str, Any] = {}
+
+    for raw_name, proc_spec in processors.items():
+        match = PROCESSOR_RANGE_RE.match(raw_name)
+        if not match:
+            if raw_name in expanded:
+                raise SystemExit(f"Duplicate processor name: {raw_name}")
+            expanded[raw_name] = proc_spec
+            continue
+
+        base = match.group("base")
+        start = int(match.group("start"))
+        end = int(match.group("end"))
+        if end < start:
+            raise SystemExit(
+                f"Invalid processor range '{raw_name}': end must be greater than or equal to start"
+            )
+
+        for idx in range(start, end + 1):
+            name = f"{base}{idx}"
+            if name in expanded:
+                raise SystemExit(
+                    f"Expanded processor name collision: {name} from '{raw_name}'"
+                )
+            expanded[name] = proc_spec
+
+    return expanded
 
 
 def make_processor_label(name: str, spec: Dict[str, Any]) -> str:
@@ -144,8 +193,13 @@ def make_processor_label(name: str, spec: Dict[str, Any]) -> str:
         else:
             advanced_lines.append(f"{key}: {value}")
 
+    if "Serializer" in name:
+        color = "lightpink"
+    else:
+        color = "lightsteelblue"
+
     rows = [
-        f'<TR><TD BGCOLOR="lightsteelblue"><B>{escape_html(name)}</B></TD></TR>',
+        f'<TR><TD BGCOLOR="{color}"><B>{escape_html(name)}</B></TD></TR>',
         f'<TR><TD ALIGN="LEFT"><B>class:</B> {escape_html(str(proc_class))}</TD></TR>',
     ]
 
@@ -187,6 +241,7 @@ def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
 
     if not isinstance(processors, dict):
         raise SystemExit("'graph.processors' must be a mapping/object.")
+    processors = expand_processors(processors)
 
     if not isinstance(connections, list):
         raise SystemExit("'graph.connections' must be a list.")
@@ -253,12 +308,7 @@ def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
             )
 
         state_name, state_spec = next(iter(state_item.items()))
-        if not isinstance(state_spec, dict):
-            raise SystemExit(f"State '{state_name}' must be a mapping/object.")
-
-        refs = state_spec.get("states", [])
-        if not isinstance(refs, list):
-            raise SystemExit(f"State '{state_name}.states' must be a list.")
+        refs = extract_state_refs(str(state_name), state_spec)
 
         processors_for_state = set()
         for ref in refs:

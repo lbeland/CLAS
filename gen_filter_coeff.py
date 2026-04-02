@@ -29,7 +29,6 @@ def gen_bandpass(N, low_cutoff, high_cutoff, fs, length, output_folder):
 
             for i in range(len(filt_freq)):
                 f.write(f"{H_center[i].real:.18g} {H_center[i].imag:.18g}\n")
-        # np.savetxt(output_path, np.vstack((np.real(coeffs[:,0]), np.imag(coeffs[:,0]))).T, delimiter=',')
     else:
         # Store filter coefficients (for MultiChannelFilter)
         description = (
@@ -56,26 +55,3 @@ def gen_bandpass(N, low_cutoff, high_cutoff, fs, length, output_folder):
 if __name__ == "__main__":
     # gen_bandpass(8, 12, 10000,2000)
     gen_bandpass(6,8,12,10000,output_folder=".")
-
-    # window_size = 2000
-    # fs = 10000
-    # sos = butter(3, 0.2, output='sos')
-    # filt_freq = np.fft.fftshift(np.fft.fftfreq(window_size, d=1 / fs))
-    # plt.plot(filt_freq, freqz_sos(sos, worN=filt_freq, fs=fs)[1], '-.', label='scipy sos freq response')
-
-    # b,a = butter(3, 0.2)
-    # plt.plot(filt_freq, freqz(b, a, worN=filt_freq, fs=fs)[1], '--',label='scipy ba freq response')
-
-    # plt.legend()
-    # plt.show()
-
-
-    # gain = sos[0, 0]
-    # sos_matlab_style = sos.copy()
-    # sos_matlab_style[0, :3] /= gain
-
-    # print("sos =")
-    # print(sos_matlab_style)
-    # print("gain =")
-    # print(gain)
-

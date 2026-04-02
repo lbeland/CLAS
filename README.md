@@ -41,3 +41,6 @@ make install
 ```bash
 python3 c_benchmark.py --overwrite
 ```
+
+## Generate Flowchart of graph
+python3 plot_processor_flowchart.py resources/graphs/SimulateCLAS.yaml

@@ -75,7 +75,7 @@ void IAFEstimator::Prepare(GlobalContext &context) {
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
   LOG(INFO) << "Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
   fs_ = p.sample_rate;
-  int N = static_cast<int>(fs_ * 0.5);  // 0.5 seconds
+  int N = static_cast<int>(fs_ * 1);  // 1 second
   sample_window.set_capacity(N);
   LOG(INFO) << "Sample window size set to " << sample_window.capacity() << "\n";
 
@@ -85,14 +85,12 @@ void IAFEstimator::Prepare(GlobalContext &context) {
   }
 }
 
-int IAFEstimator::get_max_bin(fftwf_complex* out, size_t out_size) {
+int IAFEstimator::get_max_bin(fftwf_complex* freq, size_t N) {
   int max_bin = -1;
   double max_mag2 = -1.0;
 
-  for (size_t k = 0; k < out_size; ++k) {
-    double re = out[k][0];
-    double im = out[k][1];
-    double mag2 = re * re + im * im;
+  for (size_t k = 0; k < N; ++k) {
+    double mag2 = pow(freq[k][0],2) + pow(freq[k][1],2);
 
     if (mag2 > max_mag2) {
       max_mag2 = mag2;
@@ -180,6 +178,7 @@ void IAFEstimator::Process(ProcessingContext &context) {
 
       // FFT
       fftwf_execute(p);
+
       // Get max bin and convert to frequency
       int max_bin = get_max_bin(freq_half, n_fft/2 + 1);
       float freq_resolution = static_cast<float>(fs_) / n_fft;
@@ -188,6 +187,8 @@ void IAFEstimator::Process(ProcessingContext &context) {
         printf("\n Packet %d: Estimated IAF = %.2f Hz (max bin: %d)", packet_count_, current_iaf_, max_bin);
         
         iaf_state_->set(current_iaf_);  
+      } else {
+        printf("\n IAF Estimation did not change: %.2fHz", current_iaf_);
       }
     }
 

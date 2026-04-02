@@ -67,7 +67,7 @@ class PhaseEstimator : public IProcessor {
     options::Value<unsigned int, false> n_fft_{4096};
     options::Value<bool> calibrate_{false};
     options::Value<float, false> iaf_default_{10.0f};
-    options::Value<unsigned int, false> iaf_read_interval_{500};
+    options::Value<unsigned int, false> iaf_read_interval_{5000};
     options::Value<YAML::Node, false> filter_def_{};
 
     FollowerState<float>* iaf_state_ = nullptr;

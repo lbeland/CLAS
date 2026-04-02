@@ -62,108 +62,108 @@ class RunContext : public StorageContext {
         run_group_id_ = run_group_id.empty() ? "default" : run_group_id;
 
         // add run group storage site
-        add_storage_context("rungroup", storage_context("runroot") + run_group_id_);
+        // add_storage_context("rungroup", storage_context("runroot") + run_group_id_);
 
-        if (!template_id.empty()) {
-            add_storage_context("templatebase", storage_context("rungroup") + "/" + template_id);
-            if ((stat(storage_context("templatebase").c_str(), &info) < 0) ||
-                !(info.st_mode & S_IFDIR)) {
-                throw std::runtime_error(
-                    "Run source folder does not exist or is not accessible. (" +
-                    storage_context("templatebase") + ")");
-            }
-        }
+        // if (!template_id.empty()) {
+        //     add_storage_context("templatebase", storage_context("rungroup") + "/" + template_id);
+        //     if ((stat(storage_context("templatebase").c_str(), &info) < 0) ||
+        //         !(info.st_mode & S_IFDIR)) {
+        //         throw std::runtime_error(
+        //             "Run source folder does not exist or is not accessible. (" +
+        //             storage_context("templatebase") + ")");
+        //     }
+        // }
 
-        // create run group folder
-        if (mkdir(storage_context("rungroup").c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) !=
-            0) {
-            if (errno != EEXIST) {
-                throw std::runtime_error("Cannot create run environment " +
-                                         storage_context("rungroup"));
-            }
-        }
+        // // create run group folder
+        // if (mkdir(storage_context("rungroup").c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) !=
+        //     0) {
+        //     if (errno != EEXIST) {
+        //         throw std::runtime_error("Cannot create run environment " +
+        //                                  storage_context("rungroup"));
+        //     }
+        // }
 
-        // generate default destination
-        if (run_id.empty()) {
-            char buffer[20];
+        // // generate default destination
+        // if (run_id.empty()) {
+        //     char buffer[20];
 
-            time_t rawtime;
-            struct tm* timeinfo;
+        //     time_t rawtime;
+        //     struct tm* timeinfo;
 
-            time(&rawtime);
-            timeinfo = localtime(&rawtime);
+        //     time(&rawtime);
+        //     timeinfo = localtime(&rawtime);
 
-            strftime(buffer, 20, "%Y%m%d_%H%M%S", timeinfo);
+        //     strftime(buffer, 20, "%Y%m%d_%H%M%S", timeinfo);
 
-            run_id = buffer;
-        }
+        //     run_id = buffer;
+        // }
 
-        add_storage_context("runbase", storage_context("rungroup") + "/" + run_id);
-        run_id_ = run_id;
+        // add_storage_context("runbase", storage_context("rungroup") + "/" + run_id);
+        // run_id_ = run_id;
 
-        // create run destination folder
-        if (mkdir(storage_context("runbase").c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) != 0) {
-            if (errno == EEXIST) {
-                throw std::runtime_error("Run base folder already exists. (" +
-                                         storage_context("runbase") + ")");
-            } else {
-                throw std::runtime_error("Cannot create run base folder " +
-                                         storage_context("runbase"));
-            }
-        }
+        // // create run destination folder
+        // if (mkdir(storage_context("runbase").c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) != 0) {
+        //     if (errno == EEXIST) {
+        //         throw std::runtime_error("Run base folder already exists. (" +
+        //                                  storage_context("runbase") + ")");
+        //     } else {
+        //         throw std::runtime_error("Cannot create run base folder " +
+        //                                  storage_context("runbase"));
+        //     }
+        // }
 
-        // create symbolic link rungroup/_last_run pointing to run base folder
-        std::string symlinkname = storage_context("runroot") + "/_last_run";
-        // remove old symlink (if present)
-        std::remove(symlinkname.c_str());
+        // // create symbolic link rungroup/_last_run pointing to run base folder
+        // std::string symlinkname = storage_context("runroot") + "/_last_run";
+        // // remove old symlink (if present)
+        // std::remove(symlinkname.c_str());
 
-        // create new symlink
-        auto runbase_path = storage_context("runbase");
+        // // create new symlink
+        // auto runbase_path = storage_context("runbase");
 
-        try {
-            // 3. Get absolute paths to ensure calculation is accurate
-            fs::path target_abs = fs::absolute(runbase_path);
-            fs::path link_path_abs = fs::absolute(symlinkname);
+        // try {
+        //     // 3. Get absolute paths to ensure calculation is accurate
+        //     fs::path target_abs = fs::absolute(runbase_path);
+        //     fs::path link_path_abs = fs::absolute(symlinkname);
 
-            // 4. Calculate relative path from the symlink's PARENT directory to the target
-            // Example: if link is in /root/_last_run and target is /root/runs/run1
-            // The relative path should be "runs/run1"
-            fs::path relative_target = fs::relative(target_abs, link_path_abs.parent_path());
+        //     // 4. Calculate relative path from the symlink's PARENT directory to the target
+        //     // Example: if link is in /root/_last_run and target is /root/runs/run1
+        //     // The relative path should be "runs/run1"
+        //     fs::path relative_target = fs::relative(target_abs, link_path_abs.parent_path());
 
-            // 5. Create the relative symlink
-            fs::create_directory_symlink(relative_target, link_path_abs);
+        //     // 5. Create the relative symlink
+        //     fs::create_directory_symlink(relative_target, link_path_abs);
 
-        } catch (const fs::filesystem_error& e) {
-            LOG(WARNING) << "Could not create symbolic link for last run: " << e.what();
-        }
+        // } catch (const fs::filesystem_error& e) {
+        //     LOG(WARNING) << "Could not create symbolic link for last run: " << e.what();
+        // }
 
-        // create symbolic link runroot/_last_run_group pointing to run group
-        // folder
-        symlinkname = storage_context("runroot") + "_last_run_group";
-        // remove old symlink (if present)
-        std::remove(symlinkname.c_str());
-        // create new symlink
-        auto rungroup_path = storage_context("rungroup");
+        // // create symbolic link runroot/_last_run_group pointing to run group
+        // // folder
+        // symlinkname = storage_context("runroot") + "_last_run_group";
+        // // remove old symlink (if present)
+        // std::remove(symlinkname.c_str());
+        // // create new symlink
+        // auto rungroup_path = storage_context("rungroup");
 
-        try {
-            // 3. Get absolute paths to ensure calculation is accurate
-            fs::path target_abs = fs::absolute(rungroup_path);
-            fs::path link_path_abs = fs::absolute(symlinkname);
+        // try {
+        //     // 3. Get absolute paths to ensure calculation is accurate
+        //     fs::path target_abs = fs::absolute(rungroup_path);
+        //     fs::path link_path_abs = fs::absolute(symlinkname);
 
-            // 4. Calculate relative path from the symlink's PARENT directory to the target
-            // Example: if link is in /root/_last_run_group and target is /root/runs/group1
-            // The relative path should be "runs/group1"
-            fs::path relative_target = fs::relative(target_abs, link_path_abs.parent_path());
+        //     // 4. Calculate relative path from the symlink's PARENT directory to the target
+        //     // Example: if link is in /root/_last_run_group and target is /root/runs/group1
+        //     // The relative path should be "runs/group1"
+        //     fs::path relative_target = fs::relative(target_abs, link_path_abs.parent_path());
 
-            // 5. Create the relative symlink
-            fs::create_directory_symlink(relative_target, link_path_abs);
+        //     // 5. Create the relative symlink
+        //     fs::create_directory_symlink(relative_target, link_path_abs);
 
-        } catch (const fs::filesystem_error& e) {
-            LOG(WARNING) << "Could not create symbolic link for last run group: " << e.what();
-        }
+        // } catch (const fs::filesystem_error& e) {
+        //     LOG(WARNING) << "Could not create symbolic link for last run group: " << e.what();
+        // }
 
-        add_storage_context("lastrunbase", storage_context("rungroup") + "/_last_run");
-        add_storage_context("lastrungroup", storage_context("runroot") + "/_last_run_group");
+        // add_storage_context("lastrunbase", storage_context("rungroup") + "/_last_run");
+        // add_storage_context("lastrungroup", storage_context("runroot") + "/_last_run_group");
 
         set_default_context("runbase");
     }

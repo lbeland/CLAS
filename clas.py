@@ -8,11 +8,12 @@ import subprocess
 from pathlib import Path
 import yaml
 from gen_filter_coeff import gen_bandpass
+from plot_results import plot_results
 
 
 REPO_ROOT = Path(__file__).resolve().parent
 WORKSPACE_FALCON_CONFIG = REPO_ROOT / ".falcon" / "config.yaml"
-GRAPH_CONFIG = "SimulateCLAS.yaml"
+GRAPH_CONFIG = "TurboLinkCLAS.yaml"
 
 def main():
     parser = argparse.ArgumentParser()
@@ -65,6 +66,12 @@ def main():
     except Exception as e:
         print(f"Error during benchmark: {e}")
         terminate(graph_process)
+
+    # Plot results
+    if GRAPH_CONFIG == "TurboLinkCLAS.yaml":
+        plot_results(fs, 8, 'SourceClient')
+    elif GRAPH_CONFIG == "SimulateCLAS.yaml":
+        plot_results(fs, 8, 'Producer')
 
 
 def terminate(proc):

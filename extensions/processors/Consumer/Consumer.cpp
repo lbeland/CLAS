@@ -52,7 +52,6 @@ void Consumer::Process(ProcessingContext &context) {
 
   TimePoint receive_timestamp;
 
-  float sample;
   TimePoint source_timestamp;
   // uint64_t hardware_timestamp;
 
@@ -65,7 +64,9 @@ void Consumer::Process(ProcessingContext &context) {
     
     // Try to retrieve data
     for (int slot_idx = 0; slot_idx < data_in_port_->number_of_slots(); slot_idx++) {
-      data_in_port_->slot(slot_idx)->RetrieveData(data_in);
+      if (!data_in_port_->slot(slot_idx)->RetrieveData(data_in)) {
+        break;
+      }
       receive_timestamp = Clock::now();
       
       source_timestamp = data_in->source_timestamp();

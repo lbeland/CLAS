@@ -20,20 +20,15 @@
 #include "ChannelSelector.hpp"
 #include "utilities/time.hpp"
 #include "logging/log.hpp"
-#include <fstream>
-#include <iomanip>
 #include <chrono>
-#include <numeric>
 #include <limits>
-#include <sstream>
+#include <cmath>
 #include <string>
-#include <fftw3.h>
-#include <complex>
-#include <dsp/fftw_planner_mutex.hpp>
 
 
 ChannelSelector::ChannelSelector() : IProcessor(PRIORITY_HIGH) {
   add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
+  add_option("rms_window_seconds", rms_window_seconds_, "Length of the weighted RMS window in seconds (recent samples get higher weights).");
 
 }
 
@@ -63,6 +58,17 @@ void ChannelSelector::Prepare(GlobalContext &context) {
   const auto& info = data_in_port_->streaminfo(0);
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
   LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
+
+  packet_count_ = 0;
+  current_channel_index_ = 0;
+  n_channels_ = p.nchannels;
+
+  const double tau_seconds = rms_window_seconds_();
+  rms_alpha_ = 1.0 - std::exp(-1.0 / (p.sample_rate * tau_seconds));
+  rms_.assign(p.nchannels, 0.0);
+
+  LOG(INFO) << name() << " RMS selector EMA tau: " << rms_window_seconds_()
+            << " s, alpha: " << rms_alpha_ << ".";
 }
 
 void ChannelSelector::Process(ProcessingContext &context) {
@@ -80,10 +86,27 @@ void ChannelSelector::Process(ProcessingContext &context) {
     if (!data_in_port_->slot(0)->RetrieveData(data_in)) {
       break;
     }
+
+    double best_mean_square = -std::numeric_limits<double>::infinity();
+
+    for (std::size_t channel_idx = 0; channel_idx < n_channels_; ++channel_idx) {
+      const double sample = static_cast<double>(data_in->data_sample(0, channel_idx));
+      const double mean_square = (1.0 - rms_alpha_) * rms_[channel_idx] + rms_alpha_ * (sample * sample);
+      rms_[channel_idx] = mean_square;
+      if (mean_square > best_mean_square) {
+        best_mean_square = mean_square;
+        current_channel_index_ = channel_idx;
+      }
+    }
+    if (packet_count_ % 100 == 0) {
+      LOG(INFO) << name() << ". Received packet " << packet_count_ + 1 << " with selected channel " << current_channel_index_ << " (RMS: " << rms_[current_channel_index_] << ")";
+    }
+
     // Claim output buffer
     data_out = data_out_port_->slot(0)->ClaimData(false);
 
-    data_out->set_data_sample(0,0,data_in->data_sample(0,current_channel_index_));
+    data_out->set_data_sample(0, 0, data_in->data_sample(0, current_channel_index_));
+
     data_out->CloneTimestamps(*data_in);
 
     data_in_port_->slot(0)->ReleaseData();
@@ -96,7 +119,8 @@ void ChannelSelector::Process(ProcessingContext &context) {
 }
 
 void ChannelSelector::Postprocess(ProcessingContext &context) {
-  printf("\n ---------------- \n ChannelSelector: Total messages processed: %d", packet_count_);
+  printf("\n ---------------- \n ChannelSelector: Total messages processed: %d, last selected channel: %u",
+         packet_count_, current_channel_index_);
 }
 
 REGISTERPROCESSOR(ChannelSelector);

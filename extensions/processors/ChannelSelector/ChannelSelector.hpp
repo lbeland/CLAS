@@ -20,10 +20,6 @@
 
 #include "iprocessor.hpp"
 #include "multichanneldata/multichanneldata.hpp"
-#include <dsp/filter.hpp>
-#include <boost/circular_buffer.hpp>
-#include <complex>
-#include <fftw3.h>
 #include <vector>
 
 class ChannelSelector : public IProcessor {
@@ -39,9 +35,6 @@ class ChannelSelector : public IProcessor {
   // VARIABLES
   protected:
     unsigned int packet_count_ = 0;
-    double first_timestamp_ = 0.0;
-    float fs_ = 0.0;
-    inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Prepare
 
     const uint32_t MAX_NCHANNELS=384;
 
@@ -53,6 +46,10 @@ class ChannelSelector : public IProcessor {
   // OPTIONS
   protected:
     options::Value<int, false> n_messages_{-1};
+    options::Value<double, false> rms_window_seconds_{5.0};
 
     unsigned int current_channel_index_ = 0;
+    double rms_alpha_ = 1.0;
+    unsigned int n_channels_ = 0;
+    std::vector<double> rms_;
 };

@@ -38,11 +38,12 @@ ZMQSerializer::ZMQSerializer() : IProcessor() {
   add_option("interleave", interleave_,
              "Interleave data streams from all input slots and stream to "
              "single network port.");
+  add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
 }
 
 void ZMQSerializer::CreatePorts() {
   data_port_ =
-      create_input_port<AnyType>("data", AnyType::Capabilities(),
+      create_input_port<AnyType>("in", AnyType::Capabilities(),
                                  PortInPolicy(SlotRange(1, 256), false));
 }
 
@@ -98,6 +99,21 @@ void ZMQSerializer::Process(ProcessingContext &context) {
       }
       data_port_->slot(k)->ReleaseData();
     }
+    
+    // Check if all slots have received the specified number of messages (if n_messages_ is set)
+    if (n_messages_() != -1) {
+      bool all_slots_done = true;
+      for (int k = 0; k < data_port_->number_of_slots(); ++k) {
+        if (packetid_[k] < static_cast<size_t>(n_messages_())) {
+          all_slots_done = false;
+          break;
+        }
+      }
+      if (all_slots_done) {
+        break;
+      }
+    }
+
   }
 }
 

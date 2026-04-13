@@ -9,9 +9,15 @@ from read_output import get_signal_data
 def plot_results(fs, f0, orig_node):
     # Load data
     if orig_node == "Producer":
-        samples_orig = get_signal_data('rt_c_results/Serializer1.0_Producer.out.0.bin')[:,0]
+        samples_orig = get_signal_data('rt_c_results/Serializer1.0_Producer.out.0.bin')
     elif orig_node == "SourceClient":
-        samples_orig = get_signal_data('rt_c_results/Serializer1.0_SourceClient.out.0.bin')[:,0]
+        samples_orig = get_signal_data('rt_c_results/Serializer1.0_SourceClient.out.0.bin')
+
+    if samples_orig is None:
+        print("No original signal data found. Exiting.")
+        return
+    else:
+        samples_orig = samples_orig[:,0]  # Plot first channel
 
     samples_filtered = get_signal_data('rt_c_results/Serializer2.0_BandpassFilter.out.0.bin')[:,0]
     samples_phase = get_signal_data('rt_c_results/Serializer3.0_PhaseEstimator.out.0.bin')[:,0]
@@ -36,7 +42,7 @@ def plot_results(fs, f0, orig_node):
     plt.figure(figsize=(10, 5))
     plt.plot(samples_orig, label='Original')
     plt.plot(samples_phase, '-.', label='cecht online Phase')
-    plt.plot(samples_real, label='cecht online Real part')
+    # plt.plot(samples_real, label='cecht online Real part')
     # plt.plot(cecht_phase, ':', label='cecHT offline Phase')
     # plt.plot(echt_phase, '--', label='ecHT offline Phase')
     plt.plot(hilbert_phase, label='Hilbert offline Phase')
@@ -50,4 +56,4 @@ def plot_results(fs, f0, orig_node):
     plt.show()
 
 if __name__ == "__main__":
-    plot_results(100, 8, 'Producer')
+    plot_results(100, 8, 'SourceClient')

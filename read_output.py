@@ -103,6 +103,9 @@ def get_signal_data(path):
     signal_offset = signal_meta["offset"]
     signal_n_items = signal_meta["n_items"]
 
+    if n_records == 0:
+        return None
+
     signal_flat = np.ndarray(
         shape=(n_records, signal_n_items),
         dtype=signal_dtype,

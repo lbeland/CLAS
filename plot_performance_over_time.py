@@ -52,6 +52,7 @@ for idx, x in enumerate(zip([latency_files, send_files, recv_files], ["Latency",
 
 
 axes[0].legend(loc="upper right")
+plt.savefig('performance_over_time.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 

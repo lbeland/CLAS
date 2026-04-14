@@ -19,6 +19,7 @@
 
 #include "zmqserializer.hpp"
 
+#include <cmath>
 #include <string>
 #include <utility>
 
@@ -39,6 +40,9 @@ ZMQSerializer::ZMQSerializer() : IProcessor() {
              "Interleave data streams from all input slots and stream to "
              "single network port.");
   add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
+  add_option("serialization_rate_hz", serialization_rate_hz_,
+             "Target serialization rate in Hz. Must be <= stream rate and an integer divisor of it."
+             " Set to -1 to serialize every packet.");
 }
 
 void ZMQSerializer::CreatePorts() {
@@ -55,16 +59,45 @@ void ZMQSerializer::Preprocess(ProcessingContext &context) {
     sockets_.push_back(std::make_unique<zmq::socket_t>(context.run().global().zmq(), ZMQ_PUB));
     address = "tcp://*:" + std::to_string(port_());
     sockets_.back()->bind(address.c_str());
+    LOG(INFO) << name() << "binding to network port " << address;
   } else {
     for (int k = 0; k < data_port_->number_of_slots(); ++k) {
       sockets_.push_back(std::make_unique<zmq::socket_t>(context.run().global().zmq(), ZMQ_PUB));
       address = "tcp://*:" + std::to_string(port_() + k);
       sockets_.back()->bind(address.c_str());
+      LOG(INFO) << name() << "binding to network port " << address;
     }
   }
 
   serializer_.reset(Serialization::serializer(encoding_(), format_()));
   packetid_.assign(data_port_->number_of_slots(), 0);
+  received_packetid_.assign(data_port_->number_of_slots(), 0);
+  serialize_stride_.assign(data_port_->number_of_slots(), 1);
+
+  if (serialization_rate_hz_() > 0.0) {
+    for (int k = 0; k < data_port_->number_of_slots(); ++k) {
+      const double fs = data_port_->slot(k)->streaminfo().stream_rate();
+      if (fs <= 0.0 || fs == IRREGULARSTREAM) {
+        throw std::runtime_error(name() + ": cannot apply serialization_rate_hz to irregular stream rate.");
+      }
+
+      if (serialization_rate_hz_() > fs) {
+        throw std::runtime_error(name() + ": serialization_rate_hz must be <= stream rate.");
+      }
+
+      const double ratio = fs / serialization_rate_hz_();
+      const auto ratio_rounded = static_cast<uint64_t>(std::llround(ratio));
+      if (ratio_rounded == 0 || std::fabs(ratio - static_cast<double>(ratio_rounded)) > 1e-9) {
+        throw std::runtime_error(name() +
+                                 ": serialization_rate_hz must be an integer divisor of stream rate.");
+      }
+
+      serialize_stride_[k] = ratio_rounded;
+      LOG(INFO) << name() << ": stream " << k << " stream_rate=" << fs
+                << " Hz, serialization_rate=" << serialization_rate_hz_()
+                << " Hz, keeping every " << serialize_stride_[k] << "th packet.";
+    }
+  }
 }
 
 void ZMQSerializer::Process(ProcessingContext &context) {
@@ -83,6 +116,11 @@ void ZMQSerializer::Process(ProcessingContext &context) {
       }
 
       for (auto &it : data) {
+        const auto recv_count = received_packetid_[k]++;
+        if (serialize_stride_[k] > 1 && (recv_count % serialize_stride_[k]) != 0) {
+          continue;
+        }
+
         buffer.str("");
         buffer.clear();
 
@@ -123,7 +161,8 @@ void ZMQSerializer::Postprocess(ProcessingContext &context) {
 
   for (SlotType k = 0; k < data_port_->number_of_slots(); k++) {
     LOG(UPDATE) << name() << ": stream " << k
-                << ": received and serialized over network " << packetid_[k]
+                << ": received " << received_packetid_[k] << ", serialized over network "
+                << packetid_[k]
                 << " data packets.";
   }
 }

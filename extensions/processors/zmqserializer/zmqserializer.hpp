@@ -50,11 +50,13 @@ class ZMQSerializer : public IProcessor {
       Serialization::Format::FULL};
   options::Bool interleave_{false};
   options::Value<int, false> n_messages_{-1};
+  options::Value<double, false> serialization_rate_hz_{-1.0};
 
   // VARIABLES
  protected:
   std::vector<std::unique_ptr<zmq::socket_t>> sockets_;
   std::vector<uint64_t> packetid_;
+  std::vector<uint64_t> received_packetid_;
+  std::vector<uint64_t> serialize_stride_;
   std::unique_ptr<Serialization::Serializer> serializer_;
-  unsigned int packet_count_ = 0;
 };

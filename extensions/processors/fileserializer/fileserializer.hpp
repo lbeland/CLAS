@@ -70,4 +70,5 @@ class FileSerializer : public IProcessor {
   options::Double throttle_threshold_{0.3, options::inrange<double>(0., 1.)};
   options::Double throttle_smooth_{0.5, options::inrange<double>(0., 1.)};
   options::Bool preamble_{true};
+  options::Value<int, false> n_messages_{-1};
 };

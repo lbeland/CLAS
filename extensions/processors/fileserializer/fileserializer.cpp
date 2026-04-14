@@ -42,6 +42,7 @@ FileSerializer::FileSerializer() : IProcessor() {
              "Smoothly changes throttle level as threshold is reached "
              "(value between 0 and 1).");
   add_option("preamble", preamble_, "Add YAML preamble to file.");
+  add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
 }
 
 void FileSerializer::CreatePorts() {
@@ -134,8 +135,8 @@ void FileSerializer::Process(ProcessingContext &context) {
 
   while (!context.terminated()) {
     for (int k = 0; k < nslots; ++k) {
-      if (!data_port_->slot(k)->RetrieveDataAll(data,1000000)) {    // timeout of 1 second, to allow for graceful shutdown
-        return;
+      if (!data_port_->slot(k)->RetrieveDataAll(data)) {
+        break;
       }
 
       nread = data_port_->slot(k)->status_read();
@@ -208,6 +209,20 @@ void FileSerializer::Process(ProcessingContext &context) {
         }
       }
       data_port_->slot(k)->ReleaseData();
+    }
+
+    // Check if all slots have received the specified number of messages (if n_messages_ is set)
+    if (n_messages_() != -1) {
+      bool all_slots_done = true;
+      for (int k = 0; k < data_port_->number_of_slots(); ++k) {
+        if (packetid_[k] < static_cast<size_t>(n_messages_())) {
+          all_slots_done = false;
+          break;
+        }
+      }
+      if (all_slots_done) {
+        break;
+      }
     }
   }
 }

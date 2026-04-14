@@ -145,7 +145,7 @@ void IAFEstimator::Process(ProcessingContext &context) {
 
     data_in_port_->slot(0)->ReleaseData();
 
-    if ((sample_window.size() == sample_window.capacity()) && (packet_count_ % (sample_window.capacity()/2) == 0)) {
+    if ((sample_window.size() == sample_window.capacity())) { //} && (packet_count_ % (sample_window.capacity()/2) == 0)) {
 
       // Convert circular buffer<float> to continuous array for FFTW input and zero-pad to n_fft
       // signal_in = sample_window.linearize();
@@ -162,17 +162,15 @@ void IAFEstimator::Process(ProcessingContext &context) {
       // Get max bin and convert to frequency
       int max_bin = get_max_bin(freq_half, n_fft/2 + 1);
       float freq_resolution = static_cast<float>(fs_) / n_fft;
-      if (std::abs(max_bin * freq_resolution - current_iaf_) > 1e-6f) {
+      if (std::abs(max_bin * freq_resolution - current_iaf_) > 1e-3f) {
         current_iaf_ = max_bin * freq_resolution;
         printf("\n Packet %d: Estimated IAF = %.2f Hz (max bin: %d)", packet_count_, current_iaf_, max_bin);
         
         iaf_state_->set(current_iaf_);  
-      } else {
-        printf("\n IAF Estimation did not change: %.2fHz", current_iaf_);
+      // } else {
+      //   printf("\n IAF Estimation did not change: %.2fHz", current_iaf_);
       }
     }
-
-
   }
 
   {

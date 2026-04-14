@@ -2,74 +2,108 @@ import math
 import socket
 import struct
 import time
+import zmq
+import numpy as np
 
 UDP_IP = "127.0.0.1"
 UDP_PORT = 25000
-Modulation_type = "angle"   # amplitude, angle or none
-mod_ampl = 3
-mod_freq = 0.5
-
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+token = 0xAABBCCDD
+trigger_bits = 0
 
 # Signal parameters
-amplitude = 1.0
-frequency = 9
-sample_rate = 100.0
+amplitude = 3.0
+frequency = 10
+sample_rate = 1000.0
 
 dt = 1.0 / sample_rate
 t = 0.0
 
-sample_counter = 0
-token = 0xAABBCCDD
-trigger_bits = 0
+# Modulation parameters
+Modulation_type = "None"   # amplitude, phase or None
+mod_ampl = 1
+mod_freq = 0.05
 
 print(f"Sending structured packets to {UDP_IP}:{UDP_PORT}")
 
-while True:
-    # --- AUX (8 floats) ---
-    aux = [0.0] * 8
+# ZeroMQ 
+serialization_rate_hz = 100.0
+serialization_interval = sample_rate / serialization_rate_hz
+socket = zmq.Context().socket(zmq.PUB)
+socket.bind("tcp://localhost:5555")
+print("ZeroMQ publisher bound to tcp://localhost:5555")
 
-    # --- EEG (32 floats) ---
-    eeg = []
-    for ch in range(32):
+sample_counter = 0
+
+storage = []
+try:
+    while True:
+        # --- AUX (8 floats) ---
+        aux = [0.0] * 8
+
+        # --- EEG (32 floats) ---
+        eeg = []
+
         carrier =  amplitude * math.cos(2.0 * math.pi * frequency * t)
 
-        if Modulation_type != "none":
+        if Modulation_type != "None":
             if Modulation_type == "amplitude": 
                 value = carrier + mod_ampl/2 * (
                                                 math.cos(2.0 * math.pi * (frequency + mod_freq) * t) +
                                                 math.cos(2.0 * math.pi * (frequency - mod_freq) * t)
                                             )
-            elif Modulation_type == "angle":
-                # freq_dev = frequency - mod_freq
+                theta = 2.0 * math.pi * frequency * t
+                inst_freq = frequency
+
+            elif Modulation_type == "phase":
                 value = amplitude * math.cos(2.0 * math.pi * frequency * t + (mod_ampl/mod_freq) * math.sin(2.0 * math.pi * mod_freq * t))
+                theta = 2.0 * math.pi * frequency * t + (mod_ampl/mod_freq) * math.sin(2.0 * math.pi * mod_freq * t)
+                inst_freq = frequency + mod_ampl * math.cos(2.0 * math.pi * mod_freq * t)
         else:
             value = carrier
+            theta = 2.0 * math.pi * frequency * t
+            inst_freq = frequency
 
-        eeg.append(value)
+        current_phase = ((theta + math.pi) % (2.0 * math.pi)) - math.pi # wrap to [-pi, pi]
 
-    eeg[9] *= 10    # Make channel 9 stand out for testing
+        for ch in range(32):
+            eeg.append(value)
 
-    
-    # print(f"Time: {t:.3f}s, Sample: {sample_counter}, EEG[0]: {eeg[0]:.3f}")
+        storage.append((t, value, current_phase, inst_freq))
 
-    # --- Pack ---
-    packet = struct.pack(
-        "<III"      # token, sample_counter, trigger_bits
-        "8f"        # aux
-        "32f",      # eeg
-        token,
-        sample_counter,
-        trigger_bits,
-        *aux,
-        *eeg
-    )
+        # eeg[9] *= 10    # Make channel 9 stand out for testing
 
-    sock.sendto(packet, (UDP_IP, UDP_PORT))
+        
+        # print(f"Time: {t:.3f}s, Sample: {sample_counter}, inst_freq: {inst_freq:.3f}, Phase: {current_phase:.3f}")  # Print time, sample count, first EEG channel and current phase
 
-    # Advance time + counter
-    t += dt
-    sample_counter += 1
+        # --- Pack ---
+        packet_udp = struct.pack(
+            "<III"      # token, sample_counter, trigger_bits
+            "8f"        # aux
+            "32f",      # eeg
+            token,
+            sample_counter,
+            trigger_bits,
+            *aux,
+            *eeg
+        )
+        sock.sendto(packet_udp, (UDP_IP, UDP_PORT))
 
-    # Maintain approximate real-time rate
-    time.sleep(dt)
+        # ZMQ only sends sample counter and current phase
+        if sample_counter % serialization_interval == 0:
+            packet_zmq = struct.pack(
+                "<If",      # sample_counter, current_phase
+                sample_counter,
+                current_phase
+            )            
+            socket.send(packet_zmq)
+
+        # Advance time + counter
+        t += dt
+        sample_counter += 1
+
+        # Maintain approximate real-time rate
+        time.sleep(dt)
+        
+except KeyboardInterrupt:
+    np.save("simulated_signal.npy", np.array(storage, dtype=[("time", "f4"), ("value", "f4"), ("phase", "f4"), ("inst_freq", "f4")]))

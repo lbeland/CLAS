@@ -11,8 +11,12 @@ def gen_bandpass(N, low_cutoff, high_cutoff, fs, length, output_folder):
         return
 
     print(f"Generating coefficients for {low_cutoff:.2f}-{high_cutoff:.2f}Hz")
-    Wn = [low_cutoff / (fs / 2), high_cutoff / (fs / 2)]
-    sos = butter(N=N, Wn=Wn, btype="band", output="sos")
+    
+    if low_cutoff == 0:
+        sos = butter(N=N, Wn=high_cutoff / (fs / 2), btype="low", output="sos")
+    else:
+        Wn = [low_cutoff / (fs / 2), high_cutoff / (fs / 2)]
+        sos = butter(N=N, Wn=Wn, btype="band", output="sos")
 
     if length is not None:
         # Store frequency response of bandpass filter (for PhaseEstimator)
@@ -51,7 +55,45 @@ def gen_bandpass(N, low_cutoff, high_cutoff, fs, length, output_folder):
 
     return
 
+def plot_filter_response(sos, fs):
+    f, H = freqz_sos(sos, worN=4096, fs=fs)
+
+    magnitude_db = 20 * np.log10(np.maximum(np.abs(H), 1e-12))
+    phase_rad = np.unwrap(np.angle(H))
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+    fig.set_facecolor("white")
+
+    ax1.plot(f, magnitude_db, linewidth=2)
+    ax1.set_title("Bandpass Filter Frequency Response")
+    ax1.set_ylabel("Magnitude (dB)")
+    ax1.grid(True, alpha=0.3)
+
+    ax2.plot(f, phase_rad, linewidth=2)
+    ax2.set_xlabel("Frequency (Hz)")
+    ax2.set_ylabel("Phase (rad)")
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
 
 if __name__ == "__main__":
-    # gen_bandpass(8, 12, 10000,2000)
-    gen_bandpass(6,8,12,10000,output_folder=".")
+    N = 1
+    low_cutoff = 1
+    high_cutoff = 50
+    fs = 1000
+
+    gen_bandpass(N, low_cutoff, high_cutoff, fs, length=None, output_folder=".")
+
+    if low_cutoff == 0:
+        sos = butter(N=N, Wn=high_cutoff / (fs / 2), btype="low", output="sos")
+    else:
+        sos = butter(
+            N=N,
+            Wn=[low_cutoff / (fs / 2), high_cutoff / (fs / 2)],
+            btype="band",
+            output="sos",
+        )
+
+    plot_filter_response(sos, fs)

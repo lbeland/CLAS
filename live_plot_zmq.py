@@ -4,17 +4,9 @@ import struct
 from collections import deque
 
 import numpy as np
-import pyqtgraph as pg  # type: ignore[reportMissingImports]
-import yaml
+import pyqtgraph as pg
 import zmq
 from PyQt5 import QtCore, QtWidgets
-
-def unpack_packet_value(stream_id, packet_id, hardware_ts, signal, channel_index):
-    if hardware_ts is None or signal.size == 0:
-        return stream_id, packet_id, np.nan, np.nan
-
-    return stream_id, packet_id, float(hardware_ts), float(np.asarray(signal, dtype=np.float64)[0])
-
 
 def parse_binary_message(raw, payload_offset, channel_index, channel_count, signal_dtype):
     # Binary FULL packets from falcon start with stream(uint16)+packet(uint64), then AnyType's
@@ -42,7 +34,14 @@ def parse_binary_message(raw, payload_offset, channel_index, channel_count, sign
         raise ValueError("Packet does not contain the requested channel")
 
     selected = np.frombuffer(payload[signal_offset : signal_offset + signal_itemsize], dtype=signal_dtype)[0]
-    return stream_id, packet_id, float(hardware_ts), float(selected)
+    return stream_id, packet_id, int(hardware_ts), float(selected)
+
+
+def parse_phase_message(raw):
+    if len(raw) < 8:
+        raise ValueError("Phase packet is too short")
+    sample_counter, current_phase = struct.unpack_from("<If", raw, 0)
+    return int(sample_counter), float(current_phase)
 
 
 class LivePlotWindow(QtWidgets.QMainWindow):
@@ -55,8 +54,13 @@ class LivePlotWindow(QtWidgets.QMainWindow):
         self.socket.setsockopt(zmq.SUBSCRIBE, b"")
         self.socket.connect(args.address)
 
+        self.phase_socket = self.context.socket(zmq.SUB)
+        self.phase_socket.setsockopt(zmq.SUBSCRIBE, b"")
+        self.phase_socket.connect(args.phase_address)
+
         self.poller = zmq.Poller()
         self.poller.register(self.socket, zmq.POLLIN)
+        self.poller.register(self.phase_socket, zmq.POLLIN)
 
         self.setWindowTitle("ZMQ Live Plot (Interleaved Streams)")
         self.resize(1100, 650)
@@ -66,13 +70,14 @@ class LivePlotWindow(QtWidgets.QMainWindow):
         plot.addLegend()
         plot.showGrid(x=True, y=True, alpha=0.15)
         plot.setLabel("left", "Value", color="k")
-        plot.setLabel("bottom", "Sample index", color="k")
+        plot.setLabel("bottom", "Time", units="s", color="k")
         self.setCentralWidget(plot)
 
         self.curves = {
-            0: plot.plot(pen=pg.mkPen((0, 90, 200), width=2), name="stream 0"),
-            1: plot.plot(pen=pg.mkPen((200, 80, 0), width=2), name="stream 1"),
+            0: plot.plot(pen=pg.mkPen((0, 90, 200), width=2), name="orig signal"),
+            1: plot.plot(pen=pg.mkPen((200, 80, 0), width=2), name="estimated phase"),
         }
+        self.phase_curve = plot.plot(pen=pg.mkPen((20, 140, 20), width=2), name="true phase")
 
         self.x_data = {
             0: deque(maxlen=args.window_samples),
@@ -85,7 +90,17 @@ class LivePlotWindow(QtWidgets.QMainWindow):
         self.packet_count = {0: 0, 1: 0}
         self.dropped_packets = {0: 0, 1: 0}
         self.expected_packet_id = {0: None, 1: None}
-        self.last_x_value = {0: None, 1: None}
+        self.phase_packet_count = 0
+
+        self.phase_x = deque(maxlen=args.window_samples)
+        self.phase_y = deque(maxlen=args.window_samples)
+        self.matched_phase_x = deque(maxlen=args.window_samples)
+        self.matched_phase_y = deque(maxlen=args.window_samples)
+        self.pending_raw = {}
+        self.pending_phase = {}
+        self.match_count = 0
+        self.abs_diff = 0.0
+        self.abs_diff_sum = 0.0
 
         self.status = QtWidgets.QLabel("Waiting for ZMQ packets...")
         self.statusBar().addWidget(self.status)
@@ -100,70 +115,105 @@ class LivePlotWindow(QtWidgets.QMainWindow):
         if np.isnan(x_value) or np.isnan(y_value):
             return
 
-        x_scaled = float(x_value) * self.args.timestamp_scale
+        x_scaled = float(x_value) #* self.args.timestamp_scale
         self.x_data[stream_id].append(x_scaled)
         self.y_data[stream_id].append(y_value)
-        self.last_x_value[stream_id] = x_scaled
 
-    def insert_gap(self, stream_id, next_x_value):
-        if stream_id not in self.y_data:
-            return
-        if self.last_x_value[stream_id] is None:
+    def _trim_pending(self, store):
+        while len(store) > self.args.max_pending_matches:
+            oldest_key = next(iter(store))
+            del store[oldest_key]
+
+    def add_raw_for_match(self, hardware_ts, value):
+        self.pending_raw[hardware_ts] = value
+        self.try_match(hardware_ts)
+
+    def add_phase_for_match(self, sample_counter, current_phase):
+        self.phase_x.append(float(sample_counter))
+        self.phase_y.append(current_phase)
+        self.pending_phase[sample_counter] = current_phase
+        self._trim_pending(self.pending_phase)
+
+    def try_match(self, key):
+        if key not in self.pending_phase:
             return
 
-        self.x_data[stream_id].append(self.last_x_value[stream_id])
-        self.y_data[stream_id].append(np.nan)
-        self.x_data[stream_id].append(next_x_value)
-        self.y_data[stream_id].append(np.nan)
+        raw_value = self.pending_raw.pop(key)
+        phase_value = self.pending_phase.pop(key)
+
+        diff = raw_value - phase_value
+        self.match_count += 1
+        self.abs_diff_sum += abs(diff)
+        self.abs_diff = diff
+        self.matched_phase_x.append(float(key))
+        self.matched_phase_y.append(phase_value)
+        # print(f"Matched packet {key}: raw={raw_value:.4f}, phase={phase_value:.4f}, diff={diff:.4f}")
 
     def update_plot(self):
         received = 0
         while received < self.args.max_packets_per_refresh:
             events = dict(self.poller.poll(timeout=0))
-            if self.socket not in events:
+            if self.socket not in events and self.phase_socket not in events:
                 break
 
-            raw = self.socket.recv(flags=zmq.NOBLOCK)
-            try:
-                stream_id, packet_id, hardware_ts, value = parse_binary_message(
-                                                                                raw,
-                                                                                self.args.binary_payload_offset,
-                                                                                self.args.channel_index,
-                                                                                self.args.channel_count,
-                                                                                self.args.signal_dtype,
-                                                                            )
-            except Exception:
-                continue
+            if self.socket in events and received < self.args.max_packets_per_refresh:
+                raw = self.socket.recv(flags=zmq.NOBLOCK)
+                try:
+                    stream_id, packet_id, hardware_ts, value = parse_binary_message(
+                        raw,
+                        self.args.binary_payload_offset,
+                        self.args.channel_index,
+                        self.args.channel_count,
+                        self.args.signal_dtype,
+                    )
+                except Exception:
+                    pass
+                else:
+                    if stream_id in self.packet_count:
+                        self.packet_count[stream_id] += 1
 
-            if stream_id in self.packet_count:
-                self.packet_count[stream_id] += 1
+                        if packet_id is not None:
+                            expected = self.expected_packet_id[stream_id]
+                            if expected is not None and packet_id > expected:
+                                missing_packets = packet_id - expected
+                                self.dropped_packets[stream_id] += missing_packets
 
-                if packet_id is not None:
-                    expected = self.expected_packet_id[stream_id]
-                    if expected is not None and packet_id > expected:
-                        missing_packets = packet_id - expected
-                        self.dropped_packets[stream_id] += missing_packets
-                        self.insert_gap(stream_id, float(hardware_ts) * self.args.timestamp_scale)
+                            # Ignore stale/out-of-order packets for drop accounting.
+                            if expected is None or packet_id >= expected:
+                                self.expected_packet_id[stream_id] = packet_id + 1
 
-                    # Ignore stale/out-of-order packets for drop accounting.
-                    if expected is None or packet_id >= expected:
-                        self.expected_packet_id[stream_id] = packet_id + 1
+                    self.append_packet(stream_id, hardware_ts, value)
+                    if stream_id == 1 and not np.isnan(value):  # add phase value (stream 1)
+                        self.add_raw_for_match(hardware_ts, value)
+                    received += 1
 
-            self.append_packet(stream_id, hardware_ts, value)
-            received += 1
+            if self.phase_socket in events and received < self.args.max_packets_per_refresh:
+                phase_raw = self.phase_socket.recv(flags=zmq.NOBLOCK)
+                try:
+                    sample_counter, current_phase = parse_phase_message(phase_raw)
+                except Exception:
+                    pass
+                else:
+                    self.phase_packet_count += 1
+                    self.add_phase_for_match(sample_counter, current_phase)
+                    received += 1
 
         for stream_id, curve in self.curves.items():
             curve.setData(np.asarray(self.x_data[stream_id]), np.asarray(self.y_data[stream_id]))
+        # self.phase_curve.setData(np.asarray(self.phase_x), np.asarray(self.phase_y))
+        self.phase_curve.setData(np.asarray(self.matched_phase_x), np.asarray(self.matched_phase_y))
+
+        mean_abs_diff = self.abs_diff_sum / self.match_count if self.match_count else np.nan
 
         self.status.setText(
-            f"packets stream0={self.packet_count[0]} stream1={self.packet_count[1]} "
             f"| dropped stream0={self.dropped_packets[0]} stream1={self.dropped_packets[1]} "
-            f"| points stream0={len(self.y_data[0])} stream1={len(self.y_data[1])}"
+            f"| mean error={mean_abs_diff:.4f} last error={self.abs_diff:.4f}"
         )
 
     def closeEvent(self, event):
         self.timer.stop()
         self.socket.close(linger=0)
+        self.phase_socket.close(linger=0)
         self.context.term()
         super().closeEvent(event)
 
@@ -171,6 +221,7 @@ class LivePlotWindow(QtWidgets.QMainWindow):
 def parse_args():
     parser = argparse.ArgumentParser(description="Live plot two interleaved ZMQ streams.")
     parser.add_argument("--address", default="tcp://localhost:7777", help="ZMQ publisher address")
+    parser.add_argument("--phase-address", default="tcp://localhost:5555", help="ZMQ phase publisher address")
     parser.add_argument(
         "--encoding",
         choices=("auto", "binary", "yaml"),
@@ -211,7 +262,13 @@ def parse_args():
         default=1e-6,
         help="Scale factor applied to timestamps before plotting.",
     )
-    parser.add_argument("--window-samples", type=int, default=500, help="Visible points per stream")
+    parser.add_argument(
+        "--max-pending-matches",
+        type=int,
+        default=10000,
+        help="Maximum unmatched packets retained for stream-to-phase key matching.",
+    )
+    parser.add_argument("--window-samples", type=int, default=200, help="Visible points per stream")
     parser.add_argument("--refresh-ms", type=int, default=100, help="GUI update period in milliseconds")
     parser.add_argument(
         "--max-packets-per-refresh",

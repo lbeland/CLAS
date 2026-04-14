@@ -49,6 +49,7 @@ void Producer::CreatePorts() {
 void Producer::CompleteStreamInfo() {
   // Set the parameters for the output stream
   data_out_port_->slot(0)->streaminfo().set_parameters(MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
+  data_out_port_->slot(0)->streaminfo().set_stream_rate(fs_());
 }
 
 void Producer::Process(ProcessingContext &context) {
@@ -79,9 +80,9 @@ void Producer::Process(ProcessingContext &context) {
     const auto source_timestamp_us = std::chrono::time_point_cast<std::chrono::microseconds>(Clock::now());
         
     data_out->set_source_timestamp(source_timestamp_us);  // Set source timestamp to now
-    const uint64_t hw_us = static_cast<uint64_t>(t*1e6);;
+    // const uint64_t hw_us = static_cast<uint64_t>(t*1e6);;
 
-    data_out->set_hardware_timestamp(hw_us);
+    data_out->set_hardware_timestamp(packet_count);
 
     // LOG(INFO) << name() << ". Sent message " << packet_count + 1 << " with sample " << sample << ".";
 

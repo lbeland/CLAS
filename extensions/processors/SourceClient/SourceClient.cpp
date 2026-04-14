@@ -33,7 +33,7 @@
 
 constexpr int PORT = 25000;
 constexpr size_t PACKET_SIZE = 172;
-const std::string SOURCE_IP = "192.168.200.21"; // set "" to disable filtering
+// const std::string SOURCE_IP = "192.168.200.21"; // set "" to disable filtering
 
 
 uint32_t read_u32_le(const uint8_t* p) {
@@ -88,6 +88,7 @@ void SourceClient::CreatePorts() {
 void SourceClient::CompleteStreamInfo() {
   // Set the parameters for the output stream
   data_out_port_->slot(0)->streaminfo().set_parameters(MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
+  data_out_port_->slot(0)->streaminfo().set_stream_rate(fs_());
 }
 
 void SourceClient::Prepare(GlobalContext &context) {
@@ -185,8 +186,10 @@ void SourceClient::Process(ProcessingContext &context) {
             else{
                 sample_counter = pkt.sample_counter;
             }
-            
         }
+        // if (packet_count % 100 == 0) {
+        //     LOG(INFO) << "\n " << name() << ". Received packet " << packet_count + 1 << " with sample " << std::fixed << std::setprecision(2) << pkt.eeg[0] << " with sample counter " << pkt.sample_counter << " (hardware timestamp: " << hw_us << ")";
+        // }
 
         // Claim output buffer
         data_out = data_out_port_->slot(0)->ClaimData(false);
@@ -204,14 +207,12 @@ void SourceClient::Process(ProcessingContext &context) {
         data_out->set_source_timestamp(source_timestamp_us);  // Set source timestamp with microsecond precision
 
         // Calculate hardware timestamp based on sample counter and fs
-        std::chrono::time_point hardware_timestamp = first_timestamp + std::chrono::duration<double>((sample_counter - first_sample_counter)/fs_());
-        const uint64_t hw_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(hardware_timestamp.time_since_epoch()).count());
+        // std::chrono::time_point hardware_timestamp = first_timestamp + std::chrono::duration<double>((sample_counter - first_sample_counter)/fs_());
+        // const uint64_t hw_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(hardware_timestamp.time_since_epoch()).count());
+        // data_out->set_hardware_timestamp(hw_us);
 
-        if (packet_count % 100 == 0) {
-            LOG(INFO) << "\n " << name() << ". Received packet " << packet_count + 1 << " with sample " << std::fixed << std::setprecision(2) << pkt.eeg[0] << " with sample counter " << pkt.sample_counter << " (hardware timestamp: " << hw_us << ")";
-        }
-
-        data_out->set_hardware_timestamp(hw_us);
+        // use sample counter as hardware timestamp
+        data_out->set_hardware_timestamp(sample_counter);
 
         // LOG(INFO) << name() << ". Sent message " << i + 1 << " with sample " << sample << ".";
 

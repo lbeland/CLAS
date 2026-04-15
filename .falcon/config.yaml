@@ -6,7 +6,7 @@ debug:
 testing:
   enabled: false
 network:
-  port: 5555
+  port: 5560
 logging:
   path: ./
   screen:

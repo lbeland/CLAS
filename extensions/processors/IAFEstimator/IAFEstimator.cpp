@@ -35,6 +35,7 @@
 IAFEstimator::IAFEstimator() : IProcessor(PRIORITY_HIGH) {
   add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
   add_option("n_fft", n_fft_, "FFT size");
+  add_option("calc_interval", calc_interval_, "Number of packets between IAF calculations.");
 
   iaf_state_ = create_broadcaster_state<float>(
       "iaf", current_iaf_, Permission::NONE,
@@ -46,6 +47,11 @@ void IAFEstimator::CreatePorts() {
       "in", 
       MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
       PortInPolicy(SlotRange(0,MAX_NCHANNELS)));
+
+  data_out_port_ = create_output_port<ScalarType<float>>(
+      "out",
+      ScalarType<float>::Parameters(1), // Placeholder, will be set in CompleteStreamInfo
+      PortOutPolicy(SlotRange(0,MAX_NCHANNELS),200,WaitStrategy::kBlockingStrategy));
 }
 
 void IAFEstimator::Prepare(GlobalContext &context) {
@@ -109,7 +115,8 @@ void IAFEstimator::ifftshift(const std::vector<std::complex<float>>& in, std::ve
 }
 
 void IAFEstimator::Process(ProcessingContext &context) {
-  std::vector<MultiChannelType<float>::Data*> data_in;
+  MultiChannelType<float>::Data* data_in;
+  ScalarType<float>::Data *data_out = nullptr;
 
   // FFTW output spectrum
   const int N = static_cast<int>(sample_window.capacity());
@@ -132,20 +139,19 @@ void IAFEstimator::Process(ProcessingContext &context) {
     }
   
     // Try to retrieve data
-    if (!data_in_port_->slot(0)->RetrieveDataAll(data_in)) {
+    if (!data_in_port_->slot(0)->RetrieveData(data_in)) {
       break;
     }
+    TimePoint start_time = Clock::now();
 
-    for (const auto* packet : data_in) {
-      for (size_t s = 0; s < packet->nsamples(); ++s) {
-        sample_window.push_back(packet->data_sample(s, 0));
-        packet_count_++;
-      }
-    }
+    sample_window.push_back(data_in->data_sample(0, 0));
+    
+    data_out = data_out_port_->slot(0)->ClaimData(false);
+    data_out->CloneTimestamps(*data_in);
 
     data_in_port_->slot(0)->ReleaseData();
 
-    if ((sample_window.size() == sample_window.capacity())) { //} && (packet_count_ % (sample_window.capacity()/2) == 0)) {
+    if ((sample_window.size() == sample_window.capacity()) && (packet_count_ % calc_interval_() == 0)) {
 
       // Convert circular buffer<float> to continuous array for FFTW input and zero-pad to n_fft
       // signal_in = sample_window.linearize();
@@ -164,13 +170,22 @@ void IAFEstimator::Process(ProcessingContext &context) {
       float freq_resolution = static_cast<float>(fs_) / n_fft;
       if (std::abs(max_bin * freq_resolution - current_iaf_) > 1e-3f) {
         current_iaf_ = max_bin * freq_resolution;
-        printf("\n Packet %d: Estimated IAF = %.2f Hz (max bin: %d)", packet_count_, current_iaf_, max_bin);
+        // printf("\n Packet %d: Estimated IAF = %.2f Hz (max bin: %d)", packet_count_, current_iaf_, max_bin);
         
-        iaf_state_->set(current_iaf_);  
+        iaf_state_->set(current_iaf_); 
+        
+
       // } else {
       //   printf("\n IAF Estimation did not change: %.2fHz", current_iaf_);
       }
+      TimePoint end_time = Clock::now();
+      double processing_time_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+      LOG(INFO) << name() << " Processed packet "<< packet_count_ << " in " << std::fixed << std::setprecision(2) << processing_time_ms << " ms\n";
     }
+    data_out->set_data(current_iaf_);
+    data_out_port_->slot(0)->PublishData();
+
+    packet_count_++;
   }
 
   {

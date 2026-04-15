@@ -19,6 +19,7 @@
 #pragma once
 
 #include "iprocessor.hpp"
+#include "scalardata/scalardata.hpp"
 #include "multichanneldata/multichanneldata.hpp"
 #include <dsp/filter.hpp>
 #include <boost/circular_buffer.hpp>
@@ -51,11 +52,13 @@ class IAFEstimator : public IProcessor {
   // DATA PORTS
   protected:
     PortIn<MultiChannelType<float>> *data_in_port_;
+    PortOut<ScalarType<float>> *data_out_port_;
 
   // OPTIONS
   protected:
     options::Value<int, false> n_messages_{-1};
     options::Value<unsigned int, false> n_fft_{4096};
+    options::Value<unsigned int, false> calc_interval_{100};
 
     BroadcasterState<float>* iaf_state_ = nullptr;
     float current_iaf_ = 10.0f;

@@ -141,12 +141,12 @@ class LivePlotWindow(QtWidgets.QMainWindow):
         raw_value = self.pending_raw.pop(key)
         phase_value = self.pending_phase.pop(key)
 
-        diff = raw_value - phase_value
+        diff = np.angle(np.exp(1j * (raw_value - phase_value)))
         self.match_count += 1
         self.abs_diff_sum += abs(diff)
         self.abs_diff = diff
         self.matched_phase_x.append(float(key))
-        self.matched_phase_y.append(phase_value)
+        self.matched_phase_y.append(np.angle(np.exp(1j * phase_value)))
         # print(f"Matched packet {key}: raw={raw_value:.4f}, phase={phase_value:.4f}, diff={diff:.4f}")
 
     def update_plot(self):

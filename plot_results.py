@@ -31,15 +31,18 @@ def plot_results(fs, f0, orig_node):
         true_phase = None
         true_inst_freq = None
 
-    samples_filtered = get_signal_data('rt_c_results/Serializer2.0_BandpassFilter.out.0.bin')
-    samples_phase = get_signal_data('rt_c_results/Serializer3.0_PhaseEstimator.out.0.bin')
-    samples_real = get_signal_data('rt_c_results/Serializer3.1_PhaseEstimator.out.1.bin')
+    # samples_filtered = get_signal_data('rt_c_results/Serializer2.0_BandpassFilter.out.0.bin')
+    samples_phase = get_signal_data('rt_c_results/Serializer2.0_PhaseEstimator.out.0.bin')
+    samples_real = get_signal_data('rt_c_results/Serializer2.1_PhaseEstimator.out.1.bin')
+    est_inst_freq = get_signal_data('rt_c_results/Serializer3.0_IAFEstimator.out.0.bin')
 
-    n = min(len(samples_orig), len(samples_filtered), len(samples_phase), len(samples_real))
+
+    n = min(len(samples_orig), len(samples_phase), len(samples_real))
     samples_orig = samples_orig[:n,0]  # Plot first channel
-    samples_filtered = samples_filtered[:n,0]
+    # samples_filtered = samples_filtered[:n,0]
     samples_phase = samples_phase[:n,0]
     samples_real = samples_real[:n,0]
+    est_inst_freq = est_inst_freq[:n,0]
     true_phase = true_phase[:n] if true_phase is not None else None
     true_inst_freq = true_inst_freq[:n] if true_inst_freq is not None else None
 
@@ -59,9 +62,9 @@ def plot_results(fs, f0, orig_node):
     hilbert_phase = np.angle(hilbert_Xf)
 
     if true_phase is not None:
-        phase_error_deg = wrap_phase_deg(np.rad2deg(samples_phase - true_phase))
+        phase_error_deg = np.angle(np.exp(1j * (samples_phase - true_phase)),deg=True)
     else:
-        phase_error_deg = wrap_phase_deg(np.rad2deg(samples_phase - hilbert_phase))
+        phase_error_deg = np.angle(np.exp(1j * (samples_phase - hilbert_phase)), deg=True)
 
     plt.rcParams.update({
         "figure.facecolor": "white",
@@ -80,11 +83,11 @@ def plot_results(fs, f0, orig_node):
     ax2 = fig.add_subplot(gs[2])  # intentionally NOT sharing x
 
     ax0.plot(samples_orig, linewidth=1.2, label="Original")
-    ax0.plot(samples_filtered, linewidth=1.2, label="Bandpass filtered")
+    # ax0.plot(samples_filtered, linewidth=1.2, label="Bandpass filtered")
     ax0.plot(samples_phase, linestyle="-.", linewidth=1.4, label="Online phase")
     ax0.plot(hilbert_phase, linewidth=1.2, alpha=0.7, label="Hilbert offline")
     if true_phase is not None:
-        ax0.plot(true_phase, linewidth=1.2, alpha= 0.7, label="True phase (simulated)")
+        ax0.plot(np.angle(np.exp(1j * true_phase)), linewidth=1.2, alpha=0.7, label="True phase")
     # ax0.plot(cecht_phase, linestyle=":", linewidth=1.2, label="cecHT offline")
     # ax0.plot(echt_phase, linestyle="--", linewidth=1.2, label="ecHT offline")
     # ax0.plot(samples_real, linewidth=1.2, label="Online real part")
@@ -92,10 +95,23 @@ def plot_results(fs, f0, orig_node):
     ax0.set_ylabel("Amplitude / Phase (rad)")
     ax0.legend(frameon=False, ncol=3)
 
-    ax1.plot(phase_error_deg, linewidth=1.2, label="Phase error")
+    err_line = ax1.plot(phase_error_deg, linewidth=1.2, label="Phase error", color="tab:blue")
     ax1.set_xlabel("Message index")
     ax1.set_ylabel("Error (deg)")
-    ax1.legend(frameon=False)
+    ax1.tick_params(axis="y")
+
+    ax1b = ax1.twinx()
+    est_freq_line = ax1b.plot(est_inst_freq, linewidth=1.2, label="Estimated IAF", color="tab:orange")
+
+    if true_inst_freq is not None:
+        freq_line = ax1b.plot(true_inst_freq, label="True IAF", alpha=0.7, color="tab:green")
+        ax1b.set_ylabel("Frequency (Hz)")
+        ax1b.tick_params(axis="y")
+        lines = err_line + freq_line + est_freq_line
+    else:
+        lines = err_line
+
+    ax1.legend(lines, [line.get_label() for line in lines], frameon=False)
 
     ax2.hist(phase_error_deg, bins=360*2, alpha=0.8, edgecolor="black", linewidth=0.5)
     ax2.axvline(np.mean(phase_error_deg), linestyle="--", linewidth=1.2, label=f"Mean = {np.mean(phase_error_deg):.2f}°")

@@ -95,9 +95,9 @@ def get_signal_data(path):
     n_records = len(payload) // record_size
     payload = payload[: n_records * record_size]
 
-    signal_meta = next((field for field in layout if field["name"] == "signal"), None)
+    signal_meta = next((field for field in layout if field["name"] == "signal" or field["name"] == "scalar_data"), None)
     if signal_meta is None:
-        raise ValueError("No 'signal' field found in header data description")
+        raise ValueError("No 'signal' or 'scalar_data' field found in header data description")
 
     signal_dtype = TYPE_NUMPY[signal_meta["dtype"]]
     signal_offset = signal_meta["offset"]

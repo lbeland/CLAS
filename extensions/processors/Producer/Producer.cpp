@@ -26,143 +26,230 @@
 #include <chrono>
 #include <cmath>
 #include <sstream>
+#include <cctype>
+#include <array>
 
 const double PI = std::acos(-1.0);
 
+namespace {
+
+struct SignalState {
+  double value;
+  double amplitude;
+  double theta;
+  double inst_freq;
+};
+
+double WrapPhase(double phase) {
+  return std::remainder(phase, 2.0 * PI);
+}
+
+
+SignalState ComputeSignalState(double carrier_phase,
+                               double carrier_amplitude,
+                               double carrier_frequency,
+                               const std::string &modulation_type,
+                               double modulation_amplitude,
+                               double modulation_frequency,
+                               double modulation_phase) {
+
+    SignalState state{};
+
+    if (modulation_type == "amplitude") {
+        state.amplitude = carrier_amplitude + modulation_amplitude * std::cos(modulation_phase);
+        state.theta = carrier_phase;
+        state.inst_freq = carrier_frequency;
+        state.value = state.amplitude * std::cos(state.theta);
+        return state;
+    }
+
+    if (modulation_type == "phase") {
+        if (modulation_frequency == 0.0) {
+            state.amplitude = carrier_amplitude;
+            state.theta = carrier_phase;
+            state.inst_freq = carrier_frequency + modulation_amplitude;
+            state.value = state.amplitude * std::cos(state.theta);
+            return state;
+        }
+
+        state.amplitude = carrier_amplitude;
+        state.theta = carrier_phase + (modulation_amplitude / modulation_frequency) * std::sin(modulation_phase);
+        state.inst_freq = carrier_frequency + modulation_amplitude * std::cos(modulation_phase);
+        state.value = state.amplitude * std::cos(state.theta);
+        return state;
+    }
+
+    state.amplitude = carrier_amplitude;
+    state.theta = carrier_phase;
+    state.inst_freq = carrier_frequency;
+    state.value = state.amplitude * std::cos(state.theta);
+    return state;
+}
+
+    template <typename T>
+    void FillSlot(typename MultiChannelType<T>::Data *data_out, unsigned int nchannels, T value) {
+        for (unsigned int channel_index = 0; channel_index < nchannels; ++channel_index) {
+            data_out->set_data_sample(0, channel_index, value);
+        }
+    }
+
+}  // namespace
+
 Producer::Producer() : IProcessor(PRIORITY_HIGH) {
-  add_option("fs", fs_, "Sample Frequency");
-  add_option("f0", f0_, "Frequency of the sine wave to generate.");
-  add_option("nchannels", nchannels_, "Number of channels to generate.");
-  add_option("nsamples", nsamples_, "Number of samples per packet.");
-  add_option("n_messages", n_messages_, "Number of packets to generate (-1 = infinite).");
-  add_option("window_size", window_size_, "Window size of PhaseEstimator (exclude the first window_size packets in statistics calculation).");
-  add_option("output_file", output_file_, "Path to output CSV file.");
+    add_option("fs", fs_, "Sample Frequency");
+    add_option("carrier_amplitude", carrier_amplitude_, "Carrier signal amplitude.");
+    add_option("carrier_frequency", carrier_frequency_, "Carrier signal frequency in Hz.");
+    add_option("modulation_type", modulation_type_, "Modulation type: none, amplitude, or phase.");
+    add_option("modulation_amplitude", modulation_amplitude_, "Modulation amplitude.");
+    add_option("modulation_frequency", modulation_frequency_, "Modulation frequency in Hz.");
+    add_option("nchannels", nchannels_, "Number of channels to generate.");
+    add_option("nsamples", nsamples_, "Number of samples per packet.");
+    add_option("n_messages", n_messages_, "Number of packets to generate (-1 = infinite).");
+    add_option("output_file", output_file_, "Path to output CSV file.");
+
+    iaf_state_ = create_broadcaster_state<float>(
+        "iaf", current_iaf_, Permission::NONE,
+        "Individual alpha frequency shared with downstream processors.");
 }
 
 void Producer::CreatePorts() {
-  data_out_port_ = create_output_port<MultiChannelType<float>>(
-      "out",
-      MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()),
-      PortOutPolicy(SlotRange(0,MAX_NCHANNELS),200,WaitStrategy::kBusySpinStrategy));
+    data_out_port_ = create_output_port<MultiChannelType<float>>(
+        "out",
+        MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()),
+        PortOutPolicy(SlotRange(4), 200, WaitStrategy::kBlockingStrategy));
 }
 
 void Producer::CompleteStreamInfo() {
-  // Set the parameters for the output stream
-  data_out_port_->slot(0)->streaminfo().set_parameters(MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
-  data_out_port_->slot(0)->streaminfo().set_stream_rate(fs_());
+    data_out_port_->slot(0)->streaminfo().set_parameters(
+        MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
+    data_out_port_->slot(0)->streaminfo().set_stream_rate(fs_());
 }
 
 void Producer::Process(ProcessingContext &context) {
-  MultiChannelType<float>::Data *data_out = nullptr;
+    send_times.clear();
+    double carrier_phase = 0.0;
+    double modulation_phase = 0.0;
+    int packet_count = 0;
 
-  send_times.clear();
-  float sample = 0.0;
-  float t = 0.0;
-  int packet_count = 0;
+    while (!context.terminated()) {
+        if (n_messages_() != -1 && packet_count >= n_messages_()) {
+            break;
+        }
 
-  // Measurement phase
-  while (!context.terminated()) {
-    if (n_messages_() != -1 && packet_count >= n_messages_()) {
-      break;
+        std::array<MultiChannelType<float>::Data *, 4> data_outs = {
+            data_out_port_->slot(0)->ClaimData(false),
+            data_out_port_->slot(1)->ClaimData(false),
+            data_out_port_->slot(2)->ClaimData(false),
+            data_out_port_->slot(3)->ClaimData(false),
+        };
+
+        const SignalState state = ComputeSignalState(
+            carrier_phase,
+            carrier_amplitude_(),
+            carrier_frequency_(),
+            modulation_type_(),
+            modulation_amplitude_(),
+            modulation_frequency_(),
+            modulation_phase);
+
+        const std::array<float, 4> values = {
+            static_cast<float>(state.value),
+            static_cast<float>(state.amplitude),
+            static_cast<float>(state.theta),
+            static_cast<float>(state.inst_freq),
+        };
+
+        current_iaf_ = static_cast<float>(state.inst_freq);
+        iaf_state_->set(current_iaf_);
+
+        for (std::size_t slot_index = 0; slot_index < data_outs.size(); ++slot_index) {
+        FillSlot(data_outs[slot_index], nchannels_(), values[slot_index]);
+        }
+
+        const auto source_timestamp_us = std::chrono::time_point_cast<std::chrono::microseconds>(Clock::now());
+        for (auto *data_out : data_outs) {
+        data_out->set_source_timestamp(source_timestamp_us);
+        data_out->set_hardware_timestamp(packet_count);
+        }
+
+        for (std::size_t slot_index = 0; slot_index < data_outs.size(); ++slot_index) {
+        data_out_port_->slot(slot_index)->PublishData();
+        }
+
+        send_times.push_back(source_timestamp_us);
+        ++packet_count;
+
+
+        const double carrier_step = 2.0 * PI * carrier_frequency_() / fs_();
+        const double modulation_step = 2.0 * PI * modulation_frequency_() / fs_();
+        carrier_phase = WrapPhase(carrier_phase + carrier_step);
+        modulation_phase = WrapPhase(modulation_phase + modulation_step);
     }
-    // Claim output buffer
-    data_out = data_out_port_->slot(0)->ClaimData(false);
-
-
-    // Set timestamp as value
-    t = packet_count * (1.0 / fs_());  // Simulate a sample timestamp (e.g., 10 kHz sample rate)
-    sample = 1*sin(2 * PI * t * f0_());  // + 0.2*sin(2 * PI * t * 40) + 0.2*sin(2 * PI * t * 100);  // Generate a sine wave with frequency of 10 Hz
-    // int sample = i;
-    for (int i=0;i<nchannels_();i++) {
-      data_out->set_data_sample(0, i, sample);
-    }
-    
-    const auto source_timestamp_us = std::chrono::time_point_cast<std::chrono::microseconds>(Clock::now());
-        
-    data_out->set_source_timestamp(source_timestamp_us);  // Set source timestamp to now
-    // const uint64_t hw_us = static_cast<uint64_t>(t*1e6);;
-
-    data_out->set_hardware_timestamp(packet_count);
-
-    // LOG(INFO) << name() << ". Sent message " << packet_count + 1 << " with sample " << sample << ".";
-
-    // Publish data
-    data_out_port_->slot(0)->PublishData();
-
-    send_times.push_back(source_timestamp_us);
-    packet_count++;
-
-  }
 }
 
 void Producer::Postprocess(ProcessingContext &context) {
-
   std::ostringstream statistic_print;
 
-  // Calculate Statistics
   statistic_print << "\n ---------------- \n Total messages sent: " << send_times.size();
 
   if (send_times.empty()) {
-      return;
+    return;
   }
 
-  // Calculate statistics
   double sum_diff_us = 0.0;
   double max_diff_us = 0.0;
   std::size_t max_idx = 0;
   double sum_sq_diff = 0.0;
   std::vector<double> send_times_diff;
-  int start_idx = window_size_();  // Skip the first window_size packets because PhaseEstimator is not activ when window is not full
-  int n_times = send_times.size() - start_idx;
+  const int start_idx = 0;
+  const int n_times = static_cast<int>(send_times.size()) - start_idx;
   if (n_times <= 0) {
-      statistic_print << "\n Not enough messages to calculate statistics after skipping the first " << window_size_() << " packets.";
-      std::cout << statistic_print.str();
-      return;
+    statistic_print << "\n Not enough messages to calculate statistics.";
+    std::cout << statistic_print.str();
+    return;
   }
 
-  send_times_diff.resize(static_cast<std::size_t>(n_times-1));
+  send_times_diff.resize(static_cast<std::size_t>(n_times - 1));
 
-  for (std::size_t i = start_idx; i + 1 < send_times.size(); i++) {
-      const double diff_us = std::chrono::duration<double, std::micro>(send_times[i+1] - send_times[i]).count();
-      
-      send_times_diff[i-start_idx] = diff_us;
-      sum_diff_us += diff_us;
-      sum_sq_diff += diff_us * diff_us;
-      if (diff_us > max_diff_us) {
-          max_diff_us = diff_us;
-          max_idx = i;
-      }
+  for (std::size_t i = static_cast<std::size_t>(start_idx); i + 1 < send_times.size(); ++i) {
+    const double diff_us = std::chrono::duration<double, std::micro>(send_times[i + 1] - send_times[i]).count();
+    send_times_diff[i - static_cast<std::size_t>(start_idx)] = diff_us;
+    sum_diff_us += diff_us;
+    sum_sq_diff += diff_us * diff_us;
+    if (diff_us > max_diff_us) {
+      max_diff_us = diff_us;
+      max_idx = i;
+    }
   }
 
   const std::size_t n_periods = send_times_diff.size();
   double avg_period = 0.0;
   double std_period = 0.0;
   if (n_periods > 0) {
-      avg_period = sum_diff_us / static_cast<double>(n_periods);
-      const double variance = (sum_sq_diff / static_cast<double>(n_periods)) - (avg_period * avg_period);
-      std_period = sqrt(fmax(0.0, variance));
+    avg_period = sum_diff_us / static_cast<double>(n_periods);
+    const double variance = (sum_sq_diff / static_cast<double>(n_periods)) - (avg_period * avg_period);
+    std_period = std::sqrt(std::max(0.0, variance));
   }
 
   statistic_print << "\n Average send period (us): " << avg_period;
   statistic_print << "\n Max send period (us): " << max_diff_us << ", idx: " << max_idx;
   statistic_print << "\n Std send period (us): " << std_period << "\n";
 
-  // Save to CSV
-  std::string append = "_Producer.csv";
+  const std::string append = "_Producer.csv";
   std::ofstream output;
-  output.open(output_file_().c_str() + append);
+  output.open(output_file_() + append);
   output << "Metric,Send_period\n";
   output << "mean," << avg_period << "\n";
   output << "std," << std_period << "\n";
   output << "max," << max_diff_us << "\n";
   output.close();
 
-  append = "_send_times.csv";
+  const std::string send_times_append = "_send_times.csv";
   std::ofstream send_times_output;
   send_times_output << std::fixed << std::setprecision(17);
-  send_times_output.open(output_file_().c_str() + append);
+  send_times_output.open(output_file_() + send_times_append);
   for (double t : send_times_diff) {
-      send_times_output << t << "\n";
+    send_times_output << t << "\n";
   }
   send_times_output.close();
 

@@ -36,14 +36,17 @@ class Producer : public IProcessor {
   PortOut<MultiChannelType<float>> *data_out_port_;
 
   options::Value<double, false> fs_{10000.0};
-  options::Value<double, false> f0_{10.0};
-  options::Value<unsigned int, false> nchannels_{4};
-  options::Value<unsigned int, false> nsamples_{100};
+  options::Value<double, false> carrier_amplitude_{3.0};
+  options::Value<double, false> carrier_frequency_{8.0};
+  options::Value<std::string, false> modulation_type_{"phase"};
+  options::Value<double, false> modulation_amplitude_{1.0};
+  options::Value<double, false> modulation_frequency_{0.1};
+  options::Value<unsigned int, false> nchannels_{10};
+  options::Value<unsigned int, false> nsamples_{1};
   options::Value<int, false> n_messages_{-1};
-  options::Value<int, false> window_size_{2000};
   options::Value<std::string, false> output_file_{"Producer.csv"};
   
+  BroadcasterState<float>* iaf_state_ = nullptr;
+  float current_iaf_ = 10.0f;
   inline static std::vector<TimePoint> send_times;
-
-  const uint32_t MAX_NCHANNELS=384;
 };

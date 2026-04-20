@@ -80,7 +80,7 @@ def infer_record_layout(header_data):
 
     return layout, record_size
 
-def get_signal_data(path):
+def get_signal_data(path, channel=0):
     with open(path, "rb") as f:
         blob = f.read()
 
@@ -116,4 +116,4 @@ def get_signal_data(path):
 
     samples = signal_flat.reshape((n_records, *signal_meta["dims"]))
     print("samples shape:", samples.shape, "dtype:", samples.dtype)
-    return samples
+    return samples[:,channel]

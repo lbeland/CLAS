@@ -350,8 +350,8 @@ void PhaseEstimator::Prepare(GlobalContext &context)
     f0_ = iaf_state_->get();
     window_size_ = static_cast<int>(fs_ * (1.0 / f0_) * 2.0); // 2 cycles of a 10 Hz sine wave
     n_fft_ = static_cast<int>(good_size_real(window_size_));
-    sample_window.set_capacity(window_size_);
-    LOG(INFO) << name() << " Sample window size set to " << sample_window.capacity() << ", FFT size: " << n_fft_ << "\n";
+    sample_window.set_capacity(static_cast<int>(fs_ * (1.0 / 5.0) * 2.0)); // Initialize with max expected window size for 5 Hz IAF
+    LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_ << "\n";
 
     load_filter_coeffs(context, f0_);
     calibrate_gain(window_size_);
@@ -417,17 +417,20 @@ void PhaseEstimator::Process(ProcessingContext &context)
             // printf("\n Packet %d: Read shared IAF value: %.2f Hz", packet_count_, new_f0);
             if (std::abs(new_f0 - f0_) > 0.025f)
             {                              
-                // Only update if IAF has changed by more than 0.05 Hz to avoid unnecessary recalibration
-                f0_ = round(new_f0, 0.05f); // Round to nearest 0.1 Hz for stability
+                // Only update if IAF has changed by more than 0.0255 Hz to avoid unnecessary recalibration
+                f0_ = round(new_f0, 0.05f); // Round to nearest 0.05 Hz, because bandpass filters are predesigned for 0.05 Hz steps
                 int old_n_fft = n_fft_; // Store old FFT size to check if we need to reallocate FFTW arrays
                 window_size_ = static_cast<int>(2.0 * fs_ / f0_);
-                sample_window.rset_capacity(window_size_); // Resize circular buffer to new window size and keep newest samples!
-                sample_window.rresize(window_size_, 0.0f); // Ensure full buffer with zero-padding if new window is larger by padding at the beginning (oldest samples)
-                n_fft_ = static_cast<int>(good_size_real(window_size_));
+                if (window_size_ > sample_window.capacity())
+                {
+                    LOG(WARNING) << "New window size " << window_size_ << " exceeds circular buffer capacity " << sample_window.capacity() << ". Resizing circular buffer to new window size.\n";
+                    sample_window.rset_capacity(window_size_);
+                }
+                n_fft_ = good_size_real(window_size_);
                 LOG(INFO) << "Packet " << packet_count_ << ": Update IAF to " << f0_ << " Hz, window size: " << window_size_ << ", FFT size: " << n_fft_ << "\n";
 
                 load_filter_coeffs(context, f0_);
-                
+                calibrate_gain(window_size_);
                 if (old_n_fft != n_fft_)
                 {
                     // Reallocate FFTW arrays with new size
@@ -450,7 +453,6 @@ void PhaseEstimator::Process(ProcessingContext &context)
                         p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD, FFTW_ESTIMATE);
                     }
                 }                
-                calibrate_gain(window_size_);
             }
             // else {
             //   printf(" - No need for calibration");
@@ -459,14 +461,15 @@ void PhaseEstimator::Process(ProcessingContext &context)
 
         TimePoint claim_output_time = Clock::now();
 
-        if ((sample_window.size() == sample_window.capacity()))
+        if (sample_window.size() >= static_cast<size_t>(window_size_))
         { //} && (packet_count_ % (sample_window.capacity()/2) == 0)) {
 
             // Convert circular buffer<float> to continuous array for FFTW input and zero-pad to n_fft length
             // signal_in = sample_window.linearize();
+            auto start = sample_window.end() - window_size_;
             for (int i = 0; i < window_size_; ++i)
             {
-                signal_in[i] = sample_window[i];
+                signal_in[i] = start[i]; // Get the last 'window_size_' samples from the circular buffer
             }
             for (int i = window_size_; i < n_fft_; ++i)
             {

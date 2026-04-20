@@ -29,12 +29,8 @@
 class PhaseEstimator : public IProcessor {
   public:
     PhaseEstimator();
-    void construct_analytic_spectrum(int M, const fftwf_complex* half, fftwf_complex* full);
-    void fftshift(const fftwf_complex* in, fftwf_complex* out, int L);
-    void ifftshift(const fftwf_complex* in, fftwf_complex* out, int L);
-    void ifftshift(const std::vector<std::complex<float>>& in, std::vector<std::complex<float>>& out, int L);
     void calibrate_gain(const int N);
-    void load_filter_coeffs(const StorageContext& context);
+    void load_filter_coeffs(const StorageContext& context, float iaf);
 
   void Configure(const GlobalContext &context) override;
   void CreatePorts() override;
@@ -49,6 +45,8 @@ class PhaseEstimator : public IProcessor {
     double first_timestamp_ = 0.0;
     float fs_ = 0.0;
     float f0_ = 0.0;
+    size_t n_fft_ = 0;
+    size_t window_size_ = 1;
     inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Preprocess
     std::string coeff_file_;  // Path to bandpass filter coefficients file
     std::vector<std::complex<float>> coeffs_;  // Filter coefficients of bandpass filter
@@ -64,7 +62,7 @@ class PhaseEstimator : public IProcessor {
   // OPTIONS
   protected:
     options::Value<int, false> n_messages_{-1};
-    options::Value<unsigned int, false> n_fft_{4096};
+    // options::Value<unsigned int, false> n_fft_{4096};
     options::Value<bool> calibrate_{false};
     options::Value<float, false> iaf_default_{10.0f};
     options::Value<unsigned int, false> iaf_read_interval_{5000};

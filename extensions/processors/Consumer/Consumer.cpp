@@ -33,22 +33,38 @@ Consumer::Consumer() : IProcessor(PRIORITY_HIGH) {
 }
 
 void Consumer::CreatePorts() {
-  data_in_port_ = create_input_port<MultiChannelType<float>>(
+  data_in_port_ = create_input_port<AnyType>(
       "in", 
-      MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
+      AnyType::Capabilities(),
       PortInPolicy(SlotRange(0,MAX_NCHANNELS)));
 }
 
 void Consumer::Prepare(GlobalContext &context){
   const auto& info = data_in_port_->streaminfo(0);
-  const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
-  LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples_orig: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
+  
+  // Try to extract known parameter types
+  if (info.datatype() == "MultiChannelType<float>") {
+    try {
+      const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
+      LOG(INFO) << name() << ": Data type:" << info.datatype() << ", nChannels: " << p.nchannels << ", nSamples: " << p.nsamples << ", Sample rate: " << p.sample_rate;
+    } catch (const std::bad_any_cast&) {
+      LOG(WARNING) << name() << ": Failed to cast to MultiChannelType<float>";
+    }
+  }
+  else if (info.datatype() == "scalar") {
+    try {
+      const auto& p = info.parameters<ScalarType<float>::Parameters>();
+      LOG(INFO) << name() << ": Data type:" << info.datatype()  << ", Default value: " << p.default_value;
+    } catch (const std::bad_any_cast&) {
+      LOG(WARNING) << name() << ": Failed to cast to ScalarType<float>";
+    }
+  }
   packet_count_ = 0;
 }
 
 void Consumer::Process(ProcessingContext &context) {
   // MultiChannelType<float>::Data *data_in_phase = nullptr;
-  MultiChannelType<float>::Data *data_in = nullptr;
+  AnyType::Data *data_in = nullptr;
 
   TimePoint receive_timestamp;
 

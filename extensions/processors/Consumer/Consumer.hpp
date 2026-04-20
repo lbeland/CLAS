@@ -20,6 +20,7 @@
 
 #include "iprocessor.hpp"
 #include "multichanneldata/multichanneldata.hpp"
+#include "scalardata/scalardata.hpp"
 #include <chrono>
 #include "utilities/time.hpp"
 
@@ -33,7 +34,7 @@ class Consumer : public IProcessor {
   void Postprocess(ProcessingContext &context) override;
 
  protected:
-  PortIn<MultiChannelType<float>> *data_in_port_;
+  PortIn<AnyType> *data_in_port_;
 
   options::Value<int, false> n_messages_{-1};
   options::Value<int, false> window_size_{2000};

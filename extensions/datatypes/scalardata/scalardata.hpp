@@ -38,9 +38,11 @@ template <typename TYPE> struct Parameters : Base::Parameters {
 
 class Capabilities : public Base::Capabilities {};
 
-template <typenameTYPE> class Data : public Base::Data {
+template <typename TYPE> class Data : public Base::Data {
  public:
-  ScalarData(TYPE data = DEFAULT_SCALAR_VALUE) : data_(data) {}
+  Data(TYPE data = DEFAULT_SCALAR_VALUE) : data_(data) {}
+
+  Data(const Parameters<TYPE> &parameters) { Initialize(parameters); }
 
   void Initialize(const Parameters<TYPE> &parameters) {
     data_ = parameters.default_value;
@@ -55,17 +57,17 @@ template <typenameTYPE> class Data : public Base::Data {
   void set_data(const Data<TYPE> &source) { data_ = source.data(); }
 
   friend bool operator==(Data<TYPE> &a, Data<TYPE> &b) {
-    return a.data == b.data;
+    return a.data() == b.data();
   }
 
   friend bool operator!=(Data<TYPE> &a, Data<TYPE> &b) {
-    return a.data != b.data;
+    return a.data() != b.data();
   }
 
   void SerializeBinary(std::ostream &stream,
                        Serialization::Format format =
                                    Serialization::Format::FULL) const override {
-    Base::SerializeBinary(stream, format);
+    nsAnyType::Data::SerializeBinary(stream, format);
     if (format == Serialization::Format::FULL ||
         format == Serialization::Format::COMPACT) {
       stream.write(reinterpret_cast<const char *>(&data_), sizeof(TYPE));
@@ -75,7 +77,7 @@ template <typenameTYPE> class Data : public Base::Data {
   void SerializeYAML(YAML::Node &node,
                      Serialization::Format format =
                                  Serialization::Format::FULL) const override {
-    Base::SerializeYAML(node, format);
+    nsAnyType::Data::SerializeYAML(node, format);
     if (format == Serialization::Format::FULL ||
         format == Serialization::Format::COMPACT) {
       node["scalar_data"] = data_;
@@ -85,7 +87,7 @@ template <typenameTYPE> class Data : public Base::Data {
   void YAMLDescription(YAML::Node &node,
                        Serialization::Format format =
                                    Serialization::Format::FULL) const override {
-    Base::YAMLDescription(node, format);
+    nsAnyType::Data::YAMLDescription(node, format);
     if (format == Serialization::Format::FULL ||
         format == Serialization::Format::COMPACT) {
       node.push_back("scalar_data " + get_type_string<TYPE>() + " (1)");

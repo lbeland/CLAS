@@ -98,8 +98,8 @@ void ChannelSelector::Process(ProcessingContext &context) {
         current_channel_index_ = channel_idx;
       }
     }
-    if (packet_count_ % 100 == 0) {
-      LOG(INFO) << name() << ". Received packet " << packet_count_ + 1 << " with selected channel " << current_channel_index_ << " (RMS: " << rms_[current_channel_index_] << ")";
+    if (packet_count_ % 1000 == 0) {
+      LOG(INFO) << name() << ". Packet " << packet_count_ + 1 << ": Selected channel " << current_channel_index_ << " (RMS: " << rms_[current_channel_index_] << ")";
     }
 
     // Claim output buffer

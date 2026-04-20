@@ -14,7 +14,7 @@ graph:
         n_messages: *n_messages
         carrier_amplitude: 3.0
         carrier_frequency: 10.0
-        modulation_type: "amplitude"
+        modulation_type: "phase"
         modulation_amplitude: 1.0
         modulation_frequency: 0.1
         output_file: /home/linda/Documents/CLAS/rt_c_results/10_1

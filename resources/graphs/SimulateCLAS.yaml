@@ -49,7 +49,7 @@ graph:
       class: PhaseEstimator
       options:
         n_messages: *n_messages
-        n_fft: *window_size
+        # n_fft: *window_size
         iaf_read_interval: 5000
         calibrate: true
         filter:

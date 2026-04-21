@@ -30,15 +30,13 @@
 class IAFEstimator : public IProcessor {
   public:
     IAFEstimator();
-    int get_max_bin(fftwf_complex* out, size_t out_size);
-    void fftshift(const fftwf_complex* in, fftwf_complex* out, int L);
-    void ifftshift(const fftwf_complex* in, fftwf_complex* out, int L);
-    void ifftshift(const std::vector<std::complex<float>>& in, std::vector<std::complex<float>>& out, int L);
 
   void CreatePorts() override;
+  void CompleteStreamInfo() override;
   void Prepare(GlobalContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
+  void Unprepare(GlobalContext &context) override;
 
   // VARIABLES
   protected:
@@ -57,7 +55,8 @@ class IAFEstimator : public IProcessor {
   // OPTIONS
   protected:
     options::Value<int, false> n_messages_{-1};
-    options::Value<unsigned int, false> n_fft_{4096};
+    options::Value<float, false> window_size_sec_{5};
+    options::Value<unsigned int, false> num_segments_{2};
     options::Value<unsigned int, false> calc_interval_{100};
 
     BroadcasterState<float>* iaf_state_ = nullptr;

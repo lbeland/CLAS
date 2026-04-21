@@ -38,6 +38,7 @@ class PhaseEstimator : public IProcessor {
   void Prepare(GlobalContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
+  void Unprepare(GlobalContext &context) override;
 
   // VARIABLES
   protected:

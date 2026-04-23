@@ -43,6 +43,8 @@ class IAFEstimator : public IProcessor {
     unsigned int packet_count_ = 0;
     double first_timestamp_ = 0.0;
     float fs_ = 0.0;
+    size_t n_fft_ = 0;
+    size_t window_size_ = 1;
     inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Prepare
 
     const uint32_t MAX_NCHANNELS=384;

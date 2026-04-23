@@ -176,9 +176,10 @@ void IAFEstimator::Prepare(GlobalContext &context)
     const auto &p = info.parameters<MultiChannelType<float>::Parameters>();
     LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
     fs_ = p.sample_rate;
-    int N = static_cast<int>(fs_ * window_size_sec_()); // 5 seconds
-    sample_window.set_capacity(N);
-    LOG(INFO) << name() << " Sample window size set to " << sample_window.capacity() << "\n";
+    window_size_ = window_size_sec_() * fs_; // 2 cycles of a 10 Hz sine wave
+    n_fft_ = static_cast<int>(good_size_real(window_size_));
+    sample_window.set_capacity(window_size_); // Initialize with max expected window size for 5 Hz IAF
+    LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_ << "\n";
 
     // const int n_fft = good_size_real(static_cast<size_t>(n_fft_()));
     // if (n_fft < N)
@@ -199,62 +200,18 @@ void IAFEstimator::Process(ProcessingContext &context)
     ScalarType<float>::Data *data_out = nullptr;
 
     // FFTW output spectrum
-    const int N = static_cast<int>(sample_window.capacity());
+    float *signal_in = fftwf_alloc_real(n_fft_);
+    fftwf_complex *freq_half = fftwf_alloc_complex(n_fft_ / 2 + 1);
 
-    const int kNumSegments = num_segments_();    // Use 10 segments for Welch's method by default
-
-    const int nperseg = static_cast<int>(N / kNumSegments); 
-
-    const int overlap = static_cast<int>(nperseg / 2); // Desired overlap as half of segment length
-    const int hop_length = nperseg - overlap;
-    LOG(INFO) << name() << " Segment overlap: " << overlap << ", N per segment: " << nperseg << ", Hop length: " << hop_length << "\n";
-
-    std::vector<float> hann_window(nperseg, 1.0f);
-    const double pi = std::acos(-1.0);
-    const double denom = static_cast<double>(nperseg - 1);
-    for (int i = 0; i < nperseg; ++i)
-    {
-        hann_window[i] = static_cast<float>(0.5 * (1.0 - std::cos((2.0 * pi * i) / denom)));
-    }
-
-    const int n_fft = good_size_real(static_cast<size_t>(nperseg));
-    LOG(INFO) << name() << " Using n_fft = " << n_fft;
-    float *signal_batch = fftwf_alloc_real(kNumSegments * n_fft);
-    fftwf_complex *freq_batch = fftwf_alloc_complex(kNumSegments * (n_fft / 2 + 1));
-
-    int fft_size[1] = {n_fft};
     fftwf_plan p;
+    
     {
         std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
-        p = fftwf_plan_many_dft_r2c(
-            1,
-            fft_size,
-            kNumSegments,
-            signal_batch,
-            nullptr,
-            1,
-            n_fft,
-            freq_batch,
-            nullptr,
-            1,
-            (n_fft / 2) + 1,
-            FFTW_WISDOM_ONLY);
+        p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_WISDOM_ONLY);
         if (p == nullptr)
         {
             LOG(WARNING) << name() << "No wisdom available for FFT planning, using patient mode.";
-            p = fftwf_plan_many_dft_r2c(
-                1,
-                fft_size,
-                kNumSegments,
-                signal_batch,
-                nullptr,
-                1,
-                n_fft,
-                freq_batch,
-                nullptr,
-                1,
-                (n_fft / 2) + 1,
-                FFTW_PATIENT);
+            p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_PATIENT);
         }
     }
 
@@ -283,41 +240,23 @@ void IAFEstimator::Process(ProcessingContext &context)
 
         if ((sample_window.size() == sample_window.capacity()) && (packet_count_ % calc_interval_() == 0))
         {
-            std::vector<float> averaged_power(n_fft / 2 + 1, 0.0f);
 
-            for (int segment = 0; segment < kNumSegments; ++segment)
+            // Convert circular buffer<float> to continuous array for FFTW input and zero-pad to n_fft length
+            // signal_in = sample_window.linearize();
+            for (int i = 0; i < window_size_; ++i)
             {
-                int start = segment * hop_length;
-                if (start + nperseg > N)
-                {
-                    start = std::max(0, N - nperseg);
-                }
-
-                float *segment_input = signal_batch + (segment * n_fft);
-                std::fill(segment_input, segment_input + n_fft, 0.0f);
-                for (int i = 0; i < nperseg && (start + i) < N; ++i)
-                {
-                    segment_input[i] = sample_window[start + i] * hann_window[i];
-                }
+                signal_in[i] = sample_window[i]; // Get the last 'window_size_' samples from the circular buffer
+            }
+            for (int i = window_size_; i < n_fft_; ++i)
+            {
+                signal_in[i] = 0.0f;
             }
 
             fftwf_execute(p);
 
-            for (int segment = 0; segment < kNumSegments; ++segment)
-            {
-                // Quadratic weighting to give more emphasis to later segments in the window, which are more recent
-                const fftwf_complex *segment_freq = freq_batch + (segment * (n_fft / 2 + 1));
-                for (int bin = 0; bin <= n_fft / 2; ++bin)
-                {
-                    const float re = segment_freq[bin][0];
-                    const float im = segment_freq[bin][1];
-                    averaged_power[bin] += re * re + im * im;
-                }
-            }
-
             // Select IAF directly from the maximum bin of Welch power spectrum.
-            int max_bin = get_max_bin(averaged_power);
-            float freq_resolution = static_cast<float>(fs_) / n_fft;
+            int max_bin = get_max_bin(freq_half, n_fft_ / 2 + 1);
+            float freq_resolution = static_cast<float>(fs_) / n_fft_;
             const float max_bin_iaf = (max_bin >= 0) ? (static_cast<float>(max_bin) * freq_resolution) : current_iaf_;
             if (std::abs(max_bin_iaf - current_iaf_) > 1e-3f)
             {
@@ -343,8 +282,8 @@ void IAFEstimator::Process(ProcessingContext &context)
         std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
         fftwf_destroy_plan(p);
     }
-    fftwf_free(signal_batch);
-    fftwf_free(freq_batch);
+    fftwf_free(signal_in);
+    fftwf_free(freq_half);
 }
 
 void IAFEstimator::Postprocess(ProcessingContext &context)

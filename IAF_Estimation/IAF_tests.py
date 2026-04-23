@@ -1,27 +1,56 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from fooof import FOOOF
+from simulate_client import angle_mod
 from scipy import stats
 from scipy.signal import argrelmin, savgol_filter
 from scipy.ndimage import center_of_mass
 
 np.random.seed(0)
 
-F_MIN = 7
-F_MAX = 14
+F_MIN = 5
+F_MAX = 18
 FREQ_RANGE = [1.0, 30.0]
 SG_WINDOW = 11
 SG_POLY = 3
 PINK_MAX_R2 = 0.9
 
+CARRIER_AMPLITUDE = 0.25
+CARRIER_FREQUENCY = 10.0
+MODULATION_AMPLITUDE = 0.5
+MODULATION_FREQUENCY = 0.02
+
+def phase_modulated_signal(t, carrier_amplitude, carrier_frequency, modulation_amplitude, modulation_frequency):
+    values = np.empty_like(t)
+    inst_freqs = np.empty_like(t)
+
+    for idx, t_i in enumerate(t):
+        value, _, _, inst_freq = angle_mod(
+            float(t_i),
+            carrier_amplitude,
+            carrier_frequency,
+            modulation_amplitude,
+            modulation_frequency,
+        )
+        values[idx] = value
+        inst_freqs[idx] = inst_freq
+
+    return values, inst_freqs
+
 def main():
     fs = 10000.0
-    signal_length = int(5 * fs)
-    window_length = int(3 * fs)
-    f0 = 10.0
+    signal_length = int(30 * fs)
+    window_length = int(5 * fs)
 
     t = np.arange(signal_length) / fs
-    signal = 0.25 * np.sin(2 * np.pi * f0 * t) + 0.23 * np.sin(2 * np.pi * (f0+0.5) * t) +pink_noise(signal_length, fs)
+    signal, inst_freq = phase_modulated_signal(
+        t,
+        CARRIER_AMPLITUDE,
+        CARRIER_FREQUENCY,
+        MODULATION_AMPLITUDE,
+        MODULATION_FREQUENCY,
+    )
+    signal = signal + pink_noise(signal_length, fs)
 
     results = {
         'stupid_max': [],
@@ -31,10 +60,17 @@ def main():
         'combine': []
     }
 
-    for start in range(1, signal_length-window_length, 100):
+    window_times = []
+    window_true_freqs = []
+
+    for start in range(1, signal_length-window_length, 1000):
         window = signal[start:start + window_length]
+        window_inst_freq = inst_freq[start:start + window_length]
         freq = np.fft.rfft(window, window_length)
         freq_bins = np.fft.rfftfreq(window_length, 1/fs)
+
+        window_times.append((start + window_length / 2) / fs)
+        window_true_freqs.append(float(np.mean(window_inst_freq)))
 
         results['stupid_max'].append(stupid_max(freq, freq_bins))
         results['parabolic_max'].append(parabolic_max(freq, freq_bins))
@@ -45,22 +81,30 @@ def main():
     freq_full = np.fft.rfft(signal)
     freq_bins_full = np.fft.rfftfreq(signal_length, 1/fs)
 
-    plot_results(t[0:signal_length-window_length], signal, freq_full, freq_bins_full, results, f0, fs)
+    plot_results(t, signal, inst_freq, freq_full, freq_bins_full, results, window_times, window_true_freqs, fs)
 
 
-def plot_results(time_vec, signal, freq, freq_bins, results, true_freq, fs):
-    adapt_time = time_vec[::100]
-    resolution = freq_bins[1] - freq_bins[0]  # Hz per bin, not number of bins
+def plot_results(time_vec, signal, inst_freq, freq, freq_bins, results, window_times, window_true_freqs, fs):
     freq_mask = freq_bins <= 20
+    window_times = np.asarray(window_times)
+    window_true_freqs = np.asarray(window_true_freqs)
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    fig, axes = plt.subplots(2, 2, figsize=(14, 7))
     ax1, ax2, ax3, ax4 = axes.flat
 
-    # Signal
-    ax1.plot(np.arange(len(signal)) / fs, signal)
+    # Signal + instantaneous frequency
+    ax1.plot(time_vec, signal, color='tab:blue', label='Signal')
     ax1.set_xlabel('Time (s)')
     ax1.set_ylabel('Amplitude')
-    ax1.set_title('Signal')
+    ax1.set_title('Signal and Instantaneous Frequency')
+
+    ax1b = ax1.twinx()
+    ax1b.plot(time_vec, inst_freq, color='tab:red', alpha=0.8, label='Instantaneous Frequency')
+    ax1b.set_ylabel('Frequency (Hz)')
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax1b.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
 
     # Spectrum
     ax2.plot(freq_bins[freq_mask], np.abs(freq[freq_mask]))
@@ -69,10 +113,12 @@ def plot_results(time_vec, signal, freq, freq_bins, results, true_freq, fs):
     ax2.set_title('FFT Magnitude')
 
     # Error over time
+    print("Error statistics:")
+    ax3.sharex(ax1) 
     for label, vals in results.items():
-        errors = np.abs(np.array(vals) - true_freq)
-        ax3.plot(adapt_time, errors, label=label)
-    ax3.axhline(0, color='k', linestyle='--')
+        errors = np.abs(np.asarray(vals) - window_true_freqs)
+        print(f"{label}: mean: {np.mean(errors):.3f} Hz, std: {np.std(errors):.3f} Hz")
+        ax3.plot(window_times, errors, label=label, alpha=0.7, marker='o',markersize=2)
     ax3.set_xlabel('Time (s)')
     ax3.set_ylabel('Absolute Error (Hz)')
     ax3.set_title('Error Over Time')
@@ -80,8 +126,11 @@ def plot_results(time_vec, signal, freq, freq_bins, results, true_freq, fs):
 
     # Error distribution
     for label, vals in results.items():
-        errors = np.abs(np.array(vals) - true_freq)
-        ax4.hist(errors, alpha=0.6, label=label, bins=50)
+        errors = np.abs(np.asarray(vals) - window_true_freqs)
+        _, _, patches = ax4.hist(errors, alpha=0.6, label=label, bins=50)
+        mean_error = float(np.mean(errors))
+        color = patches[0].get_facecolor() if len(patches) > 0 else None
+        ax4.axvline(mean_error, color=color, linestyle='--', linewidth=2)
     ax4.set_xlabel('Absolute Error (Hz)')
     ax4.set_ylabel('Count')
     ax4.set_title('Error Distribution per Algorithm')
@@ -124,7 +173,7 @@ def stupid_max(freq, freq_bins):
     return freq_bins_band[max_bin]
 
 def foof(freq, freq_bins):
-    fm = FOOOF(peak_width_limits=[0.1, 4.0], min_peak_height=0.0,
+    fm = FOOOF(peak_width_limits=[0.1, 7.0], min_peak_height=0.0,
                peak_threshold=2., max_n_peaks=6, aperiodic_mode="fixed", verbose=False)
     fm.fit(freq_bins, np.abs(freq)**2, FREQ_RANGE)
 

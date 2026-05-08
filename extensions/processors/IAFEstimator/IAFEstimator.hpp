@@ -58,7 +58,6 @@ class IAFEstimator : public IProcessor {
   protected:
     options::Value<int, false> n_messages_{-1};
     options::Value<float, false> window_size_sec_{5};
-    options::Value<unsigned int, false> num_segments_{2};
     options::Value<unsigned int, false> calc_interval_{100};
 
     BroadcasterState<float>* iaf_state_ = nullptr;

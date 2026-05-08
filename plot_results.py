@@ -20,15 +20,14 @@ def get_results_file(processor_name, slot=0):
 
 def plot_results(fs, f0, graph_name):
 
+    start_idx = 0
+
     if graph_name == "TurboLinkCLAS":
         processors = ["SourceClient", "BandpassFilter", "PhaseEstimator", "IAFEstimator"]
-        start_idx = 0
     elif graph_name == "IAFtests":
         processors = ["Producer", "IAFEstimator"]
-        start_idx = int(1 * fs)
     elif graph_name == "ecHTtests":
         processors = ["Producer","PhaseEstimator"]
-        start_idx = int(0.2 * fs)
 
     samples = {}
     for processor in processors:
@@ -42,6 +41,7 @@ def plot_results(fs, f0, graph_name):
                 signal = get_signal_data(get_results_file(processor, slot))
                 if signal is not None:
                     samples[f"{processor}_{slot}"] = signal
+            start_idx = np.where(samples[f"PhaseEstimator_0"] != 0)[0][0]  # Find first non-zero sample to determine start index
         else:
             signal = get_signal_data(get_results_file(processor, 0))
             if signal is not None:
@@ -80,14 +80,14 @@ def plot_results(fs, f0, graph_name):
     # cecht_Xf = cecht.fit_transform(samples_orig)
     # cecht_phase = np.angle(cecht_Xf)
 
-    # echt = ECHT(l_freq, h_freq, fs, filt_order=1)
+    echt = ECHT(l_freq, h_freq, fs, filt_order=1)
     # echt_Xf = echt.fit_transform(samples_orig)
     # echt_phase = np.angle(echt_Xf)
 
     hilbert_Xf = hilbert(samples_orig)
     hilbert_phase = np.angle(hilbert_Xf)
 
-    fig = plt.figure(figsize=(11, 8), constrained_layout=True)
+    fig = plt.figure(figsize=(8, 8), constrained_layout=True)
     gs = fig.add_gridspec(4, 1) #, height_ratios=[2.2, 1.5, 1.3])
 
     ax0 = fig.add_subplot(gs[0])
@@ -95,21 +95,28 @@ def plot_results(fs, f0, graph_name):
     ax2 = fig.add_subplot(gs[2], sharex=ax0)
     ax3 = fig.add_subplot(gs[3])  # intentionally NOT sharing x
 
+    # Add grid to all plots
+    for ax in [ax0, ax1, ax2]:
+        ax.minorticks_on()
+        ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
+
+    message_indices = np.arange(start_idx, start_idx + len(samples_orig))
+
     ## Samples plot ----------------------
-    ax0.plot(samples_orig, linewidth=1.2, label="Original")
-    ax0.plot(hilbert_phase, linewidth=2, alpha=0.7, label="Hilbert offline")
+    ax0.plot(message_indices, samples_orig, linewidth=1.2, label="Original")
+    ax0.plot(message_indices, hilbert_phase, linewidth=2, alpha=0.7, label="Hilbert offline")
     # ax0.plot(cecht_phase, linestyle=":", linewidth=1.2, label="cecHT offline")
     # ax0.plot(echt_phase, linestyle="--", linewidth=1.2, label="ecHT offline")
     if true_phase is not None:
-        ax0.plot(true_phase, linewidth=1.2, alpha=0.7, label="True phase")
+        ax0.plot(message_indices, true_phase, linewidth=1.2, alpha=0.7, label="True phase")
     if samples.get("BandpassFilter_0") is not None:
-        ax0.plot(samples["BandpassFilter_0"], linewidth=1.2, label="Bandpass filtered")
+        ax0.plot(message_indices, samples["BandpassFilter_0"], linewidth=1.2, label="Bandpass filtered")
     if samples.get("PhaseEstimator_0") is not None:
         samples_phase = samples["PhaseEstimator_0"]
-        ax0.plot(samples_phase, linestyle="-.", linewidth=1.4, label="Online phase")
+        ax0.plot(message_indices, samples_phase, linestyle="-.", linewidth=1.4, label="Online phase")
     # if samples.get("PhaseEstimator_1") is not None:
     #     samples_real = samples["PhaseEstimator_1"]
-    #     ax0.plot(samples_real, linewidth=1.2, label="Online real part")
+    #     ax0.plot(message_indices, samples_real, linewidth=1.2, label="Online real part")
 
     ax0.set_ylabel("Amplitude / Phase (rad)")
     ax0.legend(frameon=False)
@@ -118,14 +125,14 @@ def plot_results(fs, f0, graph_name):
     legend_items = []
     ax1b = ax1.twinx()
     if true_inst_freq is not None:
-        line_true_freq = ax1.plot(true_inst_freq, label="True IAF", alpha=0.7)
+        line_true_freq = ax1.plot(message_indices, true_inst_freq, label="True IAF", alpha=0.7)
         legend_items += line_true_freq
     if true_amplitude is not None:
-        line_ampl = ax1b.plot(true_amplitude, label="True Amplitude", alpha=0.7)
+        line_ampl = ax1b.plot(message_indices, true_amplitude, label="True Amplitude", alpha=0.7)
         legend_items += line_ampl
     if samples.get("IAFEstimator_0") is not None:
         est_inst_freq = samples["IAFEstimator_0"]
-        line_est_freq = ax1.plot(est_inst_freq, linewidth=1.2, label="Estimated IAF")
+        line_est_freq = ax1.plot(message_indices, est_inst_freq, linewidth=1.2, label="Estimated IAF")
         legend_items += line_est_freq
 
     ax1.set_ylabel("Frequency (Hz)")
@@ -142,12 +149,12 @@ def plot_results(fs, f0, graph_name):
         else:
             error = np.angle(np.exp(1j * (hilbert_phase - samples_phase)), deg=True)
         errors.append(error)
-        ax2.plot(error, linewidth=1.2, label="Phase error")
+        ax2.plot(message_indices, error, linewidth=1.2, label="Phase error")
         units.append("degrees")
     if samples.get("IAFEstimator_0") is not None and true_inst_freq is not None:
         error = est_inst_freq - true_inst_freq
         errors.append(error)
-        ax2.plot(error, linewidth=1.2, label="Frequency error")
+        ax2.plot(message_indices, error, linewidth=1.2, label="Frequency error")
         units.append("Hz")
 
     ax2.set_xlabel("Message index")
@@ -173,4 +180,4 @@ def plot_results(fs, f0, graph_name):
 
 
 if __name__ == "__main__":
-    plot_results(10000, 10, "ecHTtests")
+    plot_results(10000, 10, "IAFtests")

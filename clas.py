@@ -46,10 +46,10 @@ def main():
             elif processor_config.get("class") == "PhaseEstimator":
                 # Check if processor PhaseEstimator is configured to use a non-file-based filter
                 filter_config = processor_config.get("options", {}).get("filter", {})
-                filter_length = processor_config.get("options", {}).get("n_fft", None)
                 if "file" not in filter_config:
                     for iaf in np.arange(7,12.1,0.1):
                         bandwidth = filter_config.get("bandwith", 4)
+                        filter_length = int(2.0 * fs/iaf)    # 2 cycles of iaf frequency
                         gen_bandpass(1, iaf-bandwidth/2, iaf+bandwidth/2, fs, filter_length, output_folder=os.path.join(resources_folder, "filters"))
 
 

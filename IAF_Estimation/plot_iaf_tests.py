@@ -171,7 +171,7 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
         fig = plt.figure(figsize=(15, 6))
         # Split figure into left (1/3) and right (2/3)
         gs = gridspec.GridSpec(1, 2, figure=fig,
-                               width_ratios=[1, 2.5], wspace=0.3)
+                               width_ratios=[1, 2.5], wspace=0.2, hspace=0.1)
 
         # Split left column into top (timeseries) and bottom (spectrum)
         gs_left = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs[0],
@@ -208,7 +208,9 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
         palette = PALETTE
 
     # --- Box plot panel ---
-    x_order = ["stupid_max", "parabolic_max", "fooof","philistine","combine"]
+    # x_order = ["stupid_max", "parabolic_max", "fooof","philistine","combine"]
+    x_order = ["stupid_max", "fooof","philistine","combine_complex","combine_simple"]
+
     hue_order = sorted(df[hue].unique()) if hue is not None else None
     sns.boxplot(data=df, x=x, y=y, hue=hue, ax=ax_box, gap=0.1,
                 order=x_order, hue_order=hue_order,
@@ -217,6 +219,9 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
                 medianprops={"color": "black", "linewidth": 1.3},
                 meanprops={"marker": "+", "markeredgecolor": "black",
                            "markersize": "7"})
+
+    ax_box.minorticks_on()
+    ax_box.grid(axis="y", alpha=0.9)
     
     if ax_box.get_legend() is not None:
         handles, labels = ax_box.get_legend_handles_labels()
@@ -281,6 +286,7 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
     # Adjust layout to make room for bottom legend (only when hue is present)
     if hue is not None:
         fig.subplots_adjust(bottom=0.25)
+    plt.savefig(f"{BASE_FOLDER}/plots/{hue}.png", dpi=300, bbox_inches="tight")
 
 def plot_bar(df, x="algorithm", y="mae", agg="mean", hue=None, title=None):
     plt.figure(figsize=(8, 5))
@@ -304,9 +310,9 @@ if __name__ == "__main__":
     HDF_PATH = BASE_FOLDER / "iaf_results.h5"
     df_metrics = load_metrics(HDF_PATH)  # fast, always load this
     default_filter = {
-        "carrier_freq":         12.0,
+        "carrier_freq":         14.0,
         # Peak shape in frequency domain
-        "carrier_waveform":     "sine",   # "gaussian" | "sine" | "burst"
+        "carrier_waveform":     "gaussian",   # "gaussian" | "sine" | "burst"
         # Frequency modulation
         "mod_amp":              0.0,
         "mod_freq":             0.0,
@@ -317,7 +323,7 @@ if __name__ == "__main__":
         "n_peaks":              1,
         "peak_bw":              0.5,          # Gaussian σ in Hz
         # KEY PARAM: peak power relative to aperiodic floor at aperiodic_ref_freq
-        "peak_snr_db":          20.0,
+        "peak_snr_db":          15.0,
         # Noise
         "noise_type":           "white",       # "None" | "white" | "pink"
         # Noise PSD relative to power at carrier_freq
@@ -327,12 +333,28 @@ if __name__ == "__main__":
         "fft_method":          "fft",       # "fft" | "welch"
     }
 
+    ## Old script
+    # default_filter =     default = {
+    #     "carrier_freq": 10.0,
+    #     "carrier_waveform": "gaussian",
+    #     "mod_amp":      0.5,
+    #     "mod_freq":     0.0,
+    #     "noise_type":   "None",
+    #     "noise_snr_db":  0,
+    #     "window_length_sec": 5,
+    #     "n_peaks": 1,
+    #     "has_aperiodic": True,
+    #     "alpha_bursts": False,
+    # }
+
+    error_label = "error"
+
     # Each plot loads only what it needs
     plot_box(
         load_samples_for_plot(HDF_PATH, df_metrics,
                               **params_excluding(default_filter, "window_length_sec")),
         HDF_PATH,
-        x="algorithm", y="abs_error", hue="window_length_sec",
+        x="algorithm", y=error_label, hue="window_length_sec",
         title="Effect of Window Length\n"
     )
 
@@ -340,7 +362,7 @@ if __name__ == "__main__":
         load_samples_for_plot(HDF_PATH, df_metrics,
                               **params_excluding(default_filter, "noise_type")),
         HDF_PATH,
-        x="algorithm", y="abs_error", hue="noise_type",
+        x="algorithm", y=error_label, hue="noise_type",
         title="Effect of Noise Type\n"
     )
 
@@ -348,7 +370,7 @@ if __name__ == "__main__":
         load_samples_for_plot(HDF_PATH, df_metrics,
                               **params_excluding({**default_filter.copy(),"noise_type": "white"}, "noise_snr_db")),
         HDF_PATH,
-        x="algorithm", y="abs_error", hue="noise_snr_db",
+        x="algorithm", y=error_label, hue="noise_snr_db",
         title="Effect of Noise Level\n"
     )
 
@@ -356,15 +378,24 @@ if __name__ == "__main__":
         load_samples_for_plot(HDF_PATH, df_metrics,
                               **params_excluding(default_filter, "carrier_freq")),
         HDF_PATH,
-        x="algorithm", y="abs_error", hue="carrier_freq",
+        x="algorithm", y=error_label, hue="carrier_freq",
         title="Effect of Carrier Frequency\n"
     )
 
     plot_box(
         load_samples_for_plot(HDF_PATH, df_metrics,
+                              **params_excluding(default_filter, "peak_snr_db")),
+        HDF_PATH,
+        x="algorithm", y=error_label, hue="peak_snr_db",
+        title="Effect of Peak SNR\n"
+    )
+    
+
+    plot_box(
+        load_samples_for_plot(HDF_PATH, df_metrics,
                               **params_excluding(default_filter, "carrier_waveform")),
         HDF_PATH,
-        x="algorithm", y="abs_error", hue="carrier_waveform",
+        x="algorithm", y=error_label, hue="carrier_waveform",
         title="Effect of Carrier Waveform\n"
     )
 
@@ -372,7 +403,7 @@ if __name__ == "__main__":
     #     load_samples_for_plot(HDF_PATH, df_metrics,
     #                           **params_excluding(default_filter, "mod_freq")),
     #     HDF_PATH,
-    #     x="algorithm", y="abs_error", hue="mod_freq",
+    #     x="algorithm", y=error_label, hue="mod_freq",
     #     title="Effect of Modulation Frequency\n"
     # )
 
@@ -380,15 +411,23 @@ if __name__ == "__main__":
     #     load_samples_for_plot(HDF_PATH, df_metrics,
     #                           **params_excluding({**default_filter.copy(), "mod_freq": 0.01}, "mod_amp")),
     #     HDF_PATH,
-    #     x="algorithm", y="abs_error", hue="mod_amp",
+    #     x="algorithm", y=error_label, hue="mod_amp",
     #     title="Effect of Modulation Amplitude\n"
     # )
 
     plot_box(
         load_samples_for_plot(HDF_PATH, df_metrics,
+                              **params_excluding(default_filter, "peak_bw")),
+        HDF_PATH,
+        x="algorithm", y=error_label, hue="peak_bw",
+        title="Effect of Peak Bandwidth\n"
+    )
+
+    plot_box(
+        load_samples_for_plot(HDF_PATH, df_metrics,
                               **params_excluding(default_filter, "n_peaks")),
         HDF_PATH,
-        x="algorithm", y="abs_error", hue="n_peaks",
+        x="algorithm", y=error_label, hue="n_peaks",
         title="Effect of Number of Peaks\n"
     )
 
@@ -396,7 +435,7 @@ if __name__ == "__main__":
         load_samples_for_plot(HDF_PATH, df_metrics,
                               **params_excluding(default_filter, "has_aperiodic")),
         HDF_PATH,
-        x="algorithm", y="abs_error", hue="has_aperiodic",
+        x="algorithm", y=error_label, hue="has_aperiodic",
         title="Effect of Aperiodic Component\n"
     )
 
@@ -404,7 +443,7 @@ if __name__ == "__main__":
         load_samples_for_plot(HDF_PATH, df_metrics,
                               **params_excluding(default_filter, "aperiodic_exponent")),
         HDF_PATH,
-        x="algorithm", y="abs_error", hue="aperiodic_exponent",
+        x="algorithm", y=error_label, hue="aperiodic_exponent",
         title="Effect of Aperiodic Exponent\n"
     )
 
@@ -412,7 +451,7 @@ if __name__ == "__main__":
         load_samples_for_plot(HDF_PATH, df_metrics,
                               **params_excluding(default_filter, "fft_method")),
         HDF_PATH,
-        x="algorithm", y="abs_error", hue="fft_method",
+        x="algorithm", y=error_label, hue="fft_method",
         title="Effect of FFT method\n"
     )
 
@@ -435,7 +474,15 @@ if __name__ == "__main__":
     # plot_box(df_metrics, x="algorithm", y="mae", hue="carrier_freq",
     #     title="MAE distribution across IAF Frequencies")
     
-    plot_box(load_samples_for_plot(HDF_PATH, df_metrics), HDF_PATH, x="algorithm", y="abs_error", title="MAE distribution across all conditions"),
+    plot_box(load_samples_for_plot(HDF_PATH, df_metrics), HDF_PATH, x="algorithm", y=error_label, title="MAE distribution across all conditions"),
+
+    # Print mean and std of MAE for each algorithm
+    summary = (df_metrics.groupby("algorithm")["mae"]
+               .agg(["median","mean", "std"])
+               .mul(1000)  # Convert to mHz for readability
+               .round(2))
+    print("\n=== MAE Summary (in mHz) ===")
+    print(summary.to_string())
 
     # # Print Conditions where MAE > 4Hz for any algorithm
     # high_error = df_metrics[df_metrics["mae"] > 4]

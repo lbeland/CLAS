@@ -35,6 +35,15 @@ make install
 ./configure --enable-float --enable-threads --enable-openmp --enable-sse2 --enable-avx --enable-avx2 CFLAGS="-O3 -march=native -mtune=native"
 (used on WSL Windows)
 
+## Savitzky Golay Installation for IAF Estimation
+- gram_savitzky_golay folder holds the library
+- has to be compiled with 
+```bash
+mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make
+sudo make install
+```
 
 
 ## Start Benchmark

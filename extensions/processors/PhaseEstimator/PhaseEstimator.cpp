@@ -383,13 +383,13 @@ void PhaseEstimator::Process(ProcessingContext &context)
         p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_WISDOM_ONLY);
         if (p == nullptr)
         {
-            LOG(ERROR) << "No wisdom available for FFT planning, using patient mode.";
+            LOG(WARNING) << name() << "No wisdom available for FFT planning, using patient mode.";
             p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_PATIENT);
         }
         p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_WISDOM_ONLY);
         if (p_inv == nullptr)
         {
-            LOG(ERROR) << "No wisdom available for IFFT planning, using patient mode.";
+            LOG(WARNING) << name() << "No wisdom available for IFFT planning, using patient mode.";
             p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_PATIENT);
         }
     }
@@ -435,11 +435,11 @@ void PhaseEstimator::Process(ProcessingContext &context)
                 window_size_ = static_cast<int>(2.0 * fs_ / f0_);
                 if (window_size_ > sample_window.capacity())
                 {
-                    LOG(WARNING) << "New window size " << window_size_ << " exceeds circular buffer capacity " << sample_window.capacity() << ". Resizing circular buffer to new window size.\n";
+                    LOG(WARNING) << name() << "New window size " << window_size_ << " exceeds circular buffer capacity " << sample_window.capacity() << ". Resizing circular buffer to new window size.\n";
                     sample_window.rset_capacity(window_size_);
                 }
-                n_fft_ = good_size_real(window_size_);
-                LOG(INFO) << "Packet " << packet_count_ << ": Update IAF to " << f0_ << " Hz, window size: " << window_size_ << ", FFT size: " << n_fft_ << "\n";
+                n_fft_ = window_size_; //good_size_real(window_size_);
+                LOG(INFO) << name() << "Packet " << packet_count_ << ": Update IAF to " << f0_ << " Hz, window size: " << window_size_ << ", FFT size: " << n_fft_ << "\n";
 
                 load_filter_coeffs(context, f0_);
                 calibrate_gain(window_size_);
@@ -465,13 +465,13 @@ void PhaseEstimator::Process(ProcessingContext &context)
                         p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_WISDOM_ONLY);
                         if (p == nullptr)
                         {
-                            LOG(WARNING) << "No wisdom available for FFT planning, using patient mode.";
+                            LOG(WARNING) << name() << "No wisdom available for FFT planning, using patient mode.";
                             p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_PATIENT);
                         }
                         p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_WISDOM_ONLY);
                         if (p_inv == nullptr)
                         {
-                            LOG(WARNING) << "No wisdom available for IFFT planning, using patient mode.";
+                            LOG(WARNING) << name() << "No wisdom available for IFFT planning, using patient mode.";
                             p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_PATIENT);
                         }
                     }

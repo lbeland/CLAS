@@ -116,6 +116,8 @@ int main(int argc, char** argv) {
         config.server_side_storage_resources() + "/graphs";
     config.server_side_storage_custom["filters"] =
         config.server_side_storage_resources() + "/filters";
+    config.server_side_storage_custom["fft_wisdom"] =
+        config.server_side_storage_resources() + "/fft_wisdom";
     config.server_side_storage_custom["runroot"] = config.server_side_storage_environment();
 
     GlobalContext context(config.testing_enabled(), config.server_side_storage_custom());

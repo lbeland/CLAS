@@ -21,14 +21,14 @@ def angle_mod(t, A_c, f_c, A_m, f_m):
     w_c = 2.0 * math.pi * f_c
     w_m = 2.0 * math.pi * f_m
     if w_m > 0:
-        value = A_c * math.cos(w_c * t + (A_m/f_m) * math.sin(w_m * t))
         amplitude = A_c
-        theta = w_c * t + (A_m/f_m) * math.sin(w_m * t)
+        theta = w_c * t + (2.0*math.pi*A_m/w_m) * math.sin(w_m * t)
+        value = A_c * math.cos(theta)
         inst_freq = f_c + A_m * math.cos(w_m * t)
     else:
-        value = A_c * math.cos(w_c * t)
+        theta = w_c * t + A_m
+        value = A_c * math.cos(theta)
         amplitude = A_c
-        theta = w_c * t
         inst_freq = f_c
 
     return value, amplitude, theta, inst_freq

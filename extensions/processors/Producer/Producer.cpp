@@ -72,8 +72,8 @@ namespace
             if (modulation_frequency == 0.0)
             {
                 state.amplitude = carrier_amplitude;
-                state.theta = carrier_phase;
-                state.inst_freq = carrier_frequency + modulation_amplitude;
+                state.theta = carrier_phase + modulation_amplitude;
+                state.inst_freq = carrier_frequency;
                 state.value = state.amplitude * std::cos(state.theta);
                 return state;
             }
@@ -143,6 +143,9 @@ void Producer::Process(ProcessingContext &context)
     double modulation_phase = 0.0;
     int packet_count = 0;
 
+    const double carrier_step = 2.0 * PI * carrier_frequency_() / fs_();
+    const double modulation_step = 2.0 * PI * modulation_frequency_() / fs_();
+
     while (!context.terminated())
     {
         if (n_messages_() != -1 && packet_count >= n_messages_())
@@ -196,8 +199,6 @@ void Producer::Process(ProcessingContext &context)
         send_times.push_back(source_timestamp_us);
         ++packet_count;
 
-        const double carrier_step = 2.0 * PI * carrier_frequency_() / fs_();
-        const double modulation_step = 2.0 * PI * modulation_frequency_() / fs_();
         carrier_phase = WrapPhase(carrier_phase + carrier_step);
         modulation_phase = WrapPhase(modulation_phase + modulation_step);
     }

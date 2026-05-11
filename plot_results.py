@@ -25,7 +25,7 @@ def plot_results(fs, f0, graph_name):
     if graph_name == "TurboLinkCLAS.yaml":
         processors = ["SourceClient", "BandpassFilter", "PhaseEstimator", "IAFEstimator"]
     elif graph_name == "SimulateCLAS.yaml":
-        processors = ["Producer", "PhaseEstimator", "IAFEstimator"]
+        processors = ["Producer", "PhaseEstimator", "IAFEstimator", "StimulusController"]
     elif graph_name == "IAFtests.yaml":
         processors = ["Producer", "IAFEstimator"]
     elif graph_name == "ecHTtests.yaml":
@@ -116,6 +116,9 @@ def plot_results(fs, f0, graph_name):
     if samples.get("PhaseEstimator_0") is not None:
         samples_phase = samples["PhaseEstimator_0"]
         ax0.plot(message_indices, samples_phase, linestyle="-.", linewidth=1.4, label="Online phase")
+    if samples.get("StimulusController_0") is not None:
+        samples_stim = np.where(samples["StimulusController_0"] == 1)[0]
+        ax0.plot(samples_stim, samples_orig[samples_stim], "o", markersize=3, label="Stimulus")
     # if samples.get("PhaseEstimator_1") is not None:
     #     samples_real = samples["PhaseEstimator_1"]
     #     ax0.plot(message_indices, samples_real, linewidth=1.2, label="Online real part")

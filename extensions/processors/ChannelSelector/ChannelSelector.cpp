@@ -59,7 +59,7 @@ void ChannelSelector::Prepare(GlobalContext &context) {
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
   LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
 
-  packet_count_ = 0;
+  fs_ = p.sample_rate;
   current_channel_index_ = 0;
   n_channels_ = p.nchannels;
 
@@ -98,7 +98,8 @@ void ChannelSelector::Process(ProcessingContext &context) {
         current_channel_index_ = channel_idx;
       }
     }
-    if (packet_count_ % 1000 == 0) {
+
+    if (packet_count_ % int(fs_) == 0) {
       LOG(INFO) << name() << ". Packet " << packet_count_ + 1 << ": Selected channel " << current_channel_index_ << " (RMS: " << rms_[current_channel_index_] << ")";
     }
 

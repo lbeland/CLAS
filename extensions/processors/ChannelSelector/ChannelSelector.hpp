@@ -35,6 +35,7 @@ class ChannelSelector : public IProcessor {
   // VARIABLES
   protected:
     unsigned int packet_count_ = 0;
+    double fs_ = 0;
 
     const uint32_t MAX_NCHANNELS=384;
 

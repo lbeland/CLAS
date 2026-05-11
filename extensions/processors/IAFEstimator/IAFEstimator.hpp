@@ -41,11 +41,13 @@ class IAFEstimator : public IProcessor {
   // VARIABLES
   protected:
     unsigned int packet_count_ = 0;
-    double first_timestamp_ = 0.0;
     float fs_ = 0.0;
     size_t n_fft_ = 0;
     size_t window_size_ = 1;
     inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Prepare
+    
+    BroadcasterState<float>* iaf_state_ = nullptr;
+    float current_iaf_ = std::numeric_limits<float>::quiet_NaN();
 
     const uint32_t MAX_NCHANNELS=384;
 
@@ -58,8 +60,7 @@ class IAFEstimator : public IProcessor {
   protected:
     options::Value<int, false> n_messages_{-1};
     options::Value<float, false> window_size_sec_{5};
+    options::Value<float, false> f_min_{5.0f};
+    options::Value<float, false> f_max_{18.0f};
     options::Value<unsigned int, false> calc_interval_{100};
-
-    BroadcasterState<float>* iaf_state_ = nullptr;
-    float current_iaf_ = 10.0f;
 };

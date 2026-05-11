@@ -1,4 +1,3 @@
-"""Spawn mockup streamer (producer) and threshold controller (consumer) directly via their mains, benchmark IPC."""
 import argparse
 import os
 import signal
@@ -13,7 +12,7 @@ from plot_results import plot_results
 
 REPO_ROOT = Path(__file__).resolve().parent
 WORKSPACE_FALCON_CONFIG = REPO_ROOT / ".falcon" / "config.yaml"
-GRAPH_CONFIG = "TurboLinkCLAS.yaml"
+GRAPH_CONFIG = "SimulateCLAS.yaml"
 
 def main():
     parser = argparse.ArgumentParser()
@@ -47,7 +46,7 @@ def main():
                 # Check if processor PhaseEstimator is configured to use a non-file-based filter
                 filter_config = processor_config.get("options", {}).get("filter", {})
                 if "file" not in filter_config:
-                    for iaf in np.arange(7,12.1,0.1):
+                    for iaf in np.arange(6.9,14.1,0.05):
                         bandwidth = filter_config.get("bandwith", 4)
                         filter_length = int(2.0 * fs/iaf)    # 2 cycles of iaf frequency
                         gen_bandpass(1, iaf-bandwidth/2, iaf+bandwidth/2, fs, filter_length, output_folder=os.path.join(resources_folder, "filters"))
@@ -68,10 +67,7 @@ def main():
         terminate(graph_process)
 
     # Plot results
-    if GRAPH_CONFIG == "TurboLinkCLAS.yaml":
-        plot_results(fs, 8, 'SourceClient')
-    elif GRAPH_CONFIG == "SimulateCLAS.yaml":
-        plot_results(fs, 8, 'Producer')
+    plot_results(fs, 10, GRAPH_CONFIG)
 
 
 def terminate(proc):

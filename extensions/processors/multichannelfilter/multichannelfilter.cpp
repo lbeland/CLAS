@@ -76,9 +76,10 @@ void MultiChannelFilter::Prepare(GlobalContext &context) {
     float low_cutoff = filter_def_()["low_cutoff"].as<float>();
     float high_cutoff = filter_def_()["high_cutoff"].as<float>();
     std::string filename;
-    filename = std::to_string(N) + "_" + std::format("{:.1f}", low_cutoff) + "_" + std::format("{:.1f}", high_cutoff) + "_" + std::to_string(fs_) + ".txt";      
+    filename = std::to_string(N) + "_" + std::format("{:.2f}", low_cutoff) + "_" + std::format("{:.2f}", high_cutoff) + "_" + std::to_string(fs_) + ".txt";      
 
     std::string f = context.resolve_path(filename, "filters");
+    LOG(INFO) << name() << " Read filter coefficients from file path: " << f << "\n";
     filter_template_.reset(dsp::filter::construct_from_file(f));
   } else {
     std::string f = context.resolve_path(filter_def_()["file"].as<std::string>(), "filters");

@@ -22,11 +22,13 @@ def plot_results(fs, f0, graph_name):
 
     start_idx = 0
 
-    if graph_name == "TurboLinkCLAS":
+    if graph_name == "TurboLinkCLAS.yaml":
         processors = ["SourceClient", "BandpassFilter", "PhaseEstimator", "IAFEstimator"]
-    elif graph_name == "IAFtests":
+    elif graph_name == "SimulateCLAS.yaml":
+        processors = ["Producer", "PhaseEstimator", "IAFEstimator"]
+    elif graph_name == "IAFtests.yaml":
         processors = ["Producer", "IAFEstimator"]
-    elif graph_name == "ecHTtests":
+    elif graph_name == "ecHTtests.yaml":
         processors = ["Producer","PhaseEstimator"]
 
     samples = {}
@@ -80,7 +82,7 @@ def plot_results(fs, f0, graph_name):
     # cecht_Xf = cecht.fit_transform(samples_orig)
     # cecht_phase = np.angle(cecht_Xf)
 
-    echt = ECHT(l_freq, h_freq, fs, filt_order=1)
+    # echt = ECHT(l_freq, h_freq, fs, filt_order=1)
     # echt_Xf = echt.fit_transform(samples_orig)
     # echt_phase = np.angle(echt_Xf)
 
@@ -128,7 +130,7 @@ def plot_results(fs, f0, graph_name):
         line_true_freq = ax1.plot(message_indices, true_inst_freq, label="True IAF", alpha=0.7)
         legend_items += line_true_freq
     if true_amplitude is not None:
-        line_ampl = ax1b.plot(message_indices, true_amplitude, label="True Amplitude", alpha=0.7)
+        line_ampl = ax1b.plot(message_indices, true_amplitude, '--', label="True Amplitude", alpha=0.7)
         legend_items += line_ampl
     if samples.get("IAFEstimator_0") is not None:
         est_inst_freq = samples["IAFEstimator_0"]
@@ -160,15 +162,16 @@ def plot_results(fs, f0, graph_name):
     ax2.set_xlabel("Message index")
     ax2.set_ylabel(f"Error ({" / ".join(units)})")
     ax2.tick_params(axis="y")
+    ax2.legend(frameon=False)
 
 
     ## Hist plot ----------------------
     for error in errors:
         ax3.hist(error, bins=360*2, alpha=0.8, edgecolor="black", linewidth=0.5)
-        ax3.axvline(np.mean(error), linestyle="--", linewidth=1.2, label=f"Mean = {np.mean(error):.2f}")
-        ax3.axvline(np.median(error), linestyle=":", linewidth=1.2, label=f"Median = {np.median(error):.2f}")
-        ax3.axvline(np.mean(error)+np.std(error), linestyle="-.", linewidth=1.2, label=f"Std = {np.std(error):.2f}")
-        ax3.axvline(np.mean(error)-np.std(error), linestyle="-.", linewidth=1.2)
+        ax3.axvline(np.nanmean(error), linestyle="--", linewidth=1.2, label=f"Mean = {np.nanmean(error):.2f}")
+        ax3.axvline(np.nanmedian(error), linestyle=":", linewidth=1.2, label=f"Median = {np.nanmedian(error):.2f}")
+        ax3.axvline(np.nanmean(error)+np.nanstd(error), linestyle="-.", linewidth=1.2, label=f"Std = {np.nanstd(error):.2f}")
+        ax3.axvline(np.nanmean(error)-np.nanstd(error), linestyle="-.", linewidth=1.2)
 
     ax3.set_xlabel("Error value")
     ax3.set_ylabel("Count")
@@ -180,4 +183,4 @@ def plot_results(fs, f0, graph_name):
 
 
 if __name__ == "__main__":
-    plot_results(10000, 10, "IAFtests")
+    plot_results(10000, 10, "SimulateCLAS.yaml")

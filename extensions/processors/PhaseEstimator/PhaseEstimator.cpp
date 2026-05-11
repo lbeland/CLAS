@@ -347,7 +347,6 @@ void PhaseEstimator::Prepare(GlobalContext &context)
     const auto &p = info.parameters<MultiChannelType<float>::Parameters>();
     LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
     fs_ = p.sample_rate;
-    f0_ = iaf_state_->get();
     window_size_ = static_cast<int>(fs_ * (1.0 / f0_) * 2.0); // 2 cycles of a 10 Hz sine wave
     n_fft_ = static_cast<int>(good_size_real(window_size_));
     sample_window.set_capacity(static_cast<int>(fs_ * (1.0 / 5.0) * 2.0)); // Initialize with max expected window size for 5 Hz IAF
@@ -423,68 +422,77 @@ void PhaseEstimator::Process(ProcessingContext &context)
 
         TimePoint start_time = Clock::now();
 
-        if (iaf_read_interval_() > 0 && (packet_count_ % iaf_read_interval_()) == 0)
+        if (packet_count_ % iaf_read_interval_() == 0)
         {
             const float new_f0 = iaf_state_->get();
-            // printf("\n Packet %d: Read shared IAF value: %.2f Hz", packet_count_, new_f0);
-            if (std::abs(new_f0 - f0_) > 0.025f)
-            {                              
-                // Only update if IAF has changed by more than 0.0255 Hz to avoid unnecessary recalibration
-                f0_ = round(new_f0, 0.05f); // Round to nearest 0.05 Hz, because bandpass filters are predesigned for 0.05 Hz steps
-                int old_n_fft = n_fft_; // Store old FFT size to check if we need to reallocate FFTW arrays
-                window_size_ = static_cast<int>(2.0 * fs_ / f0_);
-                if (window_size_ > sample_window.capacity())
-                {
-                    LOG(WARNING) << name() << "New window size " << window_size_ << " exceeds circular buffer capacity " << sample_window.capacity() << ". Resizing circular buffer to new window size.\n";
-                    sample_window.rset_capacity(window_size_);
-                }
-                n_fft_ = window_size_; //good_size_real(window_size_);
-                LOG(INFO) << name() << "Packet " << packet_count_ << ": Update IAF to " << f0_ << " Hz, window size: " << window_size_ << ", FFT size: " << n_fft_ << "\n";
-
-                load_filter_coeffs(context, f0_);
-                calibrate_gain(window_size_);
-                if (old_n_fft != n_fft_)
-                {
-                    // Reallocate FFTW arrays with new size
+            if (std::isnan(new_f0))
+            {
+                valid_iaf_ = false;
+            }
+            else
+            {
+                valid_iaf_ = true;
+            
+                // printf("\n Packet %d: Read shared IAF value: %.2f Hz", packet_count_, new_f0);
+                if (std::abs(new_f0 - f0_) > 0.025f)
+                {                              
+                    // Only update if IAF has changed by more than 0.0255 Hz to avoid unnecessary recalibration
+                    f0_ = round(new_f0, 0.05f); // Round to nearest 0.05 Hz, because bandpass filters are predesigned for 0.05 Hz steps
+                    int old_n_fft = n_fft_; // Store old FFT size to check if we need to reallocate FFTW arrays
+                    window_size_ = static_cast<int>(2.0 * fs_ / f0_);
+                    if (window_size_ > sample_window.capacity())
                     {
-                        std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
-                        fftwf_destroy_plan(p);
-                        fftwf_destroy_plan(p_inv);
+                        LOG(WARNING) << name() << "New window size " << window_size_ << " exceeds circular buffer capacity " << sample_window.capacity() << ". Resizing circular buffer to new window size.\n";
+                        sample_window.rset_capacity(window_size_);
                     }
-                    fftwf_free(signal_in);
-                    fftwf_free(freq_half);
-                    fftwf_free(freq);
-                    fftwf_free(out);
-                    
-                    signal_in = fftwf_alloc_real(n_fft_);
-                    freq_half = fftwf_alloc_complex(n_fft_ / 2 + 1);
-                    freq = fftwf_alloc_complex(n_fft_);
-                    out = fftwf_alloc_complex(n_fft_);
+                    n_fft_ = window_size_; //good_size_real(window_size_);
+                    LOG(INFO) << name() << "Packet " << packet_count_ << ": Update IAF to " << f0_ << " Hz, window size: " << window_size_ << ", FFT size: " << n_fft_ << "\n";
+
+                    load_filter_coeffs(context, f0_);
+                    calibrate_gain(window_size_);
+                    if (old_n_fft != n_fft_)
                     {
-                        std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
-                        p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_WISDOM_ONLY);
-                        if (p == nullptr)
+                        // Reallocate FFTW arrays with new size
                         {
-                            LOG(WARNING) << name() << "No wisdom available for FFT planning, using patient mode.";
-                            p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_PATIENT);
+                            std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
+                            fftwf_destroy_plan(p);
+                            fftwf_destroy_plan(p_inv);
                         }
-                        p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_WISDOM_ONLY);
-                        if (p_inv == nullptr)
+                        fftwf_free(signal_in);
+                        fftwf_free(freq_half);
+                        fftwf_free(freq);
+                        fftwf_free(out);
+                        
+                        signal_in = fftwf_alloc_real(n_fft_);
+                        freq_half = fftwf_alloc_complex(n_fft_ / 2 + 1);
+                        freq = fftwf_alloc_complex(n_fft_);
+                        out = fftwf_alloc_complex(n_fft_);
                         {
-                            LOG(WARNING) << name() << "No wisdom available for IFFT planning, using patient mode.";
-                            p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_PATIENT);
+                            std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
+                            p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_WISDOM_ONLY);
+                            if (p == nullptr)
+                            {
+                                LOG(WARNING) << name() << "No wisdom available for FFT planning, using patient mode.";
+                                p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_PATIENT);
+                            }
+                            p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_WISDOM_ONLY);
+                            if (p_inv == nullptr)
+                            {
+                                LOG(WARNING) << name() << "No wisdom available for IFFT planning, using patient mode.";
+                                p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_PATIENT);
+                            }
                         }
                     }
                 }                
+                // else {
+                //   printf(" - No need for calibration");
+                // }
             }
-            // else {
-            //   printf(" - No need for calibration");
-            // }
         }
 
         TimePoint claim_output_time = Clock::now();
 
-        if (sample_window.size() >= static_cast<size_t>(window_size_))
+        if (valid_iaf_ && sample_window.size() >= static_cast<size_t>(window_size_))
         { //} && (packet_count_ % (sample_window.capacity()/2) == 0)) {
 
             // Convert circular buffer<float> to continuous array for FFTW input and zero-pad to n_fft length
@@ -566,6 +574,12 @@ void PhaseEstimator::Process(ProcessingContext &context)
 
             // double processing_time_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
             // LOG(INFO) << name() << " Processed packet "<< packet_count_ << " in " << std::fixed << std::setprecision(2) << processing_time_ms << " ms\n";
+        }
+        else
+        {
+            // Set to NaN to indicate invalid IAF
+            data_phase_out->set_data_sample(0, 0, std::numeric_limits<float>::quiet_NaN());
+            data_real_out->set_data_sample(0, 0, std::numeric_limits<float>::quiet_NaN()); 
         }
 
         data_out_port_->slot(0)->PublishData();

@@ -45,13 +45,16 @@ class PhaseEstimator : public IProcessor {
     unsigned int packet_count_ = 0;
     double first_timestamp_ = 0.0;
     float fs_ = 0.0;
-    float f0_ = 0.0;
+    float f0_ = 10.0; // default IAF value, will be updated from state
     size_t n_fft_ = 0;
     size_t window_size_ = 1;
     inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Preprocess
     std::string coeff_file_;  // Path to bandpass filter coefficients file
     std::vector<std::complex<float>> coeffs_;  // Filter coefficients of bandpass filter
     std::complex<float> c_gain_;  // Calibration gain for cecHT
+    
+    FollowerState<float>* iaf_state_ = nullptr;
+    bool valid_iaf_ = false;
 
     const uint32_t MAX_NCHANNELS=384;
 
@@ -69,5 +72,4 @@ class PhaseEstimator : public IProcessor {
     options::Value<unsigned int, false> iaf_read_interval_{5000};
     options::Value<YAML::Node, false> filter_def_{};
 
-    FollowerState<float>* iaf_state_ = nullptr;
 };

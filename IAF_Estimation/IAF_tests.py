@@ -661,13 +661,13 @@ def combine_simple(psd, freq_bins, config):
         sav_gol_window_length = sav_gol_polyorder + 2
 
     eps = 1e-12
-    slope, intercept, _, _, _ = stats.linregress(np.log(freqs), np.log(np.maximum(psd_band, eps)))
-    aperiodic_simple = np.log10(freqs) * slope + intercept
+    psd_safe = np.maximum(psd_band, eps)
+    slope, intercept, _, _, _ = stats.linregress(np.log10(freqs), np.log10(psd_safe))
+    aperiodic_simple = np.log10(freqs) * slope + intercept  # log10-scale
 
-    psd_safe = np.maximum(psd_band, 1e-30)
-    residual_simple = np.log10(psd_safe) - aperiodic_simple
+    residual_simple = np.log10(psd_safe) - aperiodic_simple # log10-scale
 
-    psd_flat = np.power(10, residual_simple)
+    psd_flat = np.power(10, residual_simple)  # back to linear scale
     psd_flat = np.clip(psd_flat, 1e-30, None)
 
     if not np.all(np.isfinite(psd_flat)):
@@ -680,13 +680,21 @@ def combine_simple(psd, freq_bins, config):
     alpha_band = (freqs >= fmin) & (freqs <= fmax)
 
     eps = 1e-12
-    _, _, r, _, _ = stats.linregress(np.log(freqs), np.log(np.maximum(psd_smooth, eps)))
+    _, _, r, _, _ = stats.linregress(np.log10(freqs), np.log10(np.maximum(psd_smooth, eps)))
 
     if r ** 2 > config["pink_ax_r2"]: # or not peak_sig:
         return np.nan
 
-    paf = freqs[alpha_band][np.argmax(psd_smooth[alpha_band])]
-    alpha_weights = psd_smooth[alpha_band]
+    psd_alpha_band = psd_smooth[alpha_band]
+    max_bin = np.argmax(psd_alpha_band)
+    paf = freqs[alpha_band][max_bin]
+
+    if 0 < max_bin < (psd_alpha_band.size - 1):
+        y1, y2, y3 = psd_alpha_band[max_bin - 1], psd_alpha_band[max_bin], psd_alpha_band[max_bin + 1]
+        denom = (y1 - 2 * y2 + y3)
+        if denom != 0:
+            delta = 0.5 * (y1 - y3) / denom
+            return paf + delta * resolution
 
     return paf
 
@@ -794,7 +802,7 @@ if __name__ == "__main__":
     # config = {'fs': 10000.0, 'signal_length_sec': 20, 'freq_range': (1.0, 30.0), 'alpha_band': (5, 18), 'pink_ax_r2': 0.8, 'aperiodic_ref_power': 1.0, 
     #         'f_rotation': 1.0, 'aperiodic_ref_freq': 5.0, 'carrier_freq': 14.0, 'carrier_waveform': 'gaussian', 'mod_amp': 0.0, 'mod_freq': 0.0, 
     #         'aperiodic_exponent': 2, 'has_aperiodic': True, 'n_peaks': 1, 'peak_bw': 0.5, 'peak_snr_db': 20.0, 'noise_type': 'white', 'noise_snr_db': -30.0, 
-    #         'window_length_sec': 5, "fft_method": 'fft'}
+    #         'window_length_sec': 4, "fft_method": 'fft'}
 
     # global RANDOM_SAMPLES
     # RANDOM_SAMPLES = np.random.randn(int(config["fs"] * config["signal_length_sec"]))

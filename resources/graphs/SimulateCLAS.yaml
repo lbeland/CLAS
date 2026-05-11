@@ -1,7 +1,7 @@
 graph:
   name: CLAS
   defaults:
-    n_messages: &n_messages 50000
+    n_messages: &n_messages 25000
     window_size: &window_size 2000
     fs: &fs 10000
   processors:
@@ -12,51 +12,61 @@ graph:
         nchannels: 1
         nsamples: 1
         n_messages: *n_messages
-        window_size: *window_size
-        f0: 8.5
+        carrier_amplitude: 3.0
+        carrier_frequency: 7.5
+        modulation_type: "phase"
+        modulation_amplitude: 0
+        modulation_frequency: 0.1
         output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
       advanced:
         buffer_sizes:
-          out: 16
+          out: 32
         thread_core: 7
-    BandpassFilter:
-      class: MultiChannelFilter
-      options:
-        filter:
-          # file: filters://2_2.0_20.0_10000.txt
-          N: 2
-          low_cutoff: 2.5
-          high_cutoff: 35
-        n_messages: *n_messages
-      advanced:
-        buffer_sizes:
-          out: 16
-        thread_core: 4
+    # BandpassFilter:
+    #   class: MultiChannelFilter
+    #   options:
+    #     filter:
+    #       # file: filters://2_2.0_20.0_10000.txt
+    #       N: 1
+    #       low_cutoff: 2.5
+    #       high_cutoff: 35
+    #     n_messages: *n_messages
+    #   advanced:
+    #     buffer_sizes:
+    #       out: 32
+    #     thread_core: 4
     ChannelSelector:
       class: ChannelSelector
       options:
         n_messages: *n_messages
       advanced:
         buffer_sizes:
-          out: 16
+          out: 32
         thread_core: 12
     IAFEstimator:
       class: IAFEstimator
       options:
         n_messages: *n_messages
-        n_fft: 131072   # 2^{17} for 10kHz sampling rate to get 0.0767Hz frequency resolution
+        calc_interval: 1
+        window_size_sec: 2
+        f_min: 5.0
+        f_max: 18.0
+      advanced:
+        buffer_sizes:
+          out: 32
+        thread_core: 6
     PhaseEstimator:
       class: PhaseEstimator
       options:
         n_messages: *n_messages
         # n_fft: *window_size
-        iaf_read_interval: 5000
+        iaf_read_interval: 1
         calibrate: true
         filter:
           bandwith: 4
       advanced:
         buffer_sizes:
-          out: 16
+          out: 32
         thread_core: 8
     Consumer:   # Only for measurement of latency/throughput
       class: Consumer
@@ -75,17 +85,21 @@ graph:
         overwrite: true 
         format: compact
   connections:
-  - Producer.out.0 = BandpassFilter.in
-  - BandpassFilter.out.0 = ChannelSelector.in
+  # - Producer.out.0 = BandpassFilter.in
+  - Producer.out.0 = ChannelSelector.in
   - ChannelSelector.out.0 = IAFEstimator.in
   - ChannelSelector.out.0 = PhaseEstimator.in
   - PhaseEstimator.out.0 = Consumer.in
 
 
   - Producer.out.0 = Serializer1.in
-  - BandpassFilter.out.0 = Serializer2.in
-  - PhaseEstimator.out.0 = Serializer3.in
-  - PhaseEstimator.out.1 = Serializer3.in
+  - Producer.out.1 = Serializer1.in
+  - Producer.out.2 = Serializer1.in
+  - Producer.out.3 = Serializer1.in
+  - PhaseEstimator.out.0 = Serializer2.in
+  - PhaseEstimator.out.1 = Serializer2.in
+  - IAFEstimator.out.0 = Serializer3.in
+
   states:
   - IAF: [IAFEstimator.iaf, PhaseEstimator.iaf]
 

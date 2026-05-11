@@ -1,9 +1,9 @@
 graph:
   name: CLAS
   defaults:
-    n_messages: &n_messages 20000
-    window_size: &window_size 200
-    fs: &fs 1000
+    n_messages: &n_messages 50000
+    window_size: &window_size 2000
+    fs: &fs 10000
   processors:
     Producer:
       class: Producer
@@ -15,8 +15,8 @@ graph:
         carrier_amplitude: 3.0
         carrier_frequency: 10.0
         modulation_type: "phase"
-        modulation_amplitude: 0.5
-        modulation_frequency: 0.025
+        modulation_amplitude: 2
+        modulation_frequency: 0.1
         output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
       advanced:
         buffer_sizes:

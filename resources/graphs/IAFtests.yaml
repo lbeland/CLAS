@@ -2,7 +2,7 @@ graph:
   name: CLAS
   defaults:
     n_messages: &n_messages 100000
-    window_size: &window_size 50000
+    window_size: &window_size 20000
     fs: &fs 10000
   processors:
     Producer:
@@ -13,21 +13,23 @@ graph:
         nsamples: 1
         n_messages: *n_messages
         carrier_amplitude: 3.0
-        carrier_frequency: 10.0
+        carrier_frequency: 7.5
         modulation_type: "phase"
-        modulation_amplitude: 1.0
-        modulation_frequency: 0.05
+        modulation_amplitude: 0
+        modulation_frequency: 0.1
         output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
       advanced:
         buffer_sizes:
-          out: 32
+          out: 2
         thread_core: 7
     IAFEstimator:
       class: IAFEstimator
       options:
         n_messages: *n_messages
-        calc_interval: 1000
-        window_size_sec: 5
+        calc_interval: 1
+        window_size_sec: 2
+        f_min: 5.0
+        f_max: 18.0
       advanced:
         buffer_sizes:
           out: 32

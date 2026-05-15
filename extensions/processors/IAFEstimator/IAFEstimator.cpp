@@ -143,26 +143,51 @@ namespace
     }
 
     std::vector<double> remove_aperiodic(const std::vector<double> &power, const std::vector<double> &freqs)
-    {
+    {     
+
+        // Safe power (no zeros)
+        std::vector<double> safe_power(power.size());
+        for (size_t k = 0; k < power.size(); ++k)
+        {
+            safe_power[k] = std::max(power[k],1e-12);
+        }
+
+        // Ignore DC-bin
         std::vector<double> log_freqs(freqs.size()-1);
         std::vector<double> log_power(power.size()-1);
-
         for (size_t k = 0; k < power.size()-1; ++k)
         {
             log_freqs[k] = std::log10(freqs[k+1]);
-            log_power[k] = std::log10(std::max(power[k+1],1e-12));
+            log_power[k] = std::log10(safe_power[k+1]);
         }
 
         LinearFitResult fit = linear_regression(log_freqs, log_power);
 
         // LOG(INFO) << "Aperiodic fit: slope = " << fit.slope << ", intercept = " << fit.intercept << ", R^2 = " << fit.r_squared << "\n";
 
-        std::vector<double> power_flat(power.size());
-        power_flat[0] = 0; // DC component is not used for IAF estimation, set to 0 to avoid being maximum 
+        std::vector<double> power_flat(power.size()-1);
+        power_flat[0] = 1; // DC component is not used for IAF estimation, set to 1 to avoid being maximum 
         for (size_t k = 0; k < power.size()-1; ++k)
         {
             double aperiodic_fit = fit.slope * log_freqs[k] + fit.intercept;
-            power_flat[k+1] = std::max(1e-12, std::pow(10, log_power[k] - aperiodic_fit));
+            power_flat[k+1] = safe_power[k+1] / std::pow(10, aperiodic_fit);
+        }
+        std::vector<double> log_freqs_select;
+        std::vector<double> log_power_select;
+
+        for (size_t k = 0; k < power.size()-1; ++k)
+        {
+            if (power_flat[k] <= 1.0) // Limit to perfect fit (=1) or below to avoid bias of oscillatory peaks above the fit
+            {
+                log_freqs_select.push_back(std::log10(freqs[k]));
+                log_power_select.push_back(std::log10(power_flat[k]));
+            }
+        }
+        fit = linear_regression(log_freqs_select, log_power_select);
+        for (size_t k = 0; k < power.size()-1; ++k)
+        {
+            double aperiodic_fit = fit.slope * log_freqs[k] + fit.intercept;
+            power_flat[k+1] = safe_power[k+1] / std::pow(10, aperiodic_fit);
         }
 
         return power_flat;
@@ -374,7 +399,7 @@ void IAFEstimator::Process(ProcessingContext &context)
             // Compute power spectrum
             for (size_t k = 0; k < max_analyze_bin; ++k)
             {
-                power[k] = pow(freq_half[k][0], 2) + pow(freq_half[k][1], 2);
+                power[k] = (pow(freq_half[k][0], 2) + pow(freq_half[k][1], 2)) / (n_fft_*fs_);
             }
 
             std::vector<double> power_flat(max_analyze_bin+1);
@@ -384,7 +409,7 @@ void IAFEstimator::Process(ProcessingContext &context)
             power_smooth = savgol_filter(savgol, power);
 
             // Select IAF as maximum of smoothed power spectrum
-            std::pair<int, double> res = get_max_bin(power_smooth,f_min_bin, f_max_bin);
+            std::pair<int, double> res = get_max_bin(power_smooth,f_min_bin, f_max_bin, false);
             if (res.first == -1)
             {
                 LOG(WARNING) << name() << "Packet count " << packet_count_ << ": No valid IAF bin found in the specified range.\n";

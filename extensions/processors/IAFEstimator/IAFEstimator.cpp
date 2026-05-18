@@ -86,11 +86,12 @@ namespace
     //     return max_bin;
     // }
 
-    std::pair<int, double> get_max_bin(const std::vector<double> &power, int f_min_bin, int f_max_bin, bool parabolic = true)
+    std::pair<double, double> fit_peak(const std::vector<double> &power, int f_min_bin, int f_max_bin, double resolution, bool parabolic = true)
     {
         int max_bin = -1;
         double max_value = -1.0;
         double delta = 0.0;
+        double iaf = -1.0;
 
         for (size_t k = f_min_bin; k <= f_max_bin; ++k)
         {
@@ -98,9 +99,10 @@ namespace
             {
                 max_value = power[k];
                 max_bin = static_cast<int>(k);
+                iaf = max_bin * resolution;
             }
         }
-
+        
         if (parabolic && max_bin > f_min_bin && max_bin < f_max_bin)
         {
             double y1 = power[max_bin - 1];
@@ -109,10 +111,23 @@ namespace
             double denom = (y1 - 2 * y2 + y3);
             if (denom != 0){
                 delta = 0.5 * (y1 - y3) / denom;
+                iaf += delta * resolution;
             }
         }
 
-        return std::make_pair(max_bin, delta);
+        double half_max = max_value / 2.0;
+        int left_half_bin = max_bin;
+        while (left_half_bin > f_min_bin && power[left_half_bin] > half_max)
+        {            --left_half_bin;
+        }
+        int right_half_bin = max_bin;
+        while (right_half_bin < f_max_bin && power[right_half_bin] > half_max)
+        {            ++right_half_bin;
+        }
+        double fwhm = (right_half_bin - left_half_bin) * resolution;
+        double std_gauss = fwhm / (2 * std::sqrt(2 * std::log(2)));
+
+        return std::make_pair(iaf, std_gauss);
     }
 
     struct LinearFitResult
@@ -144,50 +159,52 @@ namespace
 
     std::vector<double> remove_aperiodic(const std::vector<double> &power, const std::vector<double> &freqs)
     {     
-
+        size_t N = power.size();
         // Safe power (no zeros)
-        std::vector<double> safe_power(power.size());
-        for (size_t k = 0; k < power.size(); ++k)
+        std::vector<double> safe_power(N);
+        for (size_t k = 0; k < N; ++k)
         {
             safe_power[k] = std::max(power[k],1e-12);
         }
 
         // Ignore DC-bin
-        std::vector<double> log_freqs(freqs.size()-1);
-        std::vector<double> log_power(power.size()-1);
-        for (size_t k = 0; k < power.size()-1; ++k)
+        std::vector<double> log_freqs(N - 1);
+        std::vector<double> log_power(N - 1);
+        for (size_t k = 1; k < N; ++k)
         {
-            log_freqs[k] = std::log10(freqs[k+1]);
-            log_power[k] = std::log10(safe_power[k+1]);
+            log_freqs[k - 1] = std::log10(freqs[k]);
+            log_power[k - 1] = std::log10(safe_power[k]);
         }
 
         LinearFitResult fit = linear_regression(log_freqs, log_power);
 
         // LOG(INFO) << "Aperiodic fit: slope = " << fit.slope << ", intercept = " << fit.intercept << ", R^2 = " << fit.r_squared << "\n";
 
-        std::vector<double> power_flat(power.size()-1);
-        power_flat[0] = 1; // DC component is not used for IAF estimation, set to 1 to avoid being maximum 
-        for (size_t k = 0; k < power.size()-1; ++k)
+        std::vector<double> power_flat(N);
+        power_flat[0] = 1.0;
+        for (size_t k = 1; k < N; ++k)
         {
-            double aperiodic_fit = fit.slope * log_freqs[k] + fit.intercept;
-            power_flat[k+1] = safe_power[k+1] / std::pow(10, aperiodic_fit);
+            double aperiodic_fit = fit.slope * log_freqs[k - 1] + fit.intercept;
+            power_flat[k] = safe_power[k] / std::pow(10, aperiodic_fit);
         }
         std::vector<double> log_freqs_select;
         std::vector<double> log_power_select;
 
-        for (size_t k = 0; k < power.size()-1; ++k)
+        log_freqs_select.reserve(N - 1);
+        log_power_select.reserve(N - 1);
+        for (size_t k = 1; k < N; ++k)
         {
             if (power_flat[k] <= 1.0) // Limit to perfect fit (=1) or below to avoid bias of oscillatory peaks above the fit
             {
-                log_freqs_select.push_back(std::log10(freqs[k]));
-                log_power_select.push_back(std::log10(power_flat[k]));
+                log_freqs_select.push_back(log_freqs[k - 1]);
+                log_power_select.push_back(std::log10(std::max(power_flat[k], 1e-12)));
             }
         }
         fit = linear_regression(log_freqs_select, log_power_select);
-        for (size_t k = 0; k < power.size()-1; ++k)
+        for (size_t k = 1; k < N; ++k)
         {
-            double aperiodic_fit = fit.slope * log_freqs[k] + fit.intercept;
-            power_flat[k+1] = safe_power[k+1] / std::pow(10, aperiodic_fit);
+            double aperiodic_fit = fit.slope * log_freqs[k - 1] + fit.intercept;
+            power_flat[k] = safe_power[k] / std::pow(10, aperiodic_fit);
         }
 
         return power_flat;
@@ -311,6 +328,7 @@ void IAFEstimator::Process(ProcessingContext &context)
     ScalarType<float>::Data *data_out;
 
     float freq_resolution = static_cast<float>(fs_) / n_fft_;
+    LOG(INFO) << name() << " Frequency resolution: " << freq_resolution << " Hz\n";
     int savgol_window_length = static_cast<int>(2.5 / freq_resolution); // 2.5 Hz window for smoothing
     if (savgol_window_length % 2 == 0)
     {      
@@ -327,21 +345,21 @@ void IAFEstimator::Process(ProcessingContext &context)
     gram_sg::SavitzkyGolayFilterConfig sg_conf(m, 0, savgol_polyorder, 0);
     gram_sg::SavitzkyGolayFilter savgol(sg_conf);
 
-    int f_min_bin = f_min_() / freq_resolution;
-    int f_max_bin = f_max_() / freq_resolution;
+    int f_min_bin = std::floor(f_min_() / freq_resolution);
+    int f_max_bin = std::ceil(f_max_() / freq_resolution);
     LOG(INFO) << name() << " IAF search range: " << f_min_() << " - " << f_max_() << " Hz (bins " << f_min_bin << " - " << f_max_bin << ")\n";
 
-    int max_analyze_bin = 30 / freq_resolution; // Analyze up to 30 Hz to avoid high-frequency noise
+    int max_analyze_bin = 30 / freq_resolution + 1; // Analyze up to 30 Hz to avoid high-frequency noise
 
     // FFTW output spectrum
     float *signal_in = fftwf_alloc_real(n_fft_);
     fftwf_complex *freq_half = fftwf_alloc_complex(n_fft_ / 2 + 1);
 
     // FFT frequency bins
-    std::vector<double> freqs(max_analyze_bin+1);
-    for (size_t k = 0; k <= max_analyze_bin; ++k)
+    std::vector<double> freqs(max_analyze_bin);
+    for (size_t k = 0; k < max_analyze_bin; ++k)
     {
-        freqs[k] = static_cast<double>(k) * fs_ / n_fft_;
+        freqs[k] = static_cast<double>(k) * freq_resolution;
     }
 
     fftwf_plan p;
@@ -375,7 +393,7 @@ void IAFEstimator::Process(ProcessingContext &context)
         data_out = data_out_port_->slot(0)->ClaimData(false);
 
         sample_window.push_back(data_in->data_sample(0, 0));
-        data_out->CloneTimestamps(*data_in);
+        data_out->set_hardware_timestamp(data_in->hardware_timestamp());
 
         data_in_port_->slot(0)->ReleaseData();
 
@@ -395,37 +413,41 @@ void IAFEstimator::Process(ProcessingContext &context)
 
             fftwf_execute(p);
 
-            std::vector<double> power(max_analyze_bin+1);
+            std::vector<double> power(max_analyze_bin);
             // Compute power spectrum
             for (size_t k = 0; k < max_analyze_bin; ++k)
             {
-                power[k] = (pow(freq_half[k][0], 2) + pow(freq_half[k][1], 2)) / (n_fft_*fs_);
+                power[k] = (pow(freq_half[k][0], 2) + pow(freq_half[k][1], 2));// / (n_fft_*fs_);
             }
 
-            std::vector<double> power_flat(max_analyze_bin+1);
+            std::vector<double> power_flat(max_analyze_bin);
             power_flat = remove_aperiodic(power, freqs);
 
-            std::vector<double> power_smooth(max_analyze_bin+1);
+            std::vector<double> power_smooth(max_analyze_bin);
             power_smooth = savgol_filter(savgol, power);
 
             // Select IAF as maximum of smoothed power spectrum
-            std::pair<int, double> res = get_max_bin(power_smooth,f_min_bin, f_max_bin, false);
-            if (res.first == -1)
+            std::pair<double, double> res = fit_peak(power_smooth,f_min_bin, f_max_bin, freq_resolution, false);
+            double iaf = res.first;
+            double std_gauss = res.second;
+            if (iaf == -1.0)
             {
                 LOG(WARNING) << name() << "Packet count " << packet_count_ << ": No valid IAF bin found in the specified range.\n";
             }
             else {
-                float iaf = static_cast<float>(res.first) * freq_resolution + res.second * freq_resolution;
                 current_iaf_ = iaf;
             }
-            // LOG(INFO) << name() << " Estimated IAF: " << max_bin * freq_resolution << " Hz (max bin: " << max_bin << ")\n";
+            if (packet_count_ % int(fs_) == 0)
+            {
+                LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated IAF = " << current_iaf_ << " Hz (std: " << std_gauss << ")\n";
+            }
 
             iaf_state_->set(current_iaf_);
             // if (std::abs(iaf - current_iaf_) > 1e-3f)
             // {
-                // printf("\n Packet %d: Estimated IAF = %.2f Hz (max bin: %d)", packet_count_, current_iaf_, res.first);
-                // } else {
-                //   printf("\n IAF Estimation did not change: %.2fHz", current_iaf_);
+            //     printf("\n Packet %d: Estimated IAF = %.2f Hz (max bin: %d)", packet_count_, current_iaf_, res.first);
+            //     } else {
+            //       printf("\n IAF Estimation did not change: %.2fHz", current_iaf_);
             // }
             TimePoint end_time = Clock::now();
             // double processing_time_us = std::chrono::duration<double, std::micro>(end_time - start_time).count();
@@ -433,6 +455,7 @@ void IAFEstimator::Process(ProcessingContext &context)
             
         }
         data_out->set_data(current_iaf_);
+        data_out->set_source_timestamp(Clock::now());
         data_out_port_->slot(0)->PublishData();
 
         packet_count_++;

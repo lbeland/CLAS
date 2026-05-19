@@ -1,3 +1,4 @@
+import os
 import struct
 import re
 
@@ -80,11 +81,45 @@ def infer_record_layout(header_data):
 
     return layout, record_size
 
-def get_signal_data(path, channel=0):
+
+def _find_header_end(blob: bytes) -> int:
+    # Binary output files start with a YAML header terminated by a document end marker.
+    # Support both LF and CRLF line endings.
+    for marker in (b"...\n", b"...\r\n"):
+        idx = blob.find(marker)
+        if idx != -1:
+            return idx + len(marker)
+    raise ValueError("Could not locate YAML header terminator ('...') in file")
+
+
+def _extract_field(payload: bytes, layout: list, record_size: int, n_records: int, name: str):
+    meta = next((field for field in layout if field["name"] == name), None)
+    if meta is None:
+        return None
+
+    dtype = TYPE_NUMPY[meta["dtype"]]
+    offset = meta["offset"]
+    n_items = meta["n_items"]
+
+    flat = np.ndarray(
+        shape=(n_records, n_items),
+        dtype=dtype,
+        buffer=payload,
+        offset=offset,
+        strides=(record_size, np.dtype(dtype).itemsize),
+    )
+
+    # Reshape back to declared dimensions
+    dims = meta["dims"]
+    if dims == [1]:
+        return flat[:, 0]
+    return flat.reshape((n_records, *dims))
+
+def get_signal_data(path, channel=0, timestamps=False):
     with open(path, "rb") as f:
         blob = f.read()
 
-    header_end = blob.index(b"...\n") + 4
+    header_end = _find_header_end(blob)
     header = yaml.safe_load(blob[:header_end])
     payload = blob[header_end:]
 
@@ -93,6 +128,10 @@ def get_signal_data(path, channel=0):
     layout, record_size = infer_record_layout(header.get("data"))
 
     n_records = len(payload) // record_size
+
+    if n_records == 0:
+        return None, None
+    
     payload = payload[: n_records * record_size]
 
     signal_meta = next((field for field in layout if field["name"] == "signal" or field["name"] == "scalar_data"), None)
@@ -102,10 +141,6 @@ def get_signal_data(path, channel=0):
     signal_dtype = TYPE_NUMPY[signal_meta["dtype"]]
     signal_offset = signal_meta["offset"]
     signal_n_items = signal_meta["n_items"]
-
-    if n_records == 0:
-        return None
-
     signal_flat = np.ndarray(
         shape=(n_records, signal_n_items),
         dtype=signal_dtype,
@@ -115,5 +150,18 @@ def get_signal_data(path, channel=0):
     )
 
     samples = signal_flat.reshape((n_records, *signal_meta["dims"]))
-    print("samples shape:", samples.shape, "dtype:", samples.dtype)
-    return samples[:,channel]
+    if len(signal_meta["dims"]) == 2:
+        samples = samples[:, 0, :]
+    print(os.path.basename(path), "samples shape:", samples.shape, "dtype:", samples.dtype)
+
+    if timestamps:
+        source_ts = _extract_field(payload, layout, record_size, n_records, "source_ts")
+        # hardware_ts = _extract_field(payload, layout, record_size, n_records, "hardware_ts")
+        # Keep the return value extensible: callers can pull what they need.
+        # ts = {
+        #     "source_ts": source_ts,
+        #     "hardware_ts": hardware_ts,
+        # }
+        return samples[:, channel], source_ts
+    else:
+        return samples[:, channel], None

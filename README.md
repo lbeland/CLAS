@@ -9,6 +9,9 @@ cd build
 cmake .. -DCMAKE_BUILD_TYPE=Debug
 # or in my case i needed to use this:
 cmake .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
+
+# or for release:
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
 make
 
 # Add the installation path in your $PATH if not already the case
@@ -46,10 +49,16 @@ sudo make install
 ```
 
 
-## Start Benchmark
+## Start Simulation
 ```bash
-python3 c_benchmark.py --overwrite
+python3 clas.py
 ```
 
 ## Generate Flowchart of graph
 python3 plot_processor_flowchart.py resources/graphs/SimulateCLAS.yaml
+
+## Disable power save of audio card
+Create config file
+```bash
+echo "options snd_hda_intel power_save=0" | sudo tee /etc/modprobe.d/audio_disable_powersave.conf
+```

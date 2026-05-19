@@ -108,18 +108,6 @@ void SourceClient::Prepare(GlobalContext &context)
         return;
     }
 
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(PORT);
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-    {
-        perror("bind");
-        close(sock);
-        return;
-    }
-
     // Set a receive timeout so recvfrom() does not block forever
     timeval tv{};
     tv.tv_sec = 1; // 1 second timeout;
@@ -130,7 +118,7 @@ void SourceClient::Prepare(GlobalContext &context)
         return;
     }
 
-    std::cout << "Listening on UDP port " << PORT << std::endl;
+    LOG(INFO) << name() << "Listening on UDP port " << PORT << std::endl;
 }
 
 void SourceClient::Process(ProcessingContext &context)
@@ -146,6 +134,20 @@ void SourceClient::Process(ProcessingContext &context)
     int packet_count = 0;
     clock::time_point first_timestamp;
     clock::time_point timestamp;
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(PORT);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+    {
+        perror("bind");
+        close(sock);
+        return;
+    }
+
+    TimePoint start_time = Clock::now();
 
     while (!context.terminated())
     {
@@ -175,7 +177,6 @@ void SourceClient::Process(ProcessingContext &context)
         }
 
         timestamp = clock::now();
-
         Packet pkt{};
         if (!parse_packet(buffer, received, pkt))
         {
@@ -192,18 +193,19 @@ void SourceClient::Process(ProcessingContext &context)
             first_sample_counter = pkt.sample_counter;
             sample_counter = pkt.sample_counter;
             first_timestamp = timestamp;
-            LOG(INFO) << "\n First packet received. Sample counter: " << sample_counter;
+            LOG(INFO) << name() << "\n First packet received. Sample counter: " << sample_counter;
         }
         else
         {
             if ((pkt.sample_counter > sample_counter + 1) || (sample_counter == std::numeric_limits<uint32_t>::max() && pkt.sample_counter != 0))
             {
-                LOG(WARNING) << "\n Missed packet(s). Last sample counter: " << sample_counter << ", current: " << pkt.sample_counter;
+                LOG(WARNING) << name() << "\n Missed packet(s). Last sample counter: " << sample_counter << ", current: " << pkt.sample_counter;
                 return;
             }
             else
             {
                 sample_counter = pkt.sample_counter;
+                // LOG(INFO) << name() << "\n Received packet " << packet_count + 1 << " with sample counter " << sample_counter;
             }
         }
         // if (packet_count % 100 == 0) {
@@ -223,8 +225,8 @@ void SourceClient::Process(ProcessingContext &context)
             data_out->set_data_sample(0, i, sample);
         }
 
-        const auto source_timestamp_us = std::chrono::time_point_cast<std::chrono::microseconds>(timestamp);
-        data_out->set_source_timestamp(source_timestamp_us); // Set source timestamp with microsecond precision
+        // TimePoint now = start_time + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(static_cast<double>(packet_count) / fs_()));
+        data_out->set_source_timestamp(timestamp); // Set source timestamp with microsecond precision
 
         // Calculate hardware timestamp based on sample counter and fs
         // std::chrono::time_point hardware_timestamp = first_timestamp + std::chrono::duration<double>((sample_counter - first_sample_counter)/fs_());
@@ -234,15 +236,18 @@ void SourceClient::Process(ProcessingContext &context)
         // use sample counter as hardware timestamp
         data_out->set_hardware_timestamp(sample_counter);
 
-        // LOG(INFO) << name() << ". Sent message " << i + 1 << " with sample " << sample << ".";
+        // LOG(INFO) << name() << ". Sent message " << packet_count + 1 << " with sample " << pkt.eeg[0] << ".";
 
         // Publish data
         data_out_port_->slot(0)->PublishData();
 
-        send_times.push_back(source_timestamp_us);
+        send_times.push_back(timestamp);
 
         packet_count++;
     }
+
+    close(sock);
+    LOG(INFO) << name() << " Socket closed. Shutdown complete." << std::endl;
 }
 
 void SourceClient::Postprocess(ProcessingContext &context)
@@ -316,8 +321,6 @@ void SourceClient::Postprocess(ProcessingContext &context)
 
     std::cout << statistic_print.str();
 
-    close(sock);
-    std::cout << "\n Socket closed. Shutdown complete." << std::endl;
 }
 
 REGISTERPROCESSOR(SourceClient);

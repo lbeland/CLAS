@@ -48,6 +48,8 @@ class IAFEstimator : public IProcessor {
     
     BroadcasterState<float>* iaf_state_ = nullptr;
     float current_iaf_ = std::numeric_limits<float>::quiet_NaN();
+    double ema_alpha_ = 1.0;
+    double ema_;
 
     const uint32_t MAX_NCHANNELS=384;
 
@@ -63,4 +65,5 @@ class IAFEstimator : public IProcessor {
     options::Value<float, false> f_min_{5.0f};
     options::Value<float, false> f_max_{18.0f};
     options::Value<unsigned int, false> calc_interval_{100};
+    options::Value<double, false> ema_window_seconds_{5.0};
 };

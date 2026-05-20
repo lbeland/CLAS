@@ -86,12 +86,23 @@ namespace
     //     return max_bin;
     // }
 
-    std::pair<double, double> fit_peak(const std::vector<double> &power, int f_min_bin, int f_max_bin, double resolution, bool parabolic = true)
+    std::vector<double> gaussian(const std::vector<double> &freqs, double amplitude, double center, double width)
+    {
+        std::vector<double> gauss(freqs.size());
+        for (size_t k = 0; k < freqs.size(); ++k)
+        {
+            gauss[k] = amplitude * std::exp(-0.5 * pow((freqs[k] - center) / width, 2));
+        }
+        return gauss;
+    }
+
+    std::pair<double, double> fit_peak(const std::vector<double> &power, const std::vector<double> &freqs, int f_min_bin, int f_max_bin, double resolution, bool parabolic = true)
     {
         int max_bin = -1;
         double max_value = -1.0;
         double delta = 0.0;
         double iaf = -1.0;
+        size_t n = f_max_bin - f_min_bin + 1;
 
         for (size_t k = f_min_bin; k <= f_max_bin; ++k)
         {
@@ -126,6 +137,38 @@ namespace
         }
         double fwhm = (right_half_bin - left_half_bin) * resolution;
         double std_gauss = fwhm / (2 * std::sqrt(2 * std::log(2)));
+
+        // Null hypothesis: flat spectrum (power=1 after aperiodic removal)
+        double ss_h0 = 0.0;
+        for (size_t k = f_min_bin; k <= f_max_bin; ++k)
+        {
+            ss_h0 += pow(power[k] - 1.0, 2);
+        }
+    
+        // Alternative hypothesis: Gaussian peak on top of flat spectrum
+        std::vector<double> gauss = gaussian(freqs, max_value - 1.0, iaf, std_gauss);
+
+        // for (int k = max_bin - 5; k <= max_bin + 5; ++k){
+        //     LOG(INFO) << "power_smooth[" << k << "] = " << power[k] << ", gauss[" << k << "] = " << gauss[k];
+        // }
+
+
+        double ss_h1 = 0.0;
+        for (size_t k = f_min_bin; k <= f_max_bin; ++k)
+        {
+            ss_h1 += pow(power[k] -1.0 - gauss[k], 2);
+        }
+        double bic_h0 = n * std::log(ss_h0/n);
+        double bic_h1 = n * std::log(std::max(ss_h1,1.0e-30)/n) + 3 * std::log(n);
+
+        if (bic_h0 - bic_h1 < 0)
+        {
+            // LOG(WARNING) << "No valid IAF bin found. Gauss parameters:" << iaf << ", " <<std_gauss << ", " << right_half_bin << "," << left_half_bin << ", " << max_value << ", BIC H0: " << bic_h0 << ", BIC H1: " << bic_h1 << "\n";
+            iaf = -1.0; // No significant peak
+        }
+        else {
+            // LOG(INFO) << "IAF bin found: " << iaf << " Hz, std: " << std_gauss << " Hz, BIC H0: " << bic_h0 << ", BIC H1: " << bic_h1 << "\n";
+        }
 
         return std::make_pair(iaf, std_gauss);
     }
@@ -197,7 +240,7 @@ namespace
             if (power_flat[k] <= 1.0) // Limit to perfect fit (=1) or below to avoid bias of oscillatory peaks above the fit
             {
                 log_freqs_select.push_back(log_freqs[k - 1]);
-                log_power_select.push_back(std::log10(std::max(power_flat[k], 1e-12)));
+                log_power_select.push_back(log_power[k - 1]);
             }
         }
         fit = linear_regression(log_freqs_select, log_power_select);
@@ -276,6 +319,7 @@ IAFEstimator::IAFEstimator() : IProcessor(PRIORITY_HIGH)
     add_option("f_min", f_min_, "Left bound of alpha search range.");
     add_option("f_max", f_max_, "Right bound of alpha search range.");
     add_option("calc_interval", calc_interval_, "Number of packets between IAF calculations.");
+    add_option("ema_window_seconds", ema_window_seconds_, "Window size in seconds for RMS calculation used in IAF estimation.");
 
     iaf_state_ = create_broadcaster_state<float>(
         "iaf", current_iaf_, Permission::NONE,
@@ -316,6 +360,13 @@ void IAFEstimator::Prepare(GlobalContext &context)
     LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_ << "\n";
 
     iaf_state_->set(current_iaf_);
+
+    const double tau_seconds = ema_window_seconds_();
+    ema_alpha_ = 1.0 - std::exp(-1.0 / (p.sample_rate * tau_seconds));
+    ema_= 10.0; // Initialize for 10Hz IAF
+  
+    LOG(INFO) << name() << " RMS selector EMA tau: " << ema_window_seconds_()
+              << " s, alpha: " << ema_alpha_ << ".";
 
     // Load FFTW wisdom if available to speed up plan creation
     fftwf_import_wisdom_from_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
@@ -417,17 +468,17 @@ void IAFEstimator::Process(ProcessingContext &context)
             // Compute power spectrum
             for (size_t k = 0; k < max_analyze_bin; ++k)
             {
-                power[k] = (pow(freq_half[k][0], 2) + pow(freq_half[k][1], 2));// / (n_fft_*fs_);
+                power[k] = (pow(freq_half[k][0], 2) + pow(freq_half[k][1], 2)) / (n_fft_*fs_);
             }
 
             std::vector<double> power_flat(max_analyze_bin);
             power_flat = remove_aperiodic(power, freqs);
 
             std::vector<double> power_smooth(max_analyze_bin);
-            power_smooth = savgol_filter(savgol, power);
+            power_smooth = savgol_filter(savgol, power_flat);
 
             // Select IAF as maximum of smoothed power spectrum
-            std::pair<double, double> res = fit_peak(power_smooth,f_min_bin, f_max_bin, freq_resolution, false);
+            std::pair<double, double> res = fit_peak(power_smooth, freqs, f_min_bin, f_max_bin, freq_resolution, true);
             double iaf = res.first;
             double std_gauss = res.second;
             if (iaf == -1.0)

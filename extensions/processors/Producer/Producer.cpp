@@ -29,8 +29,6 @@
 #include <cctype>
 #include <array>
 
-const double PI = std::acos(-1.0);
-
 namespace
 {
 
@@ -44,7 +42,7 @@ namespace
 
     double WrapPhase(double phase)
     {
-        return std::remainder(phase, 2.0 * PI);
+        return std::remainder(phase, 2.0 * M_PI);
     }
 
     SignalState ComputeSignalState(double carrier_phase,
@@ -143,8 +141,10 @@ void Producer::Process(ProcessingContext &context)
     double modulation_phase = 0.0;
     int packet_count = 0;
 
-    const double carrier_step = 2.0 * PI * carrier_frequency_() / fs_();
-    const double modulation_step = 2.0 * PI * modulation_frequency_() / fs_();
+    const double carrier_step = 2.0 * M_PI * carrier_frequency_() / fs_();
+    const double modulation_step = 2.0 * M_PI * modulation_frequency_() / fs_();
+
+    TimePoint start_time = Clock::now();
 
     while (!context.terminated())
     {
@@ -184,10 +184,11 @@ void Producer::Process(ProcessingContext &context)
             FillSlot(data_outs[slot_index], nchannels_(), values[slot_index]);
         }
 
-        const auto source_timestamp_us = std::chrono::time_point_cast<std::chrono::microseconds>(Clock::now());
+        // Add packet count to start time for source timestamp
+        TimePoint now = Clock::now(); // start_time + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(static_cast<double>(packet_count) / fs_()));
         for (auto *data_out : data_outs)
         {
-            data_out->set_source_timestamp(source_timestamp_us);
+            data_out->set_source_timestamp(now);
             data_out->set_hardware_timestamp(packet_count);
         }
 
@@ -196,8 +197,9 @@ void Producer::Process(ProcessingContext &context)
             data_out_port_->slot(slot_index)->PublishData();
         }
 
-        send_times.push_back(source_timestamp_us);
+        send_times.push_back(now);
         ++packet_count;
+        // custom_sleep_for(1000);
 
         carrier_phase = WrapPhase(carrier_phase + carrier_step);
         modulation_phase = WrapPhase(modulation_phase + modulation_step);

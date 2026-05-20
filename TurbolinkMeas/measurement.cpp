@@ -27,10 +27,9 @@ struct Frame {
     std::array<float, NUM_EEG> eeg;
 };
 
-uint32_t read_u32_be(const std::uint8_t* p) {
-    uint32_t v;
-    std::memcpy(&v, p, sizeof(v));
-    return ntohl(v);
+uint32_t read_u32_le(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
 float bits_to_float(uint32_t bits) {
@@ -52,9 +51,9 @@ bool parse_frame(const std::uint8_t* buf, std::size_t len, Frame& out) {
         return false;
     }
 
-    out.token = read_u32_be(buf + 0);
-    out.sample_counter = read_u32_be(buf + 4);
-    out.trigger_bits = read_u32_be(buf + 8);
+    out.token = read_u32_le(buf + 0);
+    out.sample_counter = read_u32_le(buf + 4);
+    out.trigger_bits = read_u32_le(buf + 8);
 
     for (std::size_t i = 0; i < NUM_AUX; ++i) {
         out.aux[i] = read_f32_le(buf + 12 + 4 * i);
@@ -97,15 +96,16 @@ int main() {
 
     std::array<std::uint8_t, 2048> buffer{};
 
-    const int freq = 1000; // Hz, has to be adapted to the actual frequency of the incoming packets
+    const int freq = 5000; // Hz, has to be adapted to the actual frequency of the incoming packets
 
-    static const int n_packets = 5 * freq; // 20 seconds worth of packets 
+    static const int n_packets = 5 * freq; // 5 seconds worth of packets 
     std::array<std::chrono::_V2::steady_clock::time_point, n_packets> receive_times;
     int count = 0;
     std::chrono::_V2::steady_clock::time_point timestamp;
     ssize_t len = 0;
     sockaddr_in sender{};
     socklen_t sender_len = sizeof(sender);
+    int last_counter;
 
     while (count<n_packets) {
 
@@ -117,16 +117,29 @@ int main() {
             break;
         }
         receive_times[count] = timestamp;
-        count++;
 
-        // Frame frame{};
-        // if (!parse_frame(buffer.data(), static_cast<std::size_t>(len), frame)) {
-        //     std::cerr << "Unexpected packet size: " << len << " bytes\n";
-        //     continue;
+
+        Frame frame{};
+        if (!parse_frame(buffer.data(), static_cast<std::size_t>(len), frame)) {
+            std::cerr << "Unexpected packet size: " << len << " bytes\n";
+            continue;
+        }
+        // for (std::size_t i = 0; i < len; ++i) {
+        //     if (i % 16 == 0) std::cout << '\n';
+        //     std::cout << std::hex << std::setw(2) << std::setfill('0')
+        //               << static_cast<unsigned>(buffer.data()[i]) << ' ';
         // }
+        // std::cout << std::dec << '\n';
+        // std::cout << "Sample counter: " << frame.sample_counter << "\n";
+        if (count == 0){
+            last_counter = frame.sample_counter-1;
+        }
 
-        // std::cout << "Sample Counter: " << frame.sample_counter
-        //           << "\n";
+        if (frame.sample_counter != static_cast<uint32_t>(last_counter + 1)) {
+            std::cerr << "Warning: Missed packet(s). Last counter: " << last_counter << ", current: " << frame.sample_counter << "\n";
+        }
+        last_counter = frame.sample_counter;
+        count++;
     }
 
     std::cout << "\nReceived " << count << " packets.\n";

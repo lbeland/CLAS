@@ -150,12 +150,11 @@ PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH)
     add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
     // add_option("n_fft", n_fft_, "FFT size");
     add_option("calibrate", calibrate_, "Whether to apply calibration gain");
-    add_option("iaf_default", iaf_default_, "Default individual alpha frequency before shared state updates.");
     add_option("iaf_read_interval", iaf_read_interval_, "Packets between shared IAF polling steps.");
     add_option("filter", filter_def_, "Filter definition.", true);
 
     iaf_state_ = create_follower_state<float>(
-        "iaf", iaf_default_(), Permission::NONE,
+        "iaf", std::numeric_limits<float>::quiet_NaN(), Permission::NONE,
         "Individual alpha frequency shared by an upstream processor.");
 }
 
@@ -197,8 +196,7 @@ void PhaseEstimator::calibrate_gain(const int N)
         // Calculate calibration gain
         const int L = n_fft_;
         const int n = N - 1;
-        const double PI = std::acos(-1.0);
-        const double omega0 = 2.0 * PI * f0_ / fs_;
+        const double omega0 = 2.0 * M_PI * f0_ / fs_;
 
         // Lambda for Dirichlet kernel: D_N(alpha) = sin(N*alpha/2) / sin(alpha/2) * exp(i*alpha*(N-1)/2)
         auto dirichlet_N = [N](double alpha) -> std::complex<double>
@@ -223,7 +221,7 @@ void PhaseEstimator::calibrate_gain(const int N)
 
         for (int k = 0; k < L; ++k)
         {
-            double omega_k = 2.0 * PI * k / L;
+            double omega_k = 2.0 * M_PI * k / L;
 
             // Compute Dirichlet kernels for +/- frequency components
             std::complex<double> D_plus = dirichlet_N(omega0 - omega_k);
@@ -424,7 +422,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
 
         if (packet_count_ % iaf_read_interval_() == 0)
         {
-            const float new_f0 = iaf_state_->get();
+            float new_f0 = iaf_state_->get();
             if (std::isnan(new_f0))
             {
                 valid_iaf_ = false;
@@ -432,21 +430,22 @@ void PhaseEstimator::Process(ProcessingContext &context)
             else
             {
                 valid_iaf_ = true;
+                new_f0 = round(new_f0, 0.1f); // Round to nearest 0.1 Hz to avoid excessive recalibration due to small IAF fluctuations
             
                 // printf("\n Packet %d: Read shared IAF value: %.2f Hz", packet_count_, new_f0);
-                if (std::abs(new_f0 - f0_) > 0.025f)
+                if (std::abs(new_f0 - f0_) >= 0.1f)
                 {                              
-                    // Only update if IAF has changed by more than 0.0255 Hz to avoid unnecessary recalibration
-                    f0_ = round(new_f0, 0.05f); // Round to nearest 0.05 Hz, because bandpass filters are predesigned for 0.05 Hz steps
+                    // Only update if IAF has changed by more than 0.1 Hz to avoid unnecessary recalibration
+                    f0_ = new_f0;
                     int old_n_fft = n_fft_; // Store old FFT size to check if we need to reallocate FFTW arrays
                     window_size_ = static_cast<int>(2.0 * fs_ / f0_);
                     if (window_size_ > sample_window.capacity())
                     {
-                        LOG(WARNING) << name() << "New window size " << window_size_ << " exceeds circular buffer capacity " << sample_window.capacity() << ". Resizing circular buffer to new window size.\n";
+                        LOG(WARNING) << name() << " New window size " << window_size_ << " exceeds circular buffer capacity " << sample_window.capacity() << ". Resizing circular buffer to new window size.\n";
                         sample_window.rset_capacity(window_size_);
                     }
                     n_fft_ = window_size_; //good_size_real(window_size_);
-                    LOG(INFO) << name() << "Packet " << packet_count_ << ": Update IAF to " << f0_ << " Hz, window size: " << window_size_ << ", FFT size: " << n_fft_ << "\n";
+                    LOG(INFO) << name() << " Packet " << packet_count_ << ": Update IAF to " << f0_ << " Hz, window size: " << window_size_ << ", FFT size: " << n_fft_ << "\n";
 
                     load_filter_coeffs(context, f0_);
                     calibrate_gain(window_size_);
@@ -473,13 +472,13 @@ void PhaseEstimator::Process(ProcessingContext &context)
                             if (p == nullptr)
                             {
                                 LOG(WARNING) << name() << "No wisdom available for FFT planning, using patient mode.";
-                                p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_PATIENT);
+                                p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_ESTIMATE);
                             }
                             p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_WISDOM_ONLY);
                             if (p_inv == nullptr)
                             {
                                 LOG(WARNING) << name() << "No wisdom available for IFFT planning, using patient mode.";
-                                p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_PATIENT);
+                                p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_ESTIMATE);
                             }
                         }
                     }
@@ -552,7 +551,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
 
             // Get phase and real part of the last sample
             phase = std::atan2(out[window_size_-1][1], out[window_size_-1][0]);
-            // LOG(INFO) << "estimated phase: " << phase << " radians, " << (phase * 180.0f / std::acos(-1.0)) << " degrees\n";
+            // LOG(INFO) << "estimated phase: " << phase << " radians, " << (phase * 180.0f / M_PI) << " degrees\n";
             real_part = out[window_size_-1][0];
 
             TimePoint norm_cal_time = Clock::now();

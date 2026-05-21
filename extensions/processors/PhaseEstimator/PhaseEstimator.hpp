@@ -30,7 +30,7 @@ class PhaseEstimator : public IProcessor {
   public:
     PhaseEstimator();
     void calibrate_gain(const int N);
-    void load_filter_coeffs(const StorageContext& context, float iaf);
+    void load_filter_coeffs(const StorageContext& context, double iaf);
 
   void Configure(const GlobalContext &context) override;
   void CreatePorts() override;
@@ -44,16 +44,16 @@ class PhaseEstimator : public IProcessor {
   protected:
     unsigned int packet_count_ = 0;
     double first_timestamp_ = 0.0;
-    float fs_ = 0.0;
-    float f0_ = 10.0; // default IAF value, will be updated from state
+    double fs_ = 0.0;
+    double f0_ = 10.0; // default IAF value, will be updated from state
     size_t n_fft_ = 0;
     size_t window_size_ = 1;
     inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Preprocess
     std::string coeff_file_;  // Path to bandpass filter coefficients file
-    std::vector<std::complex<float>> coeffs_;  // Filter coefficients of bandpass filter
-    std::complex<float> c_gain_;  // Calibration gain for cecHT
+    std::vector<std::complex<double>> coeffs_;  // Filter coefficients of bandpass filter
+    std::complex<double> c_gain_;  // Calibration gain for cecHT
     
-    FollowerState<float>* iaf_state_ = nullptr;
+    FollowerState<double>* iaf_state_ = nullptr;
     bool valid_iaf_ = false;
 
     const uint32_t MAX_NCHANNELS=384;
@@ -61,7 +61,7 @@ class PhaseEstimator : public IProcessor {
   // DATA PORTS
   protected:
     PortIn<MultiChannelType<float>> *data_in_port_;
-    PortOut<MultiChannelType<float>> *data_out_port_;
+    PortOut<MultiChannelType<double>> *data_out_port_;
 
   // OPTIONS
   protected:

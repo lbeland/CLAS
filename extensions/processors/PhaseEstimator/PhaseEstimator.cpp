@@ -64,14 +64,14 @@ namespace
         return bestfac;
     }
 
-    float round(float var, float precision)
+    double round(double var, double precision)
     {
         // 37.66666 * 100 =3766.66
         // 3766.66 + .5 =3767.16    for rounding off value
         // then type cast to int so value is 3767
         // then divided by 100 so the value converted into 37.67
-        float value = (int)(var * (1.0f / precision) + 0.5f);
-        return (float)value * precision;
+        double value = (int)(var * (1.0 / precision) + 0.5);
+        return (double)value * precision;
     }
 
     void fftshift(const fftwf_complex *in, fftwf_complex *out, int L)
@@ -153,8 +153,8 @@ PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH)
     add_option("iaf_read_interval", iaf_read_interval_, "Packets between shared IAF polling steps.");
     add_option("filter", filter_def_, "Filter definition.", true);
 
-    iaf_state_ = create_follower_state<float>(
-        "iaf", std::numeric_limits<float>::quiet_NaN(), Permission::NONE,
+    iaf_state_ = create_follower_state<double>(
+        "iaf", std::numeric_limits<double>::quiet_NaN(), Permission::NONE,
         "Individual alpha frequency shared by an upstream processor.");
 }
 
@@ -170,9 +170,9 @@ void PhaseEstimator::CreatePorts()
         MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)), // Accept only one channel
         PortInPolicy(SlotRange(0, MAX_NCHANNELS)));
 
-    data_out_port_ = create_output_port<MultiChannelType<float>>(
+    data_out_port_ = create_output_port<MultiChannelType<double>>(
         "out",
-        MultiChannelType<float>::Parameters(1, 1, 1), // Placeholder, will be set in CompleteStreamInfo
+        MultiChannelType<double>::Parameters(1, 1, 1), // Placeholder, will be set in CompleteStreamInfo
         PortOutPolicy(SlotRange(0, MAX_NCHANNELS), 200, WaitStrategy::kBlockingStrategy));
 }
 
@@ -272,29 +272,29 @@ void PhaseEstimator::calibrate_gain(const int N)
         if (denom > 1e-12)
         {
             std::complex<double> C_opt = std::conj(Gplus) / denom;
-            c_gain_ = std::complex<float>(static_cast<float>(C_opt.real()),
-                                          static_cast<float>(C_opt.imag()));
+            c_gain_ = std::complex<double>(static_cast<double>(C_opt.real()),
+                                          static_cast<double>(C_opt.imag()));
         }
         else
         {
-            c_gain_ = std::complex<float>(1.0f, 0.0f); // fallback to unity gain
+            c_gain_ = std::complex<double>(1.0, 0.0); // fallback to unity gain
         }
     }
     else
     {
-        c_gain_ = std::complex<float>(1.0f, 0.0f); // no calibration, unity gain
+        c_gain_ = std::complex<double>(1.0, 0.0); // no calibration, unity gain
     }
     LOG(INFO) << "Calibration gain for " << f0_ << " Hz set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i\n";
 }
 
-void PhaseEstimator::load_filter_coeffs(const StorageContext &context, float iaf)
+void PhaseEstimator::load_filter_coeffs(const StorageContext &context, double iaf)
 {
     if (!filter_def_()["file"])
     {
         int N = filter_def_()["N"].as<int>(1);
-        float bandwith = filter_def_()["bandwidth"].as<float>(4.0);
-        float low_cutoff = iaf - bandwith / 2.0;
-        float high_cutoff = iaf + bandwith / 2.0;
+        double bandwith = filter_def_()["bandwidth"].as<double>(4.0);
+        double low_cutoff = iaf - bandwith / 2.0;
+        double high_cutoff = iaf + bandwith / 2.0;
         int window_size = n_fft_; // next fast len for 2 cycles of iaf frequency
         std::string filename;
         filename = std::to_string(N) + "_" + std::format("{:.2f}", low_cutoff) + "_" + std::format("{:.2f}", high_cutoff) + "_" + std::to_string(fs_) + "_" + std::to_string(window_size) + ".txt";
@@ -325,8 +325,8 @@ void PhaseEstimator::load_filter_coeffs(const StorageContext &context, float iaf
         throw std::runtime_error("PhaseEstimator: Expected frequency response in file");
     }
 
-    float real = 0.0f;
-    float imag = 0.0f;
+    double real = 0.0;
+    double imag = 0.0;
     while (stream >> real >> imag)
     {
         coeffs_.emplace_back(real, imag);
@@ -360,13 +360,13 @@ void PhaseEstimator::Prepare(GlobalContext &context)
 void PhaseEstimator::Process(ProcessingContext &context)
 {
     MultiChannelType<float>::Data *data_in;
-    MultiChannelType<float>::Data *data_real_out = nullptr;
-    MultiChannelType<float>::Data *data_phase_out = nullptr;
+    MultiChannelType<double>::Data *data_real_out = nullptr;
+    MultiChannelType<double>::Data *data_phase_out = nullptr;
 
     // FFTW output spectrum
     float sample;
-    float phase;
-    float real_part;
+    double phase;
+    double real_part;
     float *signal_in = fftwf_alloc_real(n_fft_);
     fftwf_complex *freq_half = fftwf_alloc_complex(n_fft_ / 2 + 1);
     fftwf_complex *freq = fftwf_alloc_complex(n_fft_);
@@ -422,7 +422,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
 
         if (packet_count_ % iaf_read_interval_() == 0)
         {
-            float new_f0 = iaf_state_->get();
+            double new_f0 = iaf_state_->get();
             if (std::isnan(new_f0))
             {
                 valid_iaf_ = false;
@@ -430,10 +430,10 @@ void PhaseEstimator::Process(ProcessingContext &context)
             else
             {
                 valid_iaf_ = true;
-                new_f0 = round(new_f0, 0.1f); // Round to nearest 0.1 Hz to avoid excessive recalibration due to small IAF fluctuations
+                new_f0 = round(new_f0, 0.1); // Round to nearest 0.1 Hz to avoid excessive recalibration due to small IAF fluctuations
             
                 // printf("\n Packet %d: Read shared IAF value: %.2f Hz", packet_count_, new_f0);
-                if (std::abs(new_f0 - f0_) >= 0.1f)
+                if (std::abs(new_f0 - f0_) >= 0.1)
                 {                              
                     // Only update if IAF has changed by more than 0.1 Hz to avoid unnecessary recalibration
                     f0_ = new_f0;
@@ -471,13 +471,13 @@ void PhaseEstimator::Process(ProcessingContext &context)
                             p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_WISDOM_ONLY);
                             if (p == nullptr)
                             {
-                                LOG(WARNING) << name() << "No wisdom available for FFT planning, using patient mode.";
+                                LOG(WARNING) << name() << "No wisdom available for FFT planning, using estimate mode.";
                                 p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_ESTIMATE);
                             }
                             p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_WISDOM_ONLY);
                             if (p_inv == nullptr)
                             {
-                                LOG(WARNING) << name() << "No wisdom available for IFFT planning, using patient mode.";
+                                LOG(WARNING) << name() << "No wisdom available for IFFT planning, using estimate mode.";
                                 p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_ESTIMATE);
                             }
                         }
@@ -522,10 +522,10 @@ void PhaseEstimator::Process(ProcessingContext &context)
             // Multiply with Bandpass filter
             for (int k = 0; k < n_fft_; k++)
             {
-                const float in_re = freq[k][0];
-                const float in_im = freq[k][1];
-                const float c_re = coeffs_[k].real();
-                const float c_im = coeffs_[k].imag();
+                const double in_re = freq[k][0];
+                const double in_im = freq[k][1];
+                const double c_re = coeffs_[k].real();
+                const double c_im = coeffs_[k].imag();
                 freq[k][0] = in_re * c_re - in_im * c_im;
                 freq[k][1] = in_re * c_im + in_im * c_re;
             }
@@ -538,12 +538,12 @@ void PhaseEstimator::Process(ProcessingContext &context)
             TimePoint ifft_time = Clock::now();
 
             // Normalize the output of the inverse FFT and multiply with calibration gain
-            float c_gain_re = c_gain_.real();
-            float c_gain_im = c_gain_.imag();
+            double c_gain_re = c_gain_.real();
+            double c_gain_im = c_gain_.imag();
             for (int i = 0; i < n_fft_; i++)
             {
-                const float in_re = out[i][0];
-                const float in_im = out[i][1];
+                const double in_re = out[i][0];
+                const double in_im = out[i][1];
 
                 out[i][0] = (in_re * c_gain_re - in_im * c_gain_im) / n_fft_;
                 out[i][1] = (in_re * c_gain_im + in_im * c_gain_re) / n_fft_;
@@ -555,6 +555,8 @@ void PhaseEstimator::Process(ProcessingContext &context)
             real_part = out[window_size_-1][0];
 
             TimePoint norm_cal_time = Clock::now();
+
+            // data_phase_out->set_source_timestamp(Clock::now());
 
             data_phase_out->set_data_sample(0, 0, phase);
             data_real_out->set_data_sample(0, 0, real_part);
@@ -577,8 +579,8 @@ void PhaseEstimator::Process(ProcessingContext &context)
         else
         {
             // Set to NaN to indicate invalid IAF
-            data_phase_out->set_data_sample(0, 0, std::numeric_limits<float>::quiet_NaN());
-            data_real_out->set_data_sample(0, 0, std::numeric_limits<float>::quiet_NaN()); 
+            data_phase_out->set_data_sample(0, 0, std::numeric_limits<double>::quiet_NaN());
+            data_real_out->set_data_sample(0, 0, std::numeric_limits<double>::quiet_NaN()); 
         }
 
         data_out_port_->slot(0)->PublishData();

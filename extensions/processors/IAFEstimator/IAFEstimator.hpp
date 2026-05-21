@@ -41,13 +41,13 @@ class IAFEstimator : public IProcessor {
   // VARIABLES
   protected:
     unsigned int packet_count_ = 0;
-    float fs_ = 0.0;
+    double fs_ = 0.0;
     size_t n_fft_ = 0;
     size_t window_size_ = 1;
     inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Prepare
     
-    BroadcasterState<float>* iaf_state_ = nullptr;
-    float current_iaf_ = std::numeric_limits<float>::quiet_NaN();
+    BroadcasterState<double>* iaf_state_ = nullptr;
+    double current_iaf_ = std::numeric_limits<double>::quiet_NaN();
     double ema_alpha_ = 1.0;
     double ema_;
 
@@ -56,14 +56,15 @@ class IAFEstimator : public IProcessor {
   // DATA PORTS
   protected:
     PortIn<MultiChannelType<float>> *data_in_port_;
-    PortOut<ScalarType<float>> *data_out_port_;
+    PortOut<ScalarType<double>> *data_out_port_;
 
   // OPTIONS
   protected:
     options::Value<int, false> n_messages_{-1};
-    options::Value<float, false> window_size_sec_{5};
-    options::Value<float, false> f_min_{5.0f};
-    options::Value<float, false> f_max_{18.0f};
+    options::Value<double, false> window_size_sec_{5};
+    options::Value<double, false> f_min_{5.0};
+    options::Value<double, false> f_max_{18.0};
     options::Value<unsigned int, false> calc_interval_{100};
     options::Value<double, false> ema_window_seconds_{5.0};
 };
+    

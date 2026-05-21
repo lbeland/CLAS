@@ -58,16 +58,28 @@ void Consumer::Prepare(GlobalContext &context)
             LOG(WARNING) << name() << ": Failed to cast to MultiChannelType<float>";
         }
     }
+    else if (info.datatype() == "MultiChannelType<double>")
+    {
+        try
+        {
+            const auto &p = info.parameters<MultiChannelType<double>::Parameters>();
+            LOG(INFO) << name() << ": Data type:" << info.datatype() << ", nChannels: " << p.nchannels << ", nSamples: " << p.nsamples << ", Sample rate: " << p.sample_rate;
+        }
+        catch (const std::bad_any_cast &)
+        {
+            LOG(WARNING) << name() << ": Failed to cast to MultiChannelType<double>";
+        }
+    }
     else if (info.datatype() == "scalar")
     {
         try
         {
-            const auto &p = info.parameters<ScalarType<float>::Parameters>();
+            const auto &p = info.parameters<ScalarType<double>::Parameters>();
             LOG(INFO) << name() << ": Data type:" << info.datatype() << ", Default value: " << p.default_value;
         }
         catch (const std::bad_any_cast &)
         {
-            LOG(WARNING) << name() << ": Failed to cast to ScalarType<float>";
+            LOG(WARNING) << name() << ": Failed to cast to ScalarType";
         }
     }
     packet_count_ = 0;

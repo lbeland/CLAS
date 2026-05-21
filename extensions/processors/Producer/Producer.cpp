@@ -114,7 +114,7 @@ Producer::Producer() : IProcessor(PRIORITY_HIGH)
     add_option("n_messages", n_messages_, "Number of packets to generate (-1 = infinite).");
     add_option("output_file", output_file_, "Path to output CSV file.");
 
-    iaf_state_ = create_broadcaster_state<float>(
+    iaf_state_ = create_broadcaster_state<double>(
         "iaf", current_iaf_, Permission::NONE,
         "Individual alpha frequency shared with downstream processors.");
 }
@@ -199,7 +199,7 @@ void Producer::Process(ProcessingContext &context)
 
         send_times.push_back(now);
         ++packet_count;
-        // custom_sleep_for(1000);
+        custom_sleep_for(90);
 
         carrier_phase = WrapPhase(carrier_phase + carrier_step);
         modulation_phase = WrapPhase(modulation_phase + modulation_step);

@@ -55,14 +55,15 @@ class StimulusController : public IProcessor {
 
     const uint32_t MAX_NCHANNELS=384;
 
-    FollowerState<float>* iaf_state_ = nullptr;
+    double fs_ = 0; // sample rate (Hz), set during CompleteStreamInfo()
+    FollowerState<double>* iaf_state_ = nullptr;
 
     // Audio burst playback
 
     // Single source of truth: derives stim_dur_rad_ and burst_frames_ from
     // iaf (only used when stim_dur_unit_ == "deg"; ignored for "ms").
     // Returns true if burst_frames_ changed and buffers need rebuilding.
-    bool compute_burst_params_(float iaf);
+    bool compute_burst_params_(double iaf);
 
     void build_audio_buffers_();
     bool start_audio_();
@@ -76,12 +77,12 @@ class StimulusController : public IProcessor {
     snd_pcm_t* pcm_ = nullptr;
 
     double period_ms_ = 0;
-    float last_iaf_ = std::numeric_limits<float>::quiet_NaN(); // last IAF used to build buffers
+    double last_iaf_ = std::numeric_limits<double>::quiet_NaN(); // last IAF used to build buffers
 
     int burst_frames_ = 0;
     int period_frames_ = 0;
-    std::vector<float> burst_buf_;
-    std::vector<float> silence_buf_;
+    std::vector<double> burst_buf_;
+    std::vector<double> silence_buf_;
 
     // Optional integer buffers for direct hw devices
     std::vector<int16_t> burst_buf_s16_;
@@ -92,22 +93,22 @@ class StimulusController : public IProcessor {
 
   // DATA PORTS
   protected:
-    PortIn<MultiChannelType<float>> *data_in_port_;
+    PortIn<MultiChannelType<double>> *data_in_port_;
     PortOut<MultiChannelType<double>> *data_out_port_;
 
   // OPTIONS
   protected:
     options::Value<int, false> n_messages_{-1};
-    options::Value<float, false> stim_onset_deg_{0};
-    options::Value<float, false> audio_latency_{0};
-    options::Value<float, false> erp_latency_{0};  //auditory evoked response potential latency in seconds
+    options::Value<double, false> stim_onset_deg_{0};
+    options::Value<double, false> audio_latency_{0};
+    options::Value<double, false> erp_latency_{0};  //auditory evoked response potential latency in seconds
     options::Value<int, false> stim_period_ms_{5};
-    options::Value<float, false> stim_amplitude_{0.7f};
+    options::Value<double, false> stim_amplitude_{0.7};
     options::Value<int, false> stim_num_octaves_{6};
 
     options::Value<std::string, false> stim_dur_unit_{"deg"};
     options::Value<int, false> stim_dur_ms_{20};
-    options::Value<float, false> stim_dur_deg_{90};
+    options::Value<double, false> stim_dur_deg_{90};
 
     // Audio options
     options::Value<std::string, false> audio_device_{"hw:1,0"};

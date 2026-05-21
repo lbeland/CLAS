@@ -68,13 +68,13 @@ void MultiChannelFilter::Prepare(GlobalContext &context) {
   const auto& info = data_in_port_->streaminfo(0);
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
   LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
-  float fs_ = p.sample_rate;
+  double fs_ = p.sample_rate;
 
   if (!filter_def_()["file"]) {
     // filter_template_.reset(dsp::filter::construct_from_yaml(filter_def_()));
     int N = filter_def_()["N"].as<int>(1);
-    float low_cutoff = filter_def_()["low_cutoff"].as<float>();
-    float high_cutoff = filter_def_()["high_cutoff"].as<float>();
+    double low_cutoff = filter_def_()["low_cutoff"].as<double>();
+    double high_cutoff = filter_def_()["high_cutoff"].as<double>();
     std::string filename;
     filename = std::to_string(N) + "_" + std::format("{:.2f}", low_cutoff) + "_" + std::format("{:.2f}", high_cutoff) + "_" + std::to_string(fs_) + ".txt";      
 

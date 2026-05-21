@@ -46,7 +46,7 @@ class Producer : public IProcessor {
   options::Value<int, false> n_messages_{-1};
   options::Value<std::string, false> output_file_{"Producer.csv"};
   
-  BroadcasterState<float>* iaf_state_ = nullptr;
-  float current_iaf_ = 10.0f;
+  BroadcasterState<double>* iaf_state_ = nullptr;
+  double current_iaf_ = 10.0;
   inline static std::vector<TimePoint> send_times;
 };

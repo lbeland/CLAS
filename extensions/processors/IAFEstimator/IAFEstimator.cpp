@@ -106,6 +106,7 @@ namespace
 
         for (size_t k = f_min_bin; k <= f_max_bin; ++k)
         {
+            // Decide between greater or greater/equal based on whether we want first peak or last peak in case of ties
             if (power[k] > max_value)
             {
                 max_value = power[k];
@@ -131,9 +132,19 @@ namespace
         while (left_half_bin > f_min_bin && power[left_half_bin] > half_max)
         {            --left_half_bin;
         }
+        if (left_half_bin == f_min_bin)
+        {
+            // LOG(WARNING) << "Left half max not found for IAF bin: " << iaf << " Hz, max value: " << max_value;
+            return std::make_pair(-1.0, -1.0); // No significant peak
+        }
         int right_half_bin = max_bin;
         while (right_half_bin < f_max_bin && power[right_half_bin] > half_max)
         {            ++right_half_bin;
+        }
+        if (right_half_bin == f_max_bin)
+        {
+            // LOG(WARNING) << "Right half max not found for IAF bin: " << iaf << " Hz, max value: " << max_value;
+            return std::make_pair(-1.0, -1.0); // No significant peak
         }
         double fwhm = (right_half_bin - left_half_bin) * resolution;
         double std_gauss = fwhm / (2 * std::sqrt(2 * std::log(2)));
@@ -143,6 +154,12 @@ namespace
         for (size_t k = f_min_bin; k <= f_max_bin; ++k)
         {
             ss_h0 += pow(power[k] - 1.0, 2);
+        }
+        // Catch if the spectrum is completely flat (no variance)
+        if (ss_h0/n - pow(power[0] - 1.0, 2) == 0.0)
+        {
+            // LOG(WARNING) << "No valid IAF bin found. Max value: " << max_value << ", BIC H0: " << bic_h0;
+            return std::make_pair(-1.0, -1.0); // No significant peak
         }
     
         // Alternative hypothesis: Gaussian peak on top of flat spectrum
@@ -156,18 +173,18 @@ namespace
         double ss_h1 = 0.0;
         for (size_t k = f_min_bin; k <= f_max_bin; ++k)
         {
-            ss_h1 += pow(power[k] -1.0 - gauss[k], 2);
+            ss_h1 += pow(power[k] - 1.0 - gauss[k], 2);
         }
         double bic_h0 = n * std::log(ss_h0/n);
-        double bic_h1 = n * std::log(std::max(ss_h1,1.0e-30)/n) + 3 * std::log(n);
+        double bic_h1 = n * std::log(ss_h1/n) + 3 * std::log(n);
 
         if (bic_h0 - bic_h1 < 0)
         {
-            // LOG(WARNING) << "No valid IAF bin found. Gauss parameters:" << iaf << ", " <<std_gauss << ", " << right_half_bin << "," << left_half_bin << ", " << max_value << ", BIC H0: " << bic_h0 << ", BIC H1: " << bic_h1 << "\n";
+            // LOG(WARNING) << "No valid IAF bin found. Gauss parameters:" << iaf << ", " <<std_gauss << ", " << right_half_bin << "," << left_half_bin << ", " << max_value << ", BIC H0: " << bic_h0 << ", BIC H1: " << bic_h1;
             iaf = -1.0; // No significant peak
         }
         else {
-            // LOG(INFO) << "IAF bin found: " << iaf << " Hz, std: " << std_gauss << " Hz, BIC H0: " << bic_h0 << ", BIC H1: " << bic_h1 << "\n";
+            // LOG(INFO) << "IAF bin found: " << iaf << " Hz, std: " << std_gauss << " Hz, BIC H0: " << bic_h0 << ", BIC H1: " << bic_h1;
         }
 
         return std::make_pair(iaf, std_gauss);
@@ -321,7 +338,7 @@ IAFEstimator::IAFEstimator() : IProcessor(PRIORITY_HIGH)
     add_option("calc_interval", calc_interval_, "Number of packets between IAF calculations.");
     add_option("ema_window_seconds", ema_window_seconds_, "Window size in seconds for RMS calculation used in IAF estimation.");
 
-    iaf_state_ = create_broadcaster_state<float>(
+    iaf_state_ = create_broadcaster_state<double>(
         "iaf", current_iaf_, Permission::NONE,
         "Individual alpha frequency shared with downstream processors.");
 }
@@ -333,9 +350,9 @@ void IAFEstimator::CreatePorts()
         MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
         PortInPolicy(SlotRange(0, MAX_NCHANNELS)));
 
-    data_out_port_ = create_output_port<ScalarType<float>>(
+    data_out_port_ = create_output_port<ScalarType<double>>(
         "out",
-        ScalarType<float>::Parameters(1), // Placeholder, will be set in CompleteStreamInfo
+        ScalarType<double>::Parameters(1), // Placeholder, will be set in CompleteStreamInfo
         PortOutPolicy(SlotRange(0, MAX_NCHANNELS), 200, WaitStrategy::kBlockingStrategy));
 }
 
@@ -376,9 +393,9 @@ void IAFEstimator::Prepare(GlobalContext &context)
 void IAFEstimator::Process(ProcessingContext &context)
 {
     MultiChannelType<float>::Data *data_in;
-    ScalarType<float>::Data *data_out;
+    ScalarType<double>::Data *data_out;
 
-    float freq_resolution = static_cast<float>(fs_) / n_fft_;
+    double freq_resolution = fs_ / n_fft_;
     LOG(INFO) << name() << " Frequency resolution: " << freq_resolution << " Hz\n";
     int savgol_window_length = static_cast<int>(2.5 / freq_resolution); // 2.5 Hz window for smoothing
     if (savgol_window_length % 2 == 0)
@@ -483,15 +500,13 @@ void IAFEstimator::Process(ProcessingContext &context)
             double std_gauss = res.second;
             if (iaf == -1.0)
             {
-                LOG(WARNING) << name() << "Packet count " << packet_count_ << ": No valid IAF bin found in the specified range.\n";
+                LOG(WARNING) << name() << "Packet count " << packet_count_ << ": No valid IAF bin found between " << f_min_() << " and " << f_max_() << " Hz.";
+                current_iaf_ = std::numeric_limits<double>::quiet_NaN();
             }
             else {
                 current_iaf_ = iaf;
             }
-            if (packet_count_ % int(fs_) == 0)
-            {
-                LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated IAF = " << current_iaf_ << " Hz (std: " << std_gauss << ")\n";
-            }
+
 
             iaf_state_->set(current_iaf_);
             // if (std::abs(iaf - current_iaf_) > 1e-3f)
@@ -501,6 +516,10 @@ void IAFEstimator::Process(ProcessingContext &context)
             //       printf("\n IAF Estimation did not change: %.2fHz", current_iaf_);
             // }
             TimePoint end_time = Clock::now();
+            if (packet_count_ % int(fs_) == 0)
+            {
+                LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated IAF = " << current_iaf_ << " Hz (std: " << std_gauss << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
+            }
             // double processing_time_us = std::chrono::duration<double, std::micro>(end_time - start_time).count();
             // LOG(INFO) << name() << " Processed packet "<< packet_count_ << " in " << std::fixed << std::setprecision(2) << processing_time_us << " us\n";
             

@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from meegkit.phase import ECHT
-from scipy.signal import hilbert
+from scipy.signal import hilbert, butter, sosfiltfilt, sosfreqz
 from read_output import get_signal_data
 from scipy.fft import fft, ifft, fftshift, ifftshift, next_fast_len
 
@@ -88,7 +88,9 @@ def plot_results(fs, f0, graph_name, timestamps="source_ts"):
     # echt_Xf = echt.fit_transform(samples_orig)[:,0]
     # echt_phase = np.angle(echt_Xf)
 
-    hilbert_Xf = hilbert(samples_orig)
+    sos = butter(1, [8, 12], btype='band', fs=fs, output='sos')
+    samples_filt = sosfiltfilt(sos, samples_orig)
+    hilbert_Xf = hilbert(samples_filt)
     hilbert_phase = np.angle(hilbert_Xf)
 
     fig = plt.figure(figsize=(8, 8), constrained_layout=True)
@@ -108,24 +110,25 @@ def plot_results(fs, f0, graph_name, timestamps="source_ts"):
 
     ## Samples plot ----------------------
     start_ts = time_orig[0]
-    time_orig = time_orig - start_ts   # align to 0
+    time_orig = (time_orig - start_ts)/10e6   # align to 0
     ax0.plot(time_orig, samples_orig, 'o-',linewidth=1.2, markersize=2.5,label="Original")
-    ax0.plot(time_orig, hilbert_phase, linewidth=2, alpha=0.7, label="Hilbert offline")
+    ax0b = ax0.twinx()
+    ax0b.plot(time_orig, hilbert_phase, linewidth=2, alpha=0.7, label="Hilbert offline",c="tab:red")
     # ax0.plot(cecht_phase, linestyle=":", linewidth=1.2, label="cecHT offline")
     # ax0.plot(echt_phase, linestyle="--", linewidth=1.2, label="ecHT offline")
     if true_phase is not None:
         ax0.plot(time_orig, true_phase, linewidth=1.2, alpha=0.7, label="True phase")
     if samples.get("BandpassFilter_0") is not None:
         x = samples["BandpassFilter_0"]["x"]
-        ax0.plot(x-start_ts, samples["BandpassFilter_0"]["y"], linewidth=1.2, label="Bandpass filtered")
+        ax0.plot((x-start_ts)/10e6, samples["BandpassFilter_0"]["y"], linewidth=1.2, label="Bandpass filtered")
     if samples.get("PhaseEstimator_0") is not None:
         x = samples["PhaseEstimator_0"]["x"]
         samples_phase = samples["PhaseEstimator_0"]["y"]
-        ax0.plot(x-start_ts, samples_phase, linestyle="-.", linewidth=1.4, label="Online phase")
+        ax0b.plot((x-start_ts)/10e6, samples_phase, linestyle="-.", linewidth=1.4, label="Online phase",c="tab:olive")
     if samples.get("StimulusController_0") is not None:
         x = samples["StimulusController_0"]["x"]
         samples_stim = np.where(samples["StimulusController_0"]["y"] == 1)[0]
-        ax0.plot(x[samples_stim]-start_ts, 0*samples["StimulusController_0"]["y"][samples_stim], "o", markersize=3, label="Stimulus")
+        ax0.plot((x[samples_stim]-start_ts)/10e6, 0*samples["StimulusController_0"]["y"][samples_stim], "o", markersize=3, label="Stimulus")
         # ax0.plot(time_orig[samples_stim], samples_orig[samples_stim], "o", markersize=3, label="Stimulus")
     
     # if samples.get("PhaseEstimator_1") is not None:
@@ -133,7 +136,10 @@ def plot_results(fs, f0, graph_name, timestamps="source_ts"):
     #     ax0.plot(time, samples_real, linewidth=1.2, label="Online real part")
 
     ax0.set_ylabel("Amplitude / Phase (rad)")
-    ax0.legend(loc='upper left', frameon=False)
+    handles, labels = ax0.get_legend_handles_labels()
+    handles2, labels2 = ax0b.get_legend_handles_labels()
+    ax0.legend(handles + handles2, labels + labels2, loc='upper left', frameon=False)
+    # ax0.legend(loc='upper left', frameon=False)
 
     ## Parameter plot ----------------------
     legend_items = []
@@ -147,9 +153,11 @@ def plot_results(fs, f0, graph_name, timestamps="source_ts"):
     if samples.get("IAFEstimator_0") is not None:
         x = samples["IAFEstimator_0"]["x"]
         est_inst_freq = samples["IAFEstimator_0"]["y"]
-        line_est_freq = ax1.plot(x-start_ts, est_inst_freq, 'o-', markersize=2.5,linewidth=1.2, label="Estimated IAF")
+        line_est_freq = ax1.plot((x-start_ts)/10e6, est_inst_freq, 'o-', markersize=2.5,linewidth=1.2, label="Estimated IAF")
         legend_items += line_est_freq
 
+
+    ax1.get_yaxis().get_major_formatter().set_useOffset(False)
     ax1.set_ylabel("Frequency (Hz)")
     ax1b.set_ylabel("Amplitude")
     ax1.legend(handles=legend_items, frameon=False)
@@ -171,25 +179,26 @@ def plot_results(fs, f0, graph_name, timestamps="source_ts"):
             # ax2.plot(message_indices, echt_error, linestyle="--", linewidth=1.2, label="ecHT error")
             hilbert_error = np.angle(np.exp(1j * (true_phase - hilbert_phase)), deg=True)
             # hlbert_error_calib = np.angle(np.exp(1j * (true_phase - (np.angle(hilbert_Xf*calibs)))), deg=True)
-            ax2.plot(x-start_ts, hilbert_error, linestyle="--", linewidth=1.2, label="Hilbert error")
-            # ax2.plot(x-start_ts, hlbert_error_calib, linestyle=":", linewidth=1.2, label="Hilbert error (calibrated)")
+            ax2.plot((x-start_ts)/10e6, hilbert_error, linestyle="--", linewidth=1.2, label="Hilbert error")
+            # ax2.plot((x-start_ts)/10e6, hlbert_error_calib, linestyle=":", linewidth=1.2, label="Hilbert error (calibrated)")
         else:
             n = min(len(samples_phase), len(hilbert_phase))
             error = np.angle(np.exp(1j * (hilbert_phase[:n] - samples_phase[:n])), deg=True)
         errors.append(error)
-        ax2.plot(x-start_ts, error, linewidth=1.2, label="Phase error")
+        ax2.plot((x-start_ts)/10e6, error, linewidth=1.2, label="Phase error")
         units.append("degrees")
     if samples.get("IAFEstimator_0") is not None and true_inst_freq is not None:
         x = samples["IAFEstimator_0"]["x"]
         error = est_inst_freq - true_inst_freq
         errors.append(error)
-        ax2.plot(x-start_ts, error, linewidth=1.2, label="Frequency error")
+        ax2.plot((x-start_ts)/10e6, error, linewidth=1.2, label="Frequency error")
         units.append("Hz")
     ax2.set_ylabel(f"Error ({" / ".join(units)})")
     ax2.tick_params(axis="y")
     ax2.legend(frameon=False)
     # ax2.set_xlim(49900, 50000)
     # ax2.set_ylim(-1, 1)
+    ax2.set_xlabel("Time (s)")
 
 
     ## Hist plot ----------------------
@@ -215,4 +224,4 @@ def plot_results(fs, f0, graph_name, timestamps="source_ts"):
 
 
 if __name__ == "__main__":
-    plot_results(10000, 9.5, "SimulateCLAS.yaml")
+    plot_results(10000, 9.5, "TurboLinkCLAS.yaml")

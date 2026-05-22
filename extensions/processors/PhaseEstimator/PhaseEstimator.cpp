@@ -445,7 +445,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
                         LOG(WARNING) << name() << " New window size " << window_size_ << " exceeds circular buffer capacity " << sample_window.capacity() << ". Resizing circular buffer to new window size.\n";
                         sample_window.rset_capacity(window_size_);
                     }
-                    n_fft_ = window_size_; //good_size_real(window_size_);
+                    n_fft_ = good_size_real(window_size_);
                     LOG(INFO) << name() << " Packet " << packet_count_ << ": Update IAF to " << f0_ << " Hz, window size: " << window_size_ << ", FFT size: " << n_fft_ << "\n";
 
                     load_filter_coeffs(context, f0_);

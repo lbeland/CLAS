@@ -279,12 +279,13 @@ void PhaseEstimator::calibrate_gain(const int N)
         {
             c_gain_ = std::complex<double>(1.0, 0.0); // fallback to unity gain
         }
+        
+        LOG(INFO) << "Calibration gain for " << f0_ << " Hz set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i\n";
     }
     else
     {
         c_gain_ = std::complex<double>(1.0, 0.0); // no calibration, unity gain
     }
-    LOG(INFO) << "Calibration gain for " << f0_ << " Hz set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i\n";
 }
 
 void PhaseEstimator::load_filter_coeffs(const StorageContext &context, double iaf)
@@ -292,9 +293,9 @@ void PhaseEstimator::load_filter_coeffs(const StorageContext &context, double ia
     if (!filter_def_()["file"])
     {
         int N = filter_def_()["N"].as<int>(1);
-        double bandwith = filter_def_()["bandwidth"].as<double>(4.0);
-        double low_cutoff = iaf - bandwith / 2.0;
-        double high_cutoff = iaf + bandwith / 2.0;
+        double bandwidth = filter_def_()["bandwidth"].as<double>(4.0);
+        double low_cutoff = iaf - bandwidth / 2.0;
+        double high_cutoff = iaf + bandwidth / 2.0;
         int window_size = n_fft_; // next fast len for 2 cycles of iaf frequency
         std::string filename;
         filename = std::to_string(N) + "_" + std::format("{:.2f}", low_cutoff) + "_" + std::format("{:.2f}", high_cutoff) + "_" + std::to_string(fs_) + "_" + std::to_string(window_size) + ".txt";
@@ -380,13 +381,13 @@ void PhaseEstimator::Process(ProcessingContext &context)
         p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_WISDOM_ONLY);
         if (p == nullptr)
         {
-            LOG(WARNING) << name() << "No wisdom available for FFT planning, using patient mode.";
+            LOG(WARNING) << name() << " No wisdom available for FFT planning, using patient mode.";
             p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_PATIENT);
         }
         p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_WISDOM_ONLY);
         if (p_inv == nullptr)
         {
-            LOG(WARNING) << name() << "No wisdom available for IFFT planning, using patient mode.";
+            LOG(WARNING) << name() << " No wisdom available for IFFT planning, using patient mode.";
             p_inv = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_PATIENT);
         }
     }
@@ -573,8 +574,8 @@ void PhaseEstimator::Process(ProcessingContext &context)
             //           << ", norm_cal=" << std::chrono::duration<double, std::micro>(norm_cal_time - ifft_time).count()
             //           << ", total=" << std::chrono::duration<double, std::micro>(end_time - start_time).count() << "\n";
 
-            // double processing_time_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
-            // LOG(INFO) << name() << " Processed packet "<< packet_count_ << " in " << std::fixed << std::setprecision(2) << processing_time_ms << " ms\n";
+            // double processing_time_us = std::chrono::duration<double, std::micro>(end_time - start_time).count();
+            // LOG(INFO) << name() << " Processed packet "<< packet_count_ << " in " << std::fixed << std::setprecision(4) << processing_time_us << " us";
         }
         else
         {

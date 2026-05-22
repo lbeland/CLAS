@@ -25,7 +25,7 @@
 struct Packet {
   uint32_t token;
   uint32_t sample_counter;
-  uint32_t trigger_bits;
+  uint8_t input_trigger;
       std::vector<float> aux = std::vector<float>(8);
       std::vector<float> eeg = std::vector<float>(32);
 };

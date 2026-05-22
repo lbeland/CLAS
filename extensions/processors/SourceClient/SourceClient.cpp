@@ -55,7 +55,8 @@ bool parse_packet(const uint8_t *data, size_t len, Packet &pkt)
 
     pkt.token = read_u32_le(data + 0);
     pkt.sample_counter = read_u32_le(data + 4);
-    pkt.trigger_bits = read_u32_le(data + 8);
+    uint32_t trigger_bits = read_u32_le(data + 8);
+    pkt.input_trigger = static_cast<uint8_t>(trigger_bits & 0xFF);  // first 8 bits are input, next 8 bits are output
 
     // Aux: 8 floats
     for (size_t i = 0; i < 8; ++i)

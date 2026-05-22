@@ -44,8 +44,8 @@ StimulusController::StimulusController() : IProcessor(PRIORITY_HIGH)
 {
     add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
     add_option("stim_onset_deg", stim_onset_deg_, "Stimulus onset phase in degrees.");
-    add_option("audio_latency", audio_latency_, "Estimated audio latency in seconds (for phase correction).");
-    add_option("erp_latency", erp_latency_, "Estimated auditory evoked response potential latency in seconds (for phase correction).");
+    add_option("audio_latency_s", audio_latency_s_, "Estimated audio latency in seconds (for phase correction).");
+    add_option("erp_latency_s", erp_latency_s_, "Estimated auditory evoked response potential latency in seconds (for phase correction).");
 
     add_option("audio_device", audio_device_, "ALSA device string for playback (e.g. hw:1,0 or default).");
     add_option("audio_sample_rate", audio_sample_rate_, "Audio sample rate (Hz).");
@@ -473,7 +473,7 @@ void StimulusController::Process(ProcessingContext &context)
 
         // In "deg" mode the burst duration depends on IAF. Rebuild buffers
         // when IAF changes (guarded by audio_mutex_ so the audio thread is safe).
-        if (dur_unit_ == DurUnit::kDeg && iaf_ != last_iaf_) {
+        if (dur_unit_ == DurUnit::kDeg && iaf_ - last_iaf_ > 1e-2) {
             const bool frames_changed = compute_burst_params_(iaf_);
             if (frames_changed) {
                 std::lock_guard<std::mutex> lock(audio_mutex_);
@@ -490,7 +490,7 @@ void StimulusController::Process(ProcessingContext &context)
         data_in_port_->slot(0)->ReleaseData();
         
         double delay_sec = std::chrono::duration<double>(now - sample_ts).count();
-        delay_sec += audio_latency_() + erp_latency_();
+        delay_sec += audio_latency_s_() + erp_latency_s_();
 
         double phase_advance  = 2.0 * M_PI * iaf_ * delay_sec;
         double corrected_phase = std::fmod(phase + phase_advance, 2.0 * M_PI);

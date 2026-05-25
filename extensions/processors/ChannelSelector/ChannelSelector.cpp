@@ -21,6 +21,7 @@
 #include "utilities/time.hpp"
 #include "logging/log.hpp"
 #include <chrono>
+#include <algorithm>
 #include <limits>
 #include <cmath>
 #include <string>
@@ -28,6 +29,7 @@
 
 ChannelSelector::ChannelSelector() : IProcessor(PRIORITY_HIGH) {
   add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
+  add_option("channel_indices", channel_indices_, "Comma-separated list of channel indices to select from (1-based).");
   add_option("rms_window_seconds", rms_window_seconds_, "Length of the weighted RMS window in seconds (recent samples get higher weights).");
 
 }
@@ -60,8 +62,26 @@ void ChannelSelector::Prepare(GlobalContext &context) {
   LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
 
   fs_ = p.sample_rate;
-  current_channel_index_ = 0;
   n_channels_ = p.nchannels;
+
+  selected_channels_.clear();
+  const auto &configured_channels = channel_indices_();
+  if (configured_channels.empty()) {
+    selected_channels_.reserve(n_channels_);
+    for (unsigned int channel_idx = 0; channel_idx < n_channels_; ++channel_idx) {
+      selected_channels_.push_back(channel_idx);
+    }
+  } else {
+    selected_channels_.reserve(configured_channels.size());
+    for (int channel_idx : configured_channels) {
+      if (channel_idx <= 0 || static_cast<unsigned int>(channel_idx) > n_channels_) {
+        throw std::runtime_error(name() + ": channel_indices contains out-of-range index " + std::to_string(channel_idx));
+      }
+      selected_channels_.push_back(static_cast<unsigned int>(channel_idx) - 1); // convert from 1-based to 0-based index
+    }
+  }
+
+  current_channel_index_ = selected_channels_.front();
 
   const double tau_seconds = rms_window_seconds_();
   rms_alpha_ = 1.0 - std::exp(-1.0 / (p.sample_rate * tau_seconds));
@@ -89,7 +109,7 @@ void ChannelSelector::Process(ProcessingContext &context) {
 
     double best_mean_square = -std::numeric_limits<double>::infinity();
 
-    for (std::size_t channel_idx = 0; channel_idx < n_channels_; ++channel_idx) {
+    for (unsigned int channel_idx : selected_channels_) {
       const double sample = static_cast<double>(data_in->data_sample(0, channel_idx));
       const double mean_square = (1.0 - rms_alpha_) * rms_[channel_idx] + rms_alpha_ * (sample * sample);
       rms_[channel_idx] = mean_square;
@@ -100,13 +120,14 @@ void ChannelSelector::Process(ProcessingContext &context) {
     }
 
     if (packet_count_ % int(fs_) == 0) {
-      LOG(INFO) << name() << ". Packet " << packet_count_ + 1 << ": Selected channel " << current_channel_index_ << " (RMS: " << rms_[current_channel_index_] << ")";
+      LOG(INFO) << name() << ". Packet " << packet_count_ + 1 << ": Selected channel " << current_channel_index_ + 1 << " (RMS: " << rms_[current_channel_index_] << ")";
     }
 
     // Claim output buffer
     data_out = data_out_port_->slot(0)->ClaimData(false);
 
     data_out->set_data_sample(0, 0, data_in->data_sample(0, current_channel_index_));
+    data_out->set_sample_timestamps(data_in->sample_timestamps());
 
     data_out->CloneTimestamps(*data_in);
 

@@ -48,6 +48,7 @@ class IAFEstimator : public IProcessor {
     
     BroadcasterState<double>* iaf_state_ = nullptr;
     double current_iaf_ = std::numeric_limits<double>::quiet_NaN();
+    double current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
     double ema_alpha_ = 1.0;
     double ema_;
 

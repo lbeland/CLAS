@@ -37,6 +37,23 @@
 namespace
 {
 
+    struct PeakSeed
+    {
+        int bin = -1;
+        double iaf_hz = std::numeric_limits<double>::quiet_NaN();
+        double peak_value = std::numeric_limits<double>::quiet_NaN();
+    };
+
+    struct PeakFitResult
+    {
+        bool valid = false;
+        int bin = -1;
+        double iaf_hz = std::numeric_limits<double>::quiet_NaN();
+        double sigma_hz = std::numeric_limits<double>::quiet_NaN();
+        double amplitude = std::numeric_limits<double>::quiet_NaN();
+        double delta_bic = std::numeric_limits<double>::quiet_NaN();
+    };
+
     size_t good_size_real(size_t n)
     // from https://github.com/hayguen/pocketfft/blob/cpp/pocketfft_hdronly.h
     {
@@ -91,103 +108,113 @@ namespace
         std::vector<double> gauss(freqs.size());
         for (size_t k = 0; k < freqs.size(); ++k)
         {
-            gauss[k] = amplitude * std::exp(-0.5 * pow((freqs[k] - center) / width, 2));
+            gauss[k] = amplitude * std::exp(-0.5 * std::pow((freqs[k] - center) / width, 2));
         }
         return gauss;
     }
 
-    std::pair<double, double> fit_peak(const std::vector<double> &power, const std::vector<double> &freqs, int f_min_bin, int f_max_bin, double resolution, bool parabolic = true)
+    PeakSeed find_peak_seed(const std::vector<double> &smoothed_power, int f_min_bin, int f_max_bin, double resolution, bool parabolic = true)
     {
+        PeakSeed seed;
+
         int max_bin = -1;
         double max_value = -1.0;
-        double delta = 0.0;
         double iaf = -1.0;
-        size_t n = f_max_bin - f_min_bin + 1;
 
         for (size_t k = f_min_bin; k <= f_max_bin; ++k)
         {
             // Decide between greater or greater/equal based on whether we want first peak or last peak in case of ties
-            if (power[k] > max_value)
+            if (smoothed_power[k] > max_value)
             {
-                max_value = power[k];
+                max_value = smoothed_power[k];
                 max_bin = static_cast<int>(k);
                 iaf = max_bin * resolution;
             }
         }
+
+        if (max_bin < 0)
+        {
+            return seed;
+        }
         
         if (parabolic && max_bin > f_min_bin && max_bin < f_max_bin)
         {
-            double y1 = power[max_bin - 1];
-            double y2 = power[max_bin];
-            double y3 = power[max_bin + 1];
+            double y1 = smoothed_power[max_bin - 1];
+            double y2 = smoothed_power[max_bin];
+            double y3 = smoothed_power[max_bin + 1];
             double denom = (y1 - 2 * y2 + y3);
             if (denom != 0){
-                delta = 0.5 * (y1 - y3) / denom;
+                double delta = 0.5 * (y1 - y3) / denom;
                 iaf += delta * resolution;
             }
         }
 
-        double half_max = max_value / 2.0;
-        int left_half_bin = max_bin;
-        while (left_half_bin > f_min_bin && power[left_half_bin] > half_max)
-        {            --left_half_bin;
-        }
-        if (left_half_bin == f_min_bin)
-        {
-            // LOG(WARNING) << "Left half max not found for IAF bin: " << iaf << " Hz, max value: " << max_value;
-            return std::make_pair(-1.0, -1.0); // No significant peak
-        }
-        int right_half_bin = max_bin;
-        while (right_half_bin < f_max_bin && power[right_half_bin] > half_max)
-        {            ++right_half_bin;
-        }
-        if (right_half_bin == f_max_bin)
-        {
-            // LOG(WARNING) << "Right half max not found for IAF bin: " << iaf << " Hz, max value: " << max_value;
-            return std::make_pair(-1.0, -1.0); // No significant peak
-        }
-        double fwhm = (right_half_bin - left_half_bin) * resolution;
-        double std_gauss = fwhm / (2 * std::sqrt(2 * std::log(2)));
+        seed.bin = max_bin;
+        seed.iaf_hz = iaf;
+        seed.peak_value = max_value;
+        return seed;
+    }
 
-        // Null hypothesis: flat spectrum (power=1 after aperiodic removal)
+    PeakFitResult fit_gaussian_peak(const std::vector<double> &smoothed_power, const PeakSeed &seed, double resolution)
+    {
+        PeakFitResult result;
+
+        double amplitude = seed.peak_value;
+        if (amplitude <= 0.0)
+        {
+            return result;
+        }
+
+        double half_max = amplitude / 2.0;
+        int left_half_bin = seed.bin;
+        while (left_half_bin > 0 && smoothed_power[left_half_bin] > half_max)
+        {
+            --left_half_bin;
+        }
+
+        int right_half_bin = seed.bin;
+        while (right_half_bin < smoothed_power.size() - 1 && smoothed_power[right_half_bin] > half_max)
+        {
+            ++right_half_bin;
+        }
+
+        double fwhm = std::max(resolution, (right_half_bin - left_half_bin) * resolution);
+        double std_gauss = fwhm / (2.0 * std::sqrt(2.0 * std::log(2.0)));
+
+        result.bin = seed.bin;
+        result.iaf_hz = seed.iaf_hz;
+        result.sigma_hz = std_gauss;
+        result.amplitude = amplitude;
+
+        return result;
+    }
+
+    bool bic_test(const std::vector<double> &flat_power, const std::vector<double> &freqs, PeakFitResult &peak, int f_min_bin, int f_max_bin)
+    {
+
+        std::vector<double> gauss = gaussian(freqs, peak.amplitude, peak.iaf_hz, peak.sigma_hz);
+
+        size_t n = static_cast<size_t>(f_max_bin - f_min_bin + 1);
         double ss_h0 = 0.0;
-        for (size_t k = f_min_bin; k <= f_max_bin; ++k)
+        double ss_h1 = 0.0;
+        for (int k = f_min_bin; k <= f_max_bin; ++k)
         {
-            ss_h0 += pow(power[k] - 1.0, 2);
+            double centered = flat_power[k] - 1.0;
+            ss_h0 += centered * centered;
+            double resid = flat_power[k] - 1.0 - gauss[k];
+            ss_h1 += resid * resid;
         }
-        // Catch if the spectrum is completely flat (no variance)
-        if (ss_h0/n - pow(power[0] - 1.0, 2) == 0.0)
-        {
-            // LOG(WARNING) << "No valid IAF bin found. Max value: " << max_value << ", BIC H0: " << bic_h0;
-            return std::make_pair(-1.0, -1.0); // No significant peak
-        }
-    
-        // Alternative hypothesis: Gaussian peak on top of flat spectrum
-        std::vector<double> gauss = gaussian(freqs, max_value - 1.0, iaf, std_gauss);
 
-        // for (int k = max_bin - 5; k <= max_bin + 5; ++k){
-        //     LOG(INFO) << "power_smooth[" << k << "] = " << power[k] << ", gauss[" << k << "] = " << gauss[k];
+        // if (ss_h0 <= 0.0 || ss_h1 <= 0.0)
+        // {
+        //     return false;
         // }
 
-
-        double ss_h1 = 0.0;
-        for (size_t k = f_min_bin; k <= f_max_bin; ++k)
-        {
-            ss_h1 += pow(power[k] - 1.0 - gauss[k], 2);
-        }
-        double bic_h0 = n * std::log(ss_h0/n);
-        double bic_h1 = n * std::log(ss_h1/n) + 3 * std::log(n);
-
-        if (bic_h0 - bic_h1 < 0)
-        {
-            // LOG(WARNING) << "No valid IAF bin found. Gauss parameters:" << iaf << ", " <<std_gauss << ", " << right_half_bin << "," << left_half_bin << ", " << max_value << ", BIC H0: " << bic_h0 << ", BIC H1: " << bic_h1;
-            iaf = -1.0; // No significant peak
-        }
-        else {
-            // LOG(INFO) << "IAF bin found: " << iaf << " Hz, std: " << std_gauss << " Hz, BIC H0: " << bic_h0 << ", BIC H1: " << bic_h1;
-        }
-
-        return std::make_pair(iaf, std_gauss);
+        double bic_null = n * std::log(ss_h0 / n);
+        double bic_peak = n * std::log(ss_h1 / n) + 3.0 * std::log(static_cast<double>(n));
+        double delta_bic = bic_null - bic_peak;
+        peak.delta_bic = delta_bic;
+        return delta_bic > 0.0;
     }
 
     struct LinearFitResult
@@ -241,12 +268,13 @@ namespace
         // LOG(INFO) << "Aperiodic fit: slope = " << fit.slope << ", intercept = " << fit.intercept << ", R^2 = " << fit.r_squared << "\n";
 
         std::vector<double> power_flat(N);
-        power_flat[0] = 1.0;
+        
         for (size_t k = 1; k < N; ++k)
         {
             double aperiodic_fit = fit.slope * log_freqs[k - 1] + fit.intercept;
             power_flat[k] = safe_power[k] / std::pow(10, aperiodic_fit);
         }
+        power_flat[0] = power_flat[1]; // Set DC bin to same as first non-DC bin to avoid causing artificial rise/fall 
         std::vector<double> log_freqs_select;
         std::vector<double> log_power_select;
 
@@ -494,19 +522,22 @@ void IAFEstimator::Process(ProcessingContext &context)
             std::vector<double> power_smooth(max_analyze_bin);
             power_smooth = savgol_filter(savgol, power_flat);
 
-            // Select IAF as maximum of smoothed power spectrum
-            std::pair<double, double> res = fit_peak(power_smooth, freqs, f_min_bin, f_max_bin, freq_resolution, true);
-            double iaf = res.first;
-            double std_gauss = res.second;
-            if (iaf == -1.0)
-            {
-                LOG(WARNING) << name() << "Packet count " << packet_count_ << ": No valid IAF bin found between " << f_min_() << " and " << f_max_() << " Hz.";
-                current_iaf_ = std::numeric_limits<double>::quiet_NaN();
-            }
-            else {
-                current_iaf_ = iaf;
-            }
+            PeakSeed seed = find_peak_seed(power_smooth, f_min_bin, f_max_bin, freq_resolution, true);
+            PeakFitResult peak = fit_gaussian_peak(power_smooth, seed, freq_resolution);
 
+            peak.valid = bic_test(power_flat, freqs, peak, f_min_bin, f_max_bin);
+
+            if (peak.valid)
+            {
+                current_iaf_ = peak.iaf_hz;
+                current_gauss_width_ = peak.sigma_hz;
+                printf("\n Packet %d: Estimated IAF = %.2f Hz (sigma: %.2f Hz)", packet_count_, current_iaf_, current_gauss_width_);
+            }
+            else
+            {
+                current_iaf_ = std::numeric_limits<double>::quiet_NaN();
+                current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
+            }
 
             iaf_state_->set(current_iaf_);
             // if (std::abs(iaf - current_iaf_) > 1e-3f)
@@ -518,7 +549,7 @@ void IAFEstimator::Process(ProcessingContext &context)
             TimePoint end_time = Clock::now();
             if (packet_count_ % int(fs_) == 0)
             {
-                LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated IAF = " << current_iaf_ << " Hz (std: " << std_gauss << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
+                LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated IAF = " << current_iaf_ << " Hz (sigma: " << current_gauss_width_ << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
             }
             // double processing_time_us = std::chrono::duration<double, std::micro>(end_time - start_time).count();
             // LOG(INFO) << name() << " Processed packet "<< packet_count_ << " in " << std::fixed << std::setprecision(2) << processing_time_us << " us\n";

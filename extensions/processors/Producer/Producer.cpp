@@ -90,15 +90,6 @@ namespace
         return state;
     }
 
-    template <typename T>
-    void FillSlot(typename MultiChannelType<T>::Data *data_out, unsigned int nchannels, T value)
-    {
-        for (unsigned int channel_index = 0; channel_index < nchannels; ++channel_index)
-        {
-            data_out->set_data_sample(0, channel_index, value);
-        }
-    }
-
 } // namespace
 
 Producer::Producer() : IProcessor(PRIORITY_HIGH)
@@ -179,21 +170,16 @@ void Producer::Process(ProcessingContext &context)
         current_iaf_ = static_cast<float>(state.inst_freq);
         iaf_state_->set(current_iaf_);
 
-        for (std::size_t slot_index = 0; slot_index < data_outs.size(); ++slot_index)
-        {
-            FillSlot(data_outs[slot_index], nchannels_(), values[slot_index]);
-        }
 
         // Add packet count to start time for source timestamp
         TimePoint now = Clock::now(); // start_time + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(static_cast<double>(packet_count) / fs_()));
-        for (auto *data_out : data_outs)
-        {
-            data_out->set_source_timestamp(now);
-            data_out->set_hardware_timestamp(packet_count);
-        }
-
         for (std::size_t slot_index = 0; slot_index < data_outs.size(); ++slot_index)
         {
+            std::vector<float> sample_vec(nchannels_(), values[slot_index]);
+            data_outs[slot_index]->set_data_sample(0, sample_vec);
+            data_outs[slot_index]->set_sample_timestamp(0, packet_count);
+            data_outs[slot_index]->set_source_timestamp(now);
+            data_outs[slot_index]->set_hardware_timestamp(packet_count);
             data_out_port_->slot(slot_index)->PublishData();
         }
 

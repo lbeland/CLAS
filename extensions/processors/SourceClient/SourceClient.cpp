@@ -79,6 +79,7 @@ SourceClient::SourceClient() : IProcessor(PRIORITY_HIGH)
     add_option("nchannels", nchannels_, "Number of channels to generate.");
     add_option("nsamples", nsamples_, "Number of samples per packet.");
     add_option("n_messages", n_messages_, "Number of packets to generate (-1 = infinite).");
+    add_option("aux_channel", aux_channel_, "Index (one-based) of aux channel with audio stimulus input (-1 to disable).");
     add_option("output_file", output_file_, "Path to output CSV file.");
 }
 
@@ -87,7 +88,7 @@ void SourceClient::CreatePorts()
     data_out_port_ = create_output_port<MultiChannelType<float>>(
         "out",
         MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()),
-        PortOutPolicy(SlotRange(1), 200, WaitStrategy::kBlockingStrategy));
+        PortOutPolicy(SlotRange(2), 200, WaitStrategy::kBlockingStrategy));
 }
 
 void SourceClient::CompleteStreamInfo()
@@ -95,10 +96,17 @@ void SourceClient::CompleteStreamInfo()
     // Set the parameters for the output stream
     data_out_port_->slot(0)->streaminfo().set_parameters(MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
     data_out_port_->slot(0)->streaminfo().set_stream_rate(fs_());
+
+    data_out_port_->slot(1)->streaminfo().set_parameters(MultiChannelType<float>::Parameters(1, nsamples_(), fs_()));
+    data_out_port_->slot(1)->streaminfo().set_stream_rate(fs_());
 }
 
 void SourceClient::Prepare(GlobalContext &context)
 {
+    if (aux_channel_() > 0 && aux_channel_() <= 8){
+        LOG(INFO) << name() << "Auditory stimulus will be read from channel " << aux_channel_();
+        audio_aux_ = true;
+    }
 
     send_times.clear();
 
@@ -126,6 +134,7 @@ void SourceClient::Process(ProcessingContext &context)
 {
     using clock = std::chrono::steady_clock;
     MultiChannelType<float>::Data *data_out = nullptr;
+    MultiChannelType<float>::Data *aux_out = nullptr;
     uint8_t buffer[2048];
     int first_sample_counter;
     uint32_t sample_counter;
@@ -213,9 +222,6 @@ void SourceClient::Process(ProcessingContext &context)
         //     LOG(INFO) << "\n " << name() << ". Received packet " << packet_count + 1 << " with sample " << std::fixed << std::setprecision(2) << pkt.eeg[0] << " with sample counter " << pkt.sample_counter << " (hardware timestamp: " << hw_us << ")";
         // }
 
-        // Claim output buffer
-        data_out = data_out_port_->slot(0)->ClaimData(false);
-
         // Send whole eeg array (all channels)
         // data_out->set_data_sample(0, pkt.eeg);
 
@@ -224,7 +230,15 @@ void SourceClient::Process(ProcessingContext &context)
         {
             float sample = pkt.eeg[i];
             data_out->set_data_sample(0, i, sample);
+            data_out->set_sample_timestamp(0, pkt.sample_counter);
         }
+        // if (packet_count % 100 == 0)
+        // {
+        if ((pkt.input_trigger << 7) & 1)
+        {
+            LOG(INFO) << name() << " Packet count: " << packet_count << " Received input trigger: " << std::bitset<8>(pkt.input_trigger);
+        }
+        // }
 
         // TimePoint now = start_time + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(static_cast<double>(packet_count) / fs_()));
         data_out->set_source_timestamp(timestamp); // Set source timestamp with microsecond precision
@@ -241,6 +255,17 @@ void SourceClient::Process(ProcessingContext &context)
 
         // Publish data
         data_out_port_->slot(0)->PublishData();
+
+        // Claim output buffer
+        data_out = data_out_port_->slot(0)->ClaimData(false);
+        if (audio_aux_)
+        {
+            aux_out = data_out_port_->slot(1)->ClaimData(false);
+            aux_out->set_data_sample(0, 0, pkt.aux[aux_channel_() - 1]); // Set aux channel data if defined
+            aux_out->set_source_timestamp(timestamp);
+            aux_out->set_hardware_timestamp(sample_counter);
+            data_out_port_->slot(1)->PublishData();
+        }
 
         send_times.push_back(timestamp);
 

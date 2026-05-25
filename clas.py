@@ -12,12 +12,13 @@ from plot_results import plot_results
 
 REPO_ROOT = Path(__file__).resolve().parent
 WORKSPACE_FALCON_CONFIG = REPO_ROOT / ".falcon" / "config.yaml"
-GRAPH_CONFIG = "SimulateCLAS.yaml"
+
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--overwrite", action="store_true", default=True)
+    parser.add_argument("--graph", default="SimulateCLAS.yaml")
     args = parser.parse_args()
+    GRAPH_CONFIG = args.graph
 
     # Load the Falcon configuration
     with open(WORKSPACE_FALCON_CONFIG, "r") as f:
@@ -46,13 +47,13 @@ def main():
                 # Check if processor PhaseEstimator is configured to use a non-file-based filter
                 filter_config = processor_config.get("options", {}).get("filter", {})
                 if "file" not in filter_config:
-                    for iaf in np.arange(6.9,14.1,0.05):
-                        bandwidth = filter_config.get("bandwith", 4)
+                    for iaf in np.arange(4.9,18.1,0.1):
+                        bandwidth = filter_config.get("bandwidth", 4)
                         filter_length = int(2.0 * fs/iaf)    # 2 cycles of iaf frequency
                         gen_bandpass(1, iaf-bandwidth/2, iaf+bandwidth/2, fs, filter_length, output_folder=os.path.join(resources_folder, "filters"))
 
 
-    graph_process = subprocess.Popen(["sudo", "-E", "chrt", "-f", "99","./build/falcon/falcon", GRAPH_CONFIG, "--config", WORKSPACE_FALCON_CONFIG, "--autostart"]) 
+    graph_process = subprocess.Popen(["sudo", "-E", "chrt", "-f", "99","./build/release/falcon/falcon", GRAPH_CONFIG, "--config", WORKSPACE_FALCON_CONFIG, "--autostart"]) 
     try:
         # Wait for falcon to complete (processors will auto-exit after processing n_messages)
         return_code = graph_process.wait()
@@ -67,7 +68,7 @@ def main():
         terminate(graph_process)
 
     # Plot results
-    plot_results(fs, 10, GRAPH_CONFIG)
+    plot_results(fs, 7.5, GRAPH_CONFIG)
 
 
 def terminate(proc):

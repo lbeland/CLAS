@@ -31,8 +31,8 @@ class PhaseEstimator : public IProcessor {
     PhaseEstimator();
     void calibrate_gain(const int N);
     void load_filter_coeffs(const StorageContext& context, double iaf);
+    void load_phase_shift(const StorageContext& context, double iaf);
 
-  void Configure(const GlobalContext &context) override;
   void CreatePorts() override;
   void CompleteStreamInfo() override;
   void Prepare(GlobalContext &context) override;
@@ -52,6 +52,9 @@ class PhaseEstimator : public IProcessor {
     std::string coeff_file_;  // Path to bandpass filter coefficients file
     std::vector<std::complex<double>> coeffs_;  // Filter coefficients of bandpass filter
     std::complex<double> c_gain_;  // Calibration gain for cecHT
+
+    std::vector<double> filter_phase_shift_values;
+    double filter_phase_shift_ = 0.0;
     
     FollowerState<double>* iaf_state_ = nullptr;
     bool valid_iaf_ = false;
@@ -70,5 +73,6 @@ class PhaseEstimator : public IProcessor {
     options::Value<bool> calibrate_{false};
     options::Value<unsigned int, false> iaf_read_interval_{5000};
     options::Value<YAML::Node, false> filter_def_{};
+    options::Value<YAML::Node, false> compensate_filter_{};
 
 };

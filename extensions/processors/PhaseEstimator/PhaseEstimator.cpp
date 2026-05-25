@@ -152,15 +152,11 @@ PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH)
     add_option("calibrate", calibrate_, "Whether to apply calibration gain");
     add_option("iaf_read_interval", iaf_read_interval_, "Packets between shared IAF polling steps.");
     add_option("filter", filter_def_, "Filter definition.", true);
+    add_option("compensate_filter", compensate_filter_, "Whether to compensate the phase distortion of the preceding bandpass filter.", false);
 
     iaf_state_ = create_follower_state<double>(
         "iaf", std::numeric_limits<double>::quiet_NaN(), Permission::NONE,
         "Individual alpha frequency shared by an upstream processor.");
-}
-
-void PhaseEstimator::Configure(const GlobalContext &context)
-{
-    return;
 }
 
 void PhaseEstimator::CreatePorts()
@@ -340,6 +336,43 @@ void PhaseEstimator::load_filter_coeffs(const StorageContext &context, double ia
     }
 }
 
+
+void PhaseEstimator::load_phase_shift(const StorageContext &context, double iaf)
+{
+    int N = compensate_filter_()["N"].as<int>();
+    double low_cutoff = compensate_filter_()["low_cutoff"].as<double>();
+    double high_cutoff = compensate_filter_()["high_cutoff"].as<double>();
+    std::string filename;
+    filename = std::to_string(N) + "_" + std::format("{:.2f}", low_cutoff) + "_" + std::format("{:.2f}", high_cutoff) + "_" + std::to_string(fs_) + "_phase.txt";
+
+    std::string phase_shift_file_ = context.resolve_path(filename, "filters");
+
+    filter_phase_shift_values.clear();
+
+    // Load bandpass filter coefficients for cecHT from file
+    std::ifstream stream(phase_shift_file_);
+
+    if (!stream.good())
+    {
+        throw std::runtime_error("PhaseEstimator: Cannot open phase shift file: " + phase_shift_file_);
+    }
+
+    auto header = dsp::filter::parse_file_header(stream);
+
+    if (header["type"] != "phase shift")
+    {
+        throw std::runtime_error("PhaseEstimator: Expected phase shift in file:" + phase_shift_file_);
+    }
+
+    double phase_shift_rad;
+    while (stream >> phase_shift_rad)
+    {
+        filter_phase_shift_values.emplace_back(phase_shift_rad);
+        filter_phase_shift_ = filter_phase_shift_values[iaf * 10]; // Phase shift values are stored in 0.1 Hz increments and thus indexed with (iaf * 10)
+    }
+    
+}
+
 void PhaseEstimator::Prepare(GlobalContext &context)
 {
     const auto &info = data_in_port_->streaminfo(0);
@@ -353,6 +386,12 @@ void PhaseEstimator::Prepare(GlobalContext &context)
 
     load_filter_coeffs(context, f0_);
     calibrate_gain(window_size_);
+
+    if (!compensate_filter_().IsNull())
+    {
+        LOG(INFO) << name() << " Loading phase shift values for filter compensation\n";
+        load_phase_shift(context, f0_);
+    }
 
     // Import FFTW wisdom for optimal FFT planning
     fftwf_import_wisdom_from_filename((context.resolve_path("fftw_wisdom.txt", "fft_wisdom")).c_str());
@@ -483,6 +522,12 @@ void PhaseEstimator::Process(ProcessingContext &context)
                             }
                         }
                     }
+
+                    // Update value for phase shift compensation
+                    if (!compensate_filter_().IsNull())
+                    {
+                        filter_phase_shift_ = filter_phase_shift_values[f0_ * 10]; // Phase shift values are stored in 0.1 Hz increments and thus indexed with (iaf * 10)
+                    }
                 }                
                 // else {
                 //   printf(" - No need for calibration");
@@ -552,6 +597,10 @@ void PhaseEstimator::Process(ProcessingContext &context)
 
             // Get phase and real part of the last sample
             phase = std::atan2(out[window_size_-1][1], out[window_size_-1][0]);
+
+            // Compensate for phase distortion of the preceding bandpass filter if enabled
+            phase -= filter_phase_shift_;
+
             // LOG(INFO) << "estimated phase: " << phase << " radians, " << (phase * 180.0f / M_PI) << " degrees\n";
             real_part = out[window_size_-1][0];
 
@@ -560,7 +609,9 @@ void PhaseEstimator::Process(ProcessingContext &context)
             // data_phase_out->set_source_timestamp(Clock::now());
 
             data_phase_out->set_data_sample(0, 0, phase);
+            data_phase_out->set_sample_timestamps(data_in->sample_timestamps());
             data_real_out->set_data_sample(0, 0, real_part);
+            data_real_out->set_sample_timestamps(data_in->sample_timestamps());
 
             TimePoint end_time = Clock::now();
 
@@ -603,6 +654,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
 void PhaseEstimator::Postprocess(ProcessingContext &context)
 {
     printf("\n ---------------- \n PhaseEstimator: Total messages processed: %d", packet_count_);
+
 }
 
 void PhaseEstimator::Unprepare(GlobalContext &context)

@@ -2,32 +2,35 @@ graph:
   name: CLAS
   defaults:
     n_messages: &n_messages -1
-    window_size: &window_size 2000
+    window_size: &window_size 50000
     fs: &fs 10000
   processors:
     SourceClient:
       class: SourceClient
       options:
         fs: *fs
-        nchannels: 10
+        nchannels: 1
         nsamples: 1
         n_messages: *n_messages
         output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
+        aux_channel: -1
       advanced:
         buffer_sizes:
           out: 32
-        thread_core: 7
+        thread_core: 0
     BandpassFilter:
       class: MultiChannelFilter
       options:
         filter:
           # file: filters://2_2.0_20.0_10000.txt
-          N: 1
-          low_cutoff: 2.5
-          high_cutoff: 35
+          N: &order 1
+          low_cutoff: &low_cutoff 2.5
+          high_cutoff: &high_cutoff 35
         n_messages: *n_messages
       advanced:
-        thread_core: 4
+        buffer_sizes:
+          out: 32
+        thread_core: 1
     ChannelSelector:
       class: ChannelSelector
       options:
@@ -35,30 +38,51 @@ graph:
       advanced:
         buffer_sizes:
           out: 32
-        thread_core: 12
+        thread_core: 2
     IAFEstimator:
       class: IAFEstimator
       options:
         n_messages: *n_messages
-        calc_interval: 50
-        n_fft: 10000 #131072   # 2^{17} for 10kHz sampling rate to get 0.0767Hz frequency resolution
+        calc_interval: 100
+        window_size_sec: 5
+        f_min: 5.0
+        f_max: 18.0
       advanced:
         buffer_sizes:
           out: 32
-        thread_core: 6
+        thread_core: 3
     PhaseEstimator:
       class: PhaseEstimator
       options:
         n_messages: *n_messages
         # n_fft: *window_size
-        iaf_read_interval: 50
+        iaf_read_interval: 1
         calibrate: true
         filter:
-          bandwith: 4
+          bandwidth: 4
+        compensate_filter:
+          N: *order
+          low_cutoff: *low_cutoff
+          high_cutoff: *high_cutoff
       advanced:
         buffer_sizes:
           out: 32
-        thread_core: 8
+        thread_core: 4
+    StimulusController:
+      class: StimulusController
+      options:
+        n_messages: *n_messages
+        stim_onset_deg: 0
+        stim_dur_unit: "deg"
+        stim_dur_deg: 90
+        audio_latency_s: 0.04
+        erp_latency_s: 0
+        stim_dur_ms: 25
+        stim_amplitude: 0.5
+      advanced:
+        buffer_sizes:
+          out: 32
+        thread_core: 5
     Consumer:   # Only for measurement of latency/throughput
       class: Consumer
       options:
@@ -66,37 +90,80 @@ graph:
         window_size: *window_size
         output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
       advanced:
-        thread_core: 9
-    Serializer(1-4):    # one serializer per output stream
+        thread_core: 6
+    Serializer1:    # one serializers per output stream
       class: FileSerializer
       options:
         path: /home/linda/Documents/CLAS/rt_c_results
         encoding: binary
         throttle/enabled: false
         overwrite: true 
-        format: compact
+        format: full
         n_messages: *n_messages
-    ZMQSerializer:
-      class: ZMQSerializer
+      advanced:
+        thread_core: 7
+    Serializer2:    # one serializers per output stream
+      class: FileSerializer
       options:
-        interleave: true
+        path: /home/linda/Documents/CLAS/rt_c_results
+        encoding: binary
+        throttle/enabled: false
+        overwrite: true 
+        format: full
         n_messages: *n_messages
-        serialization_rate_hz: 100.0
+      advanced:
+        thread_core: 8
+    Serializer3:    # one serializers per output stream
+      class: FileSerializer
+      options:
+        path: /home/linda/Documents/CLAS/rt_c_results
+        encoding: binary
+        throttle/enabled: false
+        overwrite: true 
+        format: full
+        n_messages: *n_messages
+      advanced:
+        thread_core: 9
+    Serializer4:    # one serializers per output stream
+      class: FileSerializer
+      options:
+        path: /home/linda/Documents/CLAS/rt_c_results
+        encoding: binary
+        throttle/enabled: false
+        overwrite: true 
+        format: full
+        n_messages: *n_messages
+      advanced:
+        thread_core: 10
+    Serializer5:    # one serializers per output stream
+      class: FileSerializer
+      options:
+        path: /home/linda/Documents/CLAS/rt_c_results
+        encoding: binary
+        throttle/enabled: false
+        overwrite: true 
+        format: full
+        n_messages: *n_messages
+      advanced:
+        thread_core: 11
+    
   connections:
-  - SourceClient.out.0 = BandpassFilter.in.0
+  # - Producer.out.0 = BandpassFilter.in
+  - SourceClient.out.0 = BandpassFilter.in
   - BandpassFilter.out.0 = ChannelSelector.in
-
   - ChannelSelector.out.0 = IAFEstimator.in
   - ChannelSelector.out.0 = PhaseEstimator.in
-  - PhaseEstimator.out.0 = Consumer.in
+  - PhaseEstimator.out.0 = StimulusController.in
+  - StimulusController.out.0 = Consumer.in
 
   - SourceClient.out.0 = Serializer1.in
   - BandpassFilter.out.0 = Serializer2.in
   - PhaseEstimator.out.0 = Serializer3.in
   - PhaseEstimator.out.1 = Serializer3.in
   - IAFEstimator.out.0 = Serializer4.in
+  - StimulusController.out.0 = Serializer5.in
 
-  - ChannelSelector.out.0 = ZMQSerializer.in.0
-  - PhaseEstimator.out.0 = ZMQSerializer.in.1
   states:
-  - IAF: [IAFEstimator.iaf, PhaseEstimator.iaf]
+  - IAF: [IAFEstimator.iaf, PhaseEstimator.iaf, StimulusController.iaf]
+
+

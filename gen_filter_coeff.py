@@ -1,11 +1,16 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import butter, freqz_sos
+from scipy import fftpack
 import os
 
 def gen_bandpass(N, low_cutoff, high_cutoff, fs, length, output_folder):
 
-    filename = f"{N}_{low_cutoff:.1f}_{high_cutoff:.1f}_{fs}{'_' + str(length) if length is not None else ''}.txt"
+    if length is not None:
+        # Store frequency response of bandpass filter (for PhaseEstimator)
+        length = fftpack.next_fast_len(length)
+
+    filename = f"{N}_{low_cutoff:.2f}_{high_cutoff:.2f}_{fs}{'_' + str(length) if length is not None else ''}.txt"
     output_path = f"{output_folder}/{filename}"
     if os.path.exists(output_path):
         return
@@ -21,8 +26,8 @@ def gen_bandpass(N, low_cutoff, high_cutoff, fs, length, output_folder):
     if length is not None:
         # Store frequency response of bandpass filter (for PhaseEstimator)
         filt_freq = np.fft.fftfreq(length, d=1 / fs)
-        _, H_center = freqz_sos(sos, worN=filt_freq, fs=fs)
-        coeffs = H_center[:, None]
+        _, H = freqz_sos(sos, worN=filt_freq, fs=fs)
+        coeffs = H[:, None]
 
         with open(output_path, "w", encoding="utf-8") as f:
             f.write("##\n")
@@ -32,7 +37,7 @@ def gen_bandpass(N, low_cutoff, high_cutoff, fs, length, output_folder):
             f.write("##\n")
 
             for i in range(len(filt_freq)):
-                f.write(f"{H_center[i].real:.18g} {H_center[i].imag:.18g}\n")
+                f.write(f"{H[i].real:.18g} {H[i].imag:.18g}\n")
     else:
         # Store filter coefficients (for MultiChannelFilter)
         description = (
@@ -52,6 +57,22 @@ def gen_bandpass(N, low_cutoff, high_cutoff, fs, length, output_folder):
             f.write("1.0\n")
             for row in sos:
                 f.write(" ".join(f"{coef:.18g}" for coef in row) + "\n")
+
+        # Store frequency response of bandpass filter (for Phasedrift compensation in PhaseEstimator)
+        freqs = np.arange(0, high_cutoff, 0.1)  # from 0 to Nyquist in 0.1 Hz steps (because IAF can change in 0.1 Hz steps)
+        w, H = freqz_sos(sos, worN=freqs, fs=fs)
+        phase = np.angle(H)  # phase shift in radians at each 0.1 Hz step
+
+        output_path = os.path.join(output_folder, filename.replace(".txt", "_phase.txt"))
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("##\n")
+            f.write("# type = phase shift\n")
+            f.write(f"# description = Phase Shift of bandpass filter {low_cutoff:.2f}-{high_cutoff:.2f}Hz @ {fs}Hz (0.1 Hz steps)\n")
+            f.write("# format = text\n")
+            f.write("##\n")
+
+            for i in range(len(freqs)):
+                f.write(f"{phase[i]:.18g}\n")
 
     return
 
@@ -80,20 +101,20 @@ def plot_filter_response(sos, fs):
 
 if __name__ == "__main__":
     N = 1
-    low_cutoff = 1
-    high_cutoff = 50
+    low_cutoff = 2.5
+    high_cutoff = 35
     fs = 1000
 
     gen_bandpass(N, low_cutoff, high_cutoff, fs, length=None, output_folder=".")
 
-    if low_cutoff == 0:
-        sos = butter(N=N, Wn=high_cutoff / (fs / 2), btype="low", output="sos")
-    else:
-        sos = butter(
-            N=N,
-            Wn=[low_cutoff / (fs / 2), high_cutoff / (fs / 2)],
-            btype="band",
-            output="sos",
-        )
+    # if low_cutoff == 0:
+    #     sos = butter(N=N, Wn=high_cutoff / (fs / 2), btype="low", output="sos")
+    # else:
+    #     sos = butter(
+    #         N=N,
+    #         Wn=[low_cutoff / (fs / 2), high_cutoff / (fs / 2)],
+    #         btype="band",
+    #         output="sos",
+    #     )
 
-    plot_filter_response(sos, fs)
+    # plot_filter_response(sos, fs)

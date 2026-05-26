@@ -50,10 +50,10 @@ class SourceClient : public IProcessor {
   bool audio_aux_ = false;
 
   options::Value<double, false> fs_{1000};
-  options::Value<int, false> nchannels_{4};
+  options::Value<int, false> nchannels_{32};  // 32 EEG
   options::Value<int, false> nsamples_{100};
   options::Value<int, false> n_messages_{-1};
-  options::Value<int, false> aux_channel_{-1};
+  options::Value<bool, false> store_aux_{true};
   options::Value<std::string, false> output_file_{"SourceClient.csv"};
   
   inline static std::vector<std::chrono::steady_clock::time_point> send_times;

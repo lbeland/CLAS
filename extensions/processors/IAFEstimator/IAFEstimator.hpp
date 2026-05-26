@@ -48,9 +48,12 @@ class IAFEstimator : public IProcessor {
     
     BroadcasterState<double>* iaf_state_ = nullptr;
     double current_iaf_ = std::numeric_limits<double>::quiet_NaN();
+    double last_valid_iaf_ = std::numeric_limits<double>::quiet_NaN();
     double current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
-    double ema_alpha_ = 1.0;
+    double ema_mu_;
     double ema_;
+    int invalid_count_ = 0;
+    int invalid_threshold_;
 
     const uint32_t MAX_NCHANNELS=384;
 

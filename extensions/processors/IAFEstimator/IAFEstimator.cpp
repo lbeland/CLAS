@@ -265,7 +265,7 @@ namespace
 
         LinearFitResult fit = linear_regression(log_freqs, log_power);
 
-        // LOG(INFO) << "Aperiodic fit: slope = " << fit.slope << ", intercept = " << fit.intercept << ", R^2 = " << fit.r_squared << "\n";
+        // LOG(INFO) << "Aperiodic fit: slope = " << fit.slope << ", intercept = " << fit.intercept << ", R^2 = " << fit.r_squared;
 
         std::vector<double> power_flat(N);
         
@@ -397,21 +397,22 @@ void IAFEstimator::Prepare(GlobalContext &context)
 {
     const auto &info = data_in_port_->streaminfo(0);
     const auto &p = info.parameters<MultiChannelType<float>::Parameters>();
-    LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
+    LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
     fs_ = p.sample_rate;
     window_size_ = window_size_sec_() * fs_; // Convert window size from seconds to samples
     n_fft_ = static_cast<int>(good_size_real(window_size_));
     sample_window.set_capacity(n_fft_); // Initialize window size with next fast fft len 
-    LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_ << "\n";
+    LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
     iaf_state_->set(current_iaf_);
 
     const double tau_seconds = ema_window_seconds_();
-    ema_alpha_ = 1.0 - std::exp(-1.0 / (p.sample_rate * tau_seconds));
-    ema_= 10.0; // Initialize for 10Hz IAF
+    ema_mu_ = std::exp(-static_cast<double>(calc_interval_()) / (p.sample_rate * tau_seconds));
+    ema_= std::numeric_limits<double>::quiet_NaN();
+    invalid_threshold_ = static_cast<int>(std::ceil(tau_seconds * fs_ / calc_interval_()));
   
-    LOG(INFO) << name() << " RMS selector EMA tau: " << ema_window_seconds_()
-              << " s, alpha: " << ema_alpha_ << ".";
+    LOG(INFO) << name() << " EMA tau: " << p.sample_rate * ema_window_seconds_()
+              << " s, mu: " << ema_mu_ << ", invalid_threshold: " << invalid_threshold_ << " estimates";
 
     // Load FFTW wisdom if available to speed up plan creation
     fftwf_import_wisdom_from_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
@@ -424,7 +425,7 @@ void IAFEstimator::Process(ProcessingContext &context)
     ScalarType<double>::Data *data_out;
 
     double freq_resolution = fs_ / n_fft_;
-    LOG(INFO) << name() << " Frequency resolution: " << freq_resolution << " Hz\n";
+    LOG(INFO) << name() << " Frequency resolution: " << freq_resolution << " Hz";
     int savgol_window_length = static_cast<int>(2.5 / freq_resolution); // 2.5 Hz window for smoothing
     if (savgol_window_length % 2 == 0)
     {      
@@ -437,13 +438,13 @@ void IAFEstimator::Process(ProcessingContext &context)
         savgol_window_length = savgol_polyorder + 2;    // Ensure window length is greater than polynomial order
     }
     int m = (savgol_window_length) / 2; 
-    LOG(INFO) << name() << " Savitzky-Golay filter length: " << savgol_window_length << ", polynomial order: " << savgol_polyorder << ", m: " << m << "\n";
+    LOG(INFO) << name() << " Savitzky-Golay filter length: " << savgol_window_length << ", polynomial order: " << savgol_polyorder << ", m: " << m;
     gram_sg::SavitzkyGolayFilterConfig sg_conf(m, 0, savgol_polyorder, 0);
     gram_sg::SavitzkyGolayFilter savgol(sg_conf);
 
     int f_min_bin = std::floor(f_min_() / freq_resolution);
     int f_max_bin = std::ceil(f_max_() / freq_resolution);
-    LOG(INFO) << name() << " IAF search range: " << f_min_() << " - " << f_max_() << " Hz (bins " << f_min_bin << " - " << f_max_bin << ")\n";
+    LOG(INFO) << name() << " IAF search range: " << f_min_() << " - " << f_max_() << " Hz (bins " << f_min_bin << " - " << f_max_bin << ")";
 
     int max_analyze_bin = 30 / freq_resolution + 1; // Analyze up to 30 Hz to avoid high-frequency noise
 
@@ -495,7 +496,7 @@ void IAFEstimator::Process(ProcessingContext &context)
 
         if ((sample_window.size() == sample_window.capacity()) && (packet_count_ % calc_interval_() == 0))
         {
-            // LOG(INFO) << name() << " Calculating IAF for packet " << packet_count_ << ", last calculated packet: " << last_calc_packet_ << "\n";
+            // LOG(INFO) << name() << " Calculating IAF for packet " << packet_count_ << ", last calculated packet: " << last_calc_packet_;
             // Convert circular buffer<float> to continuous array for FFTW input and zero-pad to n_fft length
             // signal_in = sample_window.linearize();
             for (int i = 0; i < window_size_; ++i)
@@ -529,17 +530,39 @@ void IAFEstimator::Process(ProcessingContext &context)
 
             if (peak.valid)
             {
+                if (std::isnan(ema_))
+                {
+                    // first valid estimate
+                    ema_ = peak.iaf_hz;
+                    // LOG(INFO) << name() << " First valid IAF estimate: " << peak.iaf_hz << " Hz";
+                }
+                else
+                {
+                    ema_ = ema_mu_ * ema_ + (1 - ema_mu_) * peak.iaf_hz;
+                }
+                invalid_count_ = std::max(0, invalid_count_ - 1);
                 current_iaf_ = peak.iaf_hz;
+                last_valid_iaf_ = peak.iaf_hz;
                 current_gauss_width_ = peak.sigma_hz;
-                printf("\n Packet %d: Estimated IAF = %.2f Hz (sigma: %.2f Hz)", packet_count_, current_iaf_, current_gauss_width_);
             }
             else
             {
+                invalid_count_ = std::min(invalid_count_ + 1, invalid_threshold_);
+                if ((!std::isnan(last_valid_iaf_)) && (!std::isnan(ema_)))
+                {
+                    // Use previous interpolation
+                    ema_ = ema_mu_ * ema_ + (1 - ema_mu_) * last_valid_iaf_;
+                }
                 current_iaf_ = std::numeric_limits<double>::quiet_NaN();
                 current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
             }
+            if (invalid_count_ >= (fs_ * ema_window_seconds_())/calc_interval_())
+            {
+                ema_ = std::numeric_limits<double>::quiet_NaN(); // Reset EMA if too many invalid estimates in the last window
+                // LOG(WARNING) << name() << " Too many invalid IAF estimates, resetting EMA.";
+            }
 
-            iaf_state_->set(current_iaf_);
+            iaf_state_->set(ema_);
             // if (std::abs(iaf - current_iaf_) > 1e-3f)
             // {
             //     printf("\n Packet %d: Estimated IAF = %.2f Hz (max bin: %d)", packet_count_, current_iaf_, res.first);
@@ -549,13 +572,13 @@ void IAFEstimator::Process(ProcessingContext &context)
             TimePoint end_time = Clock::now();
             if (packet_count_ % int(fs_) == 0)
             {
-                LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated IAF = " << current_iaf_ << " Hz (sigma: " << current_gauss_width_ << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
+                LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated IAF = " << current_iaf_ << "Hz (sigma: " << current_gauss_width_ << "), EMA: " << ema_ << "Hz, took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
             }
             // double processing_time_us = std::chrono::duration<double, std::micro>(end_time - start_time).count();
-            // LOG(INFO) << name() << " Processed packet "<< packet_count_ << " in " << std::fixed << std::setprecision(2) << processing_time_us << " us\n";
+            // LOG(INFO) << name() << " Processed packet "<< packet_count_ << " in " << std::fixed << std::setprecision(2) << processing_time_us << " us";
             
         }
-        data_out->set_data(current_iaf_);
+        data_out->set_data(ema_);
         data_out->set_source_timestamp(Clock::now());
         data_out_port_->slot(0)->PublishData();
 

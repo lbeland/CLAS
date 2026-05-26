@@ -84,11 +84,12 @@ void ChannelSelector::Prepare(GlobalContext &context) {
   current_channel_index_ = selected_channels_.front();
 
   const double tau_seconds = rms_window_seconds_();
-  rms_alpha_ = 1.0 - std::exp(-1.0 / (p.sample_rate * tau_seconds));
-  rms_.assign(p.nchannels, 0.0);
+  // EMA
+  ema_mu_ = std::exp(-1.0 / (p.sample_rate * tau_seconds));
+  ema_.assign(p.nchannels, 0.0);
 
   LOG(INFO) << name() << " RMS selector EMA tau: " << rms_window_seconds_()
-            << " s, alpha: " << rms_alpha_ << ".";
+            << " s, mu: " << ema_mu_ << ".";
 }
 
 void ChannelSelector::Process(ProcessingContext &context) {
@@ -111,16 +112,16 @@ void ChannelSelector::Process(ProcessingContext &context) {
 
     for (unsigned int channel_idx : selected_channels_) {
       const double sample = static_cast<double>(data_in->data_sample(0, channel_idx));
-      const double mean_square = (1.0 - rms_alpha_) * rms_[channel_idx] + rms_alpha_ * (sample * sample);
-      rms_[channel_idx] = mean_square;
-      if (mean_square > best_mean_square) {
-        best_mean_square = mean_square;
+      const double sample_square = sample * sample;
+      ema_[channel_idx] = ema_mu_ * ema_[channel_idx] + (1 - ema_mu_) * sample_square;
+      if (ema_[channel_idx] > best_mean_square) {
+        best_mean_square = ema_[channel_idx];
         current_channel_index_ = channel_idx;
       }
     }
 
     if (packet_count_ % int(fs_) == 0) {
-      LOG(INFO) << name() << ". Packet " << packet_count_ + 1 << ": Selected channel " << current_channel_index_ + 1 << " (RMS: " << rms_[current_channel_index_] << ")";
+      LOG(INFO) << name() << ". Packet " << packet_count_ + 1 << ": Selected channel " << current_channel_index_ + 1 << " (RMS: " << ema_[current_channel_index_] << ")";
     }
 
     // Claim output buffer

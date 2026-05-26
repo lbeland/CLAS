@@ -51,8 +51,8 @@ class ChannelSelector : public IProcessor {
     options::Value<double, false> rms_window_seconds_{5.0};
 
     unsigned int current_channel_index_ = 0;
-    double rms_alpha_ = 1.0;
+    double ema_mu_ = 1.0;
     unsigned int n_channels_ = 0;
     std::vector<unsigned int> selected_channels_;
-    std::vector<double> rms_;
+    std::vector<double> ema_;
 };

@@ -131,11 +131,14 @@ void Producer::Process(ProcessingContext &context)
     double carrier_phase = 0.0;
     double modulation_phase = 0.0;
     int packet_count = 0;
+    TimePoint timestamp;
+    uint64_t hardware_time_us = 0;
 
     const double carrier_step = 2.0 * M_PI * carrier_frequency_() / fs_();
     const double modulation_step = 2.0 * M_PI * modulation_frequency_() / fs_();
 
-    TimePoint start_time = Clock::now();
+    // Use wall clock time as reference for hardware timestamps
+    uint64_t start_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
     while (!context.terminated())
     {
@@ -172,18 +175,20 @@ void Producer::Process(ProcessingContext &context)
 
 
         // Add packet count to start time for source timestamp
-        TimePoint now = Clock::now(); // start_time + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(static_cast<double>(packet_count) / fs_()));
+        timestamp = Clock::now();
+        hardware_time_us = start_time + (uint64_t)packet_count * 1000000ULL / fs_();
+
         for (std::size_t slot_index = 0; slot_index < data_outs.size(); ++slot_index)
         {
             std::vector<float> sample_vec(nchannels_(), values[slot_index]);
             data_outs[slot_index]->set_data_sample(0, sample_vec);
-            data_outs[slot_index]->set_sample_timestamp(0, packet_count);
-            data_outs[slot_index]->set_source_timestamp(now);
-            data_outs[slot_index]->set_hardware_timestamp(packet_count);
+            data_outs[slot_index]->set_sample_timestamp(0, hardware_time_us);
+            data_outs[slot_index]->set_source_timestamp(timestamp);
+            data_outs[slot_index]->set_hardware_timestamp(hardware_time_us);
             data_out_port_->slot(slot_index)->PublishData();
         }
 
-        send_times.push_back(now);
+        send_times.push_back(timestamp);
         ++packet_count;
         custom_sleep_for(90);
 

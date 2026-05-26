@@ -128,18 +128,18 @@ void SourceClient::Prepare(GlobalContext &context)
 
 void SourceClient::Process(ProcessingContext &context)
 {
-    using clock = std::chrono::steady_clock;
     MultiChannelType<float>::Data *data_out = nullptr;
     MultiChannelType<float>::Data *aux_out = nullptr;
     uint8_t buffer[2048];
-    int first_sample_counter;
+    uint32_t first_sample_counter;
     uint32_t sample_counter;
     // Measurement phase
     sockaddr_in src{};
     socklen_t srclen = sizeof(src);
     int packet_count = 0;
-    clock::time_point first_timestamp;
-    clock::time_point timestamp;
+    TimePoint first_timestamp;
+    TimePoint timestamp;
+    uint64_t hardware_time_us = 0;
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -153,7 +153,8 @@ void SourceClient::Process(ProcessingContext &context)
         return;
     }
 
-    TimePoint start_time = Clock::now();
+    // Use wall clock time as reference for hardware timestamps
+    uint64_t start_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
     while (!context.terminated())
     {
@@ -182,7 +183,9 @@ void SourceClient::Process(ProcessingContext &context)
             break;
         }
 
-        timestamp = clock::now();
+        timestamp = Clock::now();
+        hardware_time_us = start_time + (uint64_t)sample_counter * 1000000ULL / fs_();
+
         Packet pkt{};
         if (!parse_packet(buffer, received, pkt))
         {
@@ -199,7 +202,7 @@ void SourceClient::Process(ProcessingContext &context)
         }
         else
         {
-            if (((pkt.sample_counter - first_sample_counter) > sample_counter + 1)) // || (sample_counter == std::numeric_limits<uint32_t>::max() && pkt.sample_counter != 0))
+            if (((pkt.sample_counter - first_sample_counter) > sample_counter + 1))
             {
                 LOG(WARNING) << name() << " Missed packet(s). Last sample counter: " << sample_counter << ", current: " << pkt.sample_counter;
                 return;
@@ -217,19 +220,11 @@ void SourceClient::Process(ProcessingContext &context)
         {
             float sample = pkt.eeg[i];
             data_out->set_data_sample(0, i, sample);
-            data_out->set_sample_timestamp(0, sample_counter);
+            data_out->set_sample_timestamp(0, hardware_time_us);
         }
 
-        // TimePoint now = start_time + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(static_cast<double>(packet_count) / fs_()));
-        data_out->set_source_timestamp(timestamp); // Set source timestamp with microsecond precision
-
-        // Calculate hardware timestamp based on sample counter and fs
-        // std::chrono::time_point hardware_timestamp = first_timestamp + std::chrono::duration<double>((sample_counter - first_sample_counter)/fs_());
-        // const uint64_t hw_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(hardware_timestamp.time_since_epoch()).count());
-        // data_out->set_hardware_timestamp(hw_us);
-
-        // use sample counter as hardware timestamp
-        data_out->set_hardware_timestamp(sample_counter);
+        data_out->set_source_timestamp(timestamp);
+        data_out->set_hardware_timestamp(hardware_time_us);
 
         // LOG(INFO) << name() << ". Sent message " << packet_count + 1 << " with sample " << pkt.eeg[0] << ".";
 
@@ -253,9 +248,9 @@ void SourceClient::Process(ProcessingContext &context)
                 aux_out->set_data_sample(0, 8, 0.0);
             }
             // LOG(INFO) << name() << " Packet count: " << packet_count << " Received trigger: " << std::bitset<8>(pkt.input_trigger) << ", " << (pkt.input_trigger >> 7);
-            aux_out->set_sample_timestamp(0, sample_counter);
+            aux_out->set_sample_timestamp(0, hardware_time_us);
             aux_out->set_source_timestamp(timestamp);
-            aux_out->set_hardware_timestamp(sample_counter);
+            aux_out->set_hardware_timestamp(hardware_time_us);
             data_out_port_->slot(1)->PublishData();
         }
 

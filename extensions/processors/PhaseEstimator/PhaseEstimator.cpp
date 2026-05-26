@@ -276,7 +276,7 @@ void PhaseEstimator::calibrate_gain(const int N)
             c_gain_ = std::complex<double>(1.0, 0.0); // fallback to unity gain
         }
         
-        LOG(INFO) << "Calibration gain for " << f0_ << " Hz set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i\n";
+        LOG(INFO) << "Calibration gain for " << f0_ << " Hz set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i";
     }
     else
     {
@@ -368,8 +368,9 @@ void PhaseEstimator::load_phase_shift(const StorageContext &context, double iaf)
     while (stream >> phase_shift_rad)
     {
         filter_phase_shift_values.emplace_back(phase_shift_rad);
-        filter_phase_shift_ = filter_phase_shift_values[iaf * 10]; // Phase shift values are stored in 0.1 Hz increments and thus indexed with (iaf * 10)
     }
+    filter_phase_shift_ = filter_phase_shift_values[iaf * 10]; // Phase shift values are stored in 0.1 Hz increments and thus indexed with (iaf * 10)
+    LOG(INFO) << name() << " Loaded phase shift of " << filter_phase_shift_ << " radians for compensation";
     
 }
 
@@ -377,19 +378,19 @@ void PhaseEstimator::Prepare(GlobalContext &context)
 {
     const auto &info = data_in_port_->streaminfo(0);
     const auto &p = info.parameters<MultiChannelType<float>::Parameters>();
-    LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
+    LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
     fs_ = p.sample_rate;
     window_size_ = static_cast<int>(fs_ * (1.0 / f0_) * 2.0); // 2 cycles of a 10 Hz sine wave
     n_fft_ = static_cast<int>(good_size_real(window_size_));
     sample_window.set_capacity(static_cast<int>(fs_ * (1.0 / 5.0) * 2.0)); // Initialize with max expected window size for 5 Hz IAF
-    LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_ << "\n";
+    LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
     load_filter_coeffs(context, f0_);
     calibrate_gain(window_size_);
 
     if (!compensate_filter_().IsNull())
     {
-        LOG(INFO) << name() << " Loading phase shift values for filter compensation\n";
+        LOG(INFO) << name() << " Loading phase shift values for filter compensation";
         load_phase_shift(context, f0_);
     }
 
@@ -481,11 +482,11 @@ void PhaseEstimator::Process(ProcessingContext &context)
                     window_size_ = static_cast<int>(2.0 * fs_ / f0_);
                     if (window_size_ > sample_window.capacity())
                     {
-                        LOG(WARNING) << name() << " New window size " << window_size_ << " exceeds circular buffer capacity " << sample_window.capacity() << ". Resizing circular buffer to new window size.\n";
+                        LOG(WARNING) << name() << " New window size " << window_size_ << " exceeds circular buffer capacity " << sample_window.capacity() << ". Resizing circular buffer to new window size.";
                         sample_window.rset_capacity(window_size_);
                     }
                     n_fft_ = good_size_real(window_size_);
-                    LOG(INFO) << name() << " Packet " << packet_count_ << ": Update IAF to " << f0_ << " Hz, window size: " << window_size_ << ", FFT size: " << n_fft_ << "\n";
+                    LOG(INFO) << name() << " Packet " << packet_count_ << ": Update IAF to " << f0_ << " Hz, window size: " << window_size_ << ", FFT size: " << n_fft_;
 
                     load_filter_coeffs(context, f0_);
                     calibrate_gain(window_size_);
@@ -527,6 +528,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
                     if (!compensate_filter_().IsNull())
                     {
                         filter_phase_shift_ = filter_phase_shift_values[f0_ * 10]; // Phase shift values are stored in 0.1 Hz increments and thus indexed with (iaf * 10)
+                        LOG(INFO) << name() << " Loaded phase shift of " << filter_phase_shift_ << " radians for compensation";
                     }
                 }                
                 // else {
@@ -601,7 +603,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
             // Compensate for phase distortion of the preceding bandpass filter if enabled
             phase -= filter_phase_shift_;
 
-            // LOG(INFO) << "estimated phase: " << phase << " radians, " << (phase * 180.0f / M_PI) << " degrees\n";
+            // LOG(INFO) << "estimated phase: " << phase << " radians, " << (phase * 180.0f / M_PI) << " degrees";
             real_part = out[window_size_-1][0];
 
             TimePoint norm_cal_time = Clock::now();
@@ -623,7 +625,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
             //           << ", filter=" << std::chrono::duration<double, std::micro>(filter_time - ana_spec_time).count()
             //           << ", ifft=" << std::chrono::duration<double, std::micro>(ifft_time - filter_time).count()
             //           << ", norm_cal=" << std::chrono::duration<double, std::micro>(norm_cal_time - ifft_time).count()
-            //           << ", total=" << std::chrono::duration<double, std::micro>(end_time - start_time).count() << "\n";
+            //           << ", total=" << std::chrono::duration<double, std::micro>(end_time - start_time).count();
 
             // double processing_time_us = std::chrono::duration<double, std::micro>(end_time - start_time).count();
             // LOG(INFO) << name() << " Processed packet "<< packet_count_ << " in " << std::fixed << std::setprecision(4) << processing_time_us << " us";

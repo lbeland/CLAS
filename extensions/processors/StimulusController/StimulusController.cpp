@@ -135,7 +135,7 @@ void StimulusController::Prepare(GlobalContext &context)
     const auto &info = data_in_port_->streaminfo(0);
     const auto &p = info.parameters<MultiChannelType<double>::Parameters>();
     LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels
-              << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
+              << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
     
     fs_ = p.sample_rate;
 
@@ -473,15 +473,17 @@ void StimulusController::Process(ProcessingContext &context)
 
         // In "deg" mode the burst duration depends on IAF. Rebuild buffers
         // when IAF changes (guarded by audio_mutex_ so the audio thread is safe).
-        if (dur_unit_ == DurUnit::kDeg && iaf_ - last_iaf_ > 1e-2) {
-            const bool frames_changed = compute_burst_params_(iaf_);
-            if (frames_changed) {
-                std::lock_guard<std::mutex> lock(audio_mutex_);
-                build_audio_buffers_();
-                LOG(INFO) << name() << " IAF changed " << last_iaf_ << " -> " << iaf_
-                          << ": burst rebuilt to " << burst_frames_ << " frames";
+        if (dur_unit_ == DurUnit::kDeg){
+            if ((std::isnan(last_iaf_) && std::isfinite(iaf_)) || iaf_ - last_iaf_ > 1e-2) {
+                const bool frames_changed = compute_burst_params_(iaf_);
+                if (frames_changed) {
+                    std::lock_guard<std::mutex> lock(audio_mutex_);
+                    build_audio_buffers_();
+                    LOG(INFO) << name() << " IAF changed " << last_iaf_ << " -> " << iaf_
+                            << ": burst rebuilt to " << burst_frames_ << " frames";
+                }
+                last_iaf_ = iaf_;
             }
-            last_iaf_ = iaf_;
         }
 
         TimePoint now = Clock::now();

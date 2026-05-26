@@ -67,7 +67,7 @@ void MultiChannelFilter::CompleteStreamInfo() {
 void MultiChannelFilter::Prepare(GlobalContext &context) {
   const auto& info = data_in_port_->streaminfo(0);
   const auto& p = info.parameters<MultiChannelType<float>::Parameters>();
-  LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
+  LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
   double fs_ = p.sample_rate;
 
   if (!filter_def_()["file"]) {
@@ -79,7 +79,7 @@ void MultiChannelFilter::Prepare(GlobalContext &context) {
     filename = std::to_string(N) + "_" + std::format("{:.2f}", low_cutoff) + "_" + std::format("{:.2f}", high_cutoff) + "_" + std::to_string(fs_) + ".txt";      
 
     std::string f = context.resolve_path(filename, "filters");
-    LOG(INFO) << name() << " Read filter coefficients from file path: " << f << "\n";
+    LOG(INFO) << name() << " Read filter coefficients from file path: " << f;
     filter_template_.reset(dsp::filter::construct_from_file(f));
   } else {
     std::string f = context.resolve_path(filter_def_()["file"].as<std::string>(), "filters");

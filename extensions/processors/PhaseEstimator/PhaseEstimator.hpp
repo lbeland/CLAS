@@ -73,6 +73,6 @@ class PhaseEstimator : public IProcessor {
     options::Value<bool> calibrate_{false};
     options::Value<unsigned int, false> iaf_read_interval_{5000};
     options::Value<YAML::Node, false> filter_def_{};
-    options::Value<YAML::Node, false> compensate_filter_{};
+    options::Value<bool, false> compensate_filter_{true};
 
 };

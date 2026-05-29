@@ -72,11 +72,12 @@ void MultiChannelFilter::Prepare(GlobalContext &context) {
 
   if (!filter_def_()["file"]) {
     // filter_template_.reset(dsp::filter::construct_from_yaml(filter_def_()));
-    int N = filter_def_()["N"].as<int>(1);
-    double low_cutoff = filter_def_()["low_cutoff"].as<double>();
-    double high_cutoff = filter_def_()["high_cutoff"].as<double>();
+    // int N = filter_def_()["N"].as<int>(1);
+    // double low_cutoff = filter_def_()["low_cutoff"].as<double>();
+    // double high_cutoff = filter_def_()["high_cutoff"].as<double>();
+    // std::string btype = filter_def_()["btype"].as<std::string>("bandpass");
     std::string filename;
-    filename = std::to_string(N) + "_" + std::format("{:.2f}", low_cutoff) + "_" + std::format("{:.2f}", high_cutoff) + "_" + std::to_string(fs_) + ".txt";      
+    filename =  "global_filter_" + std::to_string(fs_) + ".txt";      
 
     std::string f = context.resolve_path(filename, "filters");
     LOG(INFO) << name() << " Read filter coefficients from file path: " << f;

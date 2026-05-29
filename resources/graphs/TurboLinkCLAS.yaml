@@ -9,23 +9,24 @@ graph:
       class: SourceClient
       options:
         fs: *fs
-        nchannels: 1
+        nchannels: 32
         nsamples: 1
         n_messages: *n_messages
         output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
-        aux_channel: -1
+        store_aux: true
       advanced:
         buffer_sizes:
           out: 32
         thread_core: 0
-    BandpassFilter:
+    GlobalFilter:
       class: MultiChannelFilter
       options:
         filter:
           # file: filters://2_2.0_20.0_10000.txt
-          N: &order 1
-          low_cutoff: &low_cutoff 2.5
-          high_cutoff: &high_cutoff 35
+          N: [1, 1]
+          low_cutoff: [2.5, 48]
+          high_cutoff: [35, 52]
+          btype: ["bandpass", "bandstop"]
         n_messages: *n_messages
       advanced:
         buffer_sizes:
@@ -35,6 +36,7 @@ graph:
       class: ChannelSelector
       options:
         n_messages: *n_messages
+        channel_indices: [1]   # 1-based indices of channels to select
       advanced:
         buffer_sizes:
           out: 32
@@ -45,6 +47,7 @@ graph:
         n_messages: *n_messages
         calc_interval: 100
         window_size_sec: 5
+        ema_window_sec: 10
         f_min: 5.0
         f_max: 18.0
       advanced:
@@ -60,10 +63,7 @@ graph:
         calibrate: true
         filter:
           bandwidth: 4
-        compensate_filter:
-          N: *order
-          low_cutoff: *low_cutoff
-          high_cutoff: *high_cutoff
+        compensate_filter: true
       advanced:
         buffer_sizes:
           out: 32
@@ -74,11 +74,12 @@ graph:
         n_messages: *n_messages
         stim_onset_deg: 0
         stim_dur_unit: "deg"
-        stim_dur_deg: 90
-        audio_latency_s: 0.04
+        stim_dur_deg: 45
+        audio_latency_s: 0.003
         erp_latency_s: 0
-        stim_dur_ms: 25
+        stim_dur_ms: 45
         stim_amplitude: 0.5
+        stim_period_ms: 0.1
       advanced:
         buffer_sizes:
           out: 32
@@ -148,16 +149,17 @@ graph:
         thread_core: 11
     
   connections:
-  # - Producer.out.0 = BandpassFilter.in
-  - SourceClient.out.0 = BandpassFilter.in
-  - BandpassFilter.out.0 = ChannelSelector.in
+  # - Producer.out.0 = GlobalFilter.in
+  - SourceClient.out.0 = GlobalFilter.in
+  - GlobalFilter.out.0 = ChannelSelector.in
   - ChannelSelector.out.0 = IAFEstimator.in
   - ChannelSelector.out.0 = PhaseEstimator.in
   - PhaseEstimator.out.0 = StimulusController.in
   - StimulusController.out.0 = Consumer.in
 
   - SourceClient.out.0 = Serializer1.in
-  - BandpassFilter.out.0 = Serializer2.in
+  - SourceClient.out.1 = Serializer1.in
+  - GlobalFilter.out.0 = Serializer2.in
   - PhaseEstimator.out.0 = Serializer3.in
   - PhaseEstimator.out.1 = Serializer3.in
   - IAFEstimator.out.0 = Serializer4.in

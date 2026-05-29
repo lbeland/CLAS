@@ -152,7 +152,7 @@ PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH)
     add_option("calibrate", calibrate_, "Whether to apply calibration gain");
     add_option("iaf_read_interval", iaf_read_interval_, "Packets between shared IAF polling steps.");
     add_option("filter", filter_def_, "Filter definition.", true);
-    add_option("compensate_filter", compensate_filter_, "Whether to compensate the phase distortion of the preceding bandpass filter.", false);
+    add_option("compensate_filter", compensate_filter_, "Whether to compensate the phase distortion of the preceding bandpass filter.", true);
 
     iaf_state_ = create_follower_state<double>(
         "iaf", std::numeric_limits<double>::quiet_NaN(), Permission::NONE,
@@ -339,11 +339,9 @@ void PhaseEstimator::load_filter_coeffs(const StorageContext &context, double ia
 
 void PhaseEstimator::load_phase_shift(const StorageContext &context, double iaf)
 {
-    int N = compensate_filter_()["N"].as<int>();
-    double low_cutoff = compensate_filter_()["low_cutoff"].as<double>();
-    double high_cutoff = compensate_filter_()["high_cutoff"].as<double>();
     std::string filename;
-    filename = std::to_string(N) + "_" + std::format("{:.2f}", low_cutoff) + "_" + std::format("{:.2f}", high_cutoff) + "_" + std::to_string(fs_) + "_phase.txt";
+
+    filename =  "global_filter_" + std::to_string(fs_) + "_phase.txt";
 
     std::string phase_shift_file_ = context.resolve_path(filename, "filters");
 
@@ -388,7 +386,7 @@ void PhaseEstimator::Prepare(GlobalContext &context)
     load_filter_coeffs(context, f0_);
     calibrate_gain(window_size_);
 
-    if (!compensate_filter_().IsNull())
+    if (compensate_filter_())
     {
         LOG(INFO) << name() << " Loading phase shift values for filter compensation";
         load_phase_shift(context, f0_);
@@ -525,7 +523,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
                     }
 
                     // Update value for phase shift compensation
-                    if (!compensate_filter_().IsNull())
+                    if (compensate_filter_())
                     {
                         filter_phase_shift_ = filter_phase_shift_values[f0_ * 10]; // Phase shift values are stored in 0.1 Hz increments and thus indexed with (iaf * 10)
                         LOG(INFO) << name() << " Loaded phase shift of " << filter_phase_shift_ << " radians for compensation";

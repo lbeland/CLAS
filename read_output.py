@@ -4,6 +4,7 @@ import re
 
 import numpy as np
 import yaml
+import datetime
 
 
 TYPE_FORMAT = {
@@ -151,17 +152,17 @@ def get_signal_data(path, channel=0, timestamps=False):
 
     samples = signal_flat.reshape((n_records, *signal_meta["dims"]))
     if len(signal_meta["dims"]) == 2:
-        samples = samples[:, 0, :]
+        samples = samples[:, channel, :]
     print(os.path.basename(path), "samples shape:", samples.shape, "dtype:", samples.dtype)
 
     if timestamps:
         source_ts = _extract_field(payload, layout, record_size, n_records, "source_ts")
-        # hardware_ts = _extract_field(payload, layout, record_size, n_records, "hardware_ts")
+        hardware_ts = _extract_field(payload, layout, record_size, n_records, "hardware_ts")
         # Keep the return value extensible: callers can pull what they need.
         # ts = {
         #     "source_ts": source_ts,
         #     "hardware_ts": hardware_ts,
         # }
-        return samples[:, channel], source_ts
+        return samples[:, 0], hardware_ts
     else:
-        return samples[:, channel], None
+        return samples[:, 0], None

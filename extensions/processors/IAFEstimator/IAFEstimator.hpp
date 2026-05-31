@@ -69,6 +69,6 @@ class IAFEstimator : public IProcessor {
     options::Value<double, false> f_min_{5.0};
     options::Value<double, false> f_max_{18.0};
     options::Value<unsigned int, false> calc_interval_{100};
-    options::Value<double, false> ema_window_seconds_{5.0};
+    options::Value<double, false> ema_window_sec_{5.0};
 };
     

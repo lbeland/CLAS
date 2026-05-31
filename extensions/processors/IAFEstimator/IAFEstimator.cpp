@@ -189,7 +189,7 @@ namespace
         return result;
     }
 
-    bool bic_test(const std::vector<double> &flat_power, const std::vector<double> &freqs, PeakFitResult &peak, int f_min_bin, int f_max_bin)
+    bool bic_test(const std::vector<double> &smoothed_power, const std::vector<double> &freqs, PeakFitResult &peak, int f_min_bin, int f_max_bin)
     {
 
         std::vector<double> gauss = gaussian(freqs, peak.amplitude, peak.iaf_hz, peak.sigma_hz);
@@ -199,16 +199,11 @@ namespace
         double ss_h1 = 0.0;
         for (int k = f_min_bin; k <= f_max_bin; ++k)
         {
-            double centered = flat_power[k] - 1.0;
+            double centered = smoothed_power[k];
             ss_h0 += centered * centered;
-            double resid = flat_power[k] - 1.0 - gauss[k];
+            double resid = smoothed_power[k] - gauss[k];
             ss_h1 += resid * resid;
         }
-
-        // if (ss_h0 <= 0.0 || ss_h1 <= 0.0)
-        // {
-        //     return false;
-        // }
 
         double bic_null = n * std::log(ss_h0 / n);
         double bic_peak = n * std::log(ss_h1 / n) + 3.0 * std::log(static_cast<double>(n));
@@ -364,7 +359,7 @@ IAFEstimator::IAFEstimator() : IProcessor(PRIORITY_HIGH)
     add_option("f_min", f_min_, "Left bound of alpha search range.");
     add_option("f_max", f_max_, "Right bound of alpha search range.");
     add_option("calc_interval", calc_interval_, "Number of packets between IAF calculations.");
-    add_option("ema_window_seconds", ema_window_seconds_, "Window size in seconds for RMS calculation used in IAF estimation.");
+    add_option("ema_window_sec", ema_window_sec_, "Window size in seconds for RMS calculation used in IAF estimation.");
 
     iaf_state_ = create_broadcaster_state<double>(
         "iaf", current_iaf_, Permission::NONE,
@@ -406,12 +401,12 @@ void IAFEstimator::Prepare(GlobalContext &context)
 
     iaf_state_->set(current_iaf_);
 
-    const double tau_seconds = ema_window_seconds_();
+    const double tau_seconds = ema_window_sec_();
     ema_mu_ = std::exp(-static_cast<double>(calc_interval_()) / (p.sample_rate * tau_seconds));
     ema_= std::numeric_limits<double>::quiet_NaN();
     invalid_threshold_ = static_cast<int>(std::ceil(tau_seconds * fs_ / calc_interval_()));
   
-    LOG(INFO) << name() << " EMA tau: " << p.sample_rate * ema_window_seconds_()
+    LOG(INFO) << name() << " EMA tau: " << p.sample_rate * ema_window_sec_()
               << " s, mu: " << ema_mu_ << ", invalid_threshold: " << invalid_threshold_ << " estimates";
 
     // Load FFTW wisdom if available to speed up plan creation
@@ -432,7 +427,7 @@ void IAFEstimator::Process(ProcessingContext &context)
         savgol_window_length += 1; // Ensure window length is odd
     }
 
-    int savgol_polyorder = 5;
+    int savgol_polyorder = 3;
     if (savgol_polyorder >= savgol_window_length)
     {
         savgol_window_length = savgol_polyorder + 2;    // Ensure window length is greater than polynomial order
@@ -526,14 +521,14 @@ void IAFEstimator::Process(ProcessingContext &context)
             PeakSeed seed = find_peak_seed(power_smooth, f_min_bin, f_max_bin, freq_resolution, true);
             PeakFitResult peak = fit_gaussian_peak(power_smooth, seed, freq_resolution);
 
-            peak.valid = bic_test(power_flat, freqs, peak, f_min_bin, f_max_bin);
+            peak.valid = bic_test(power_smooth, freqs, peak, f_min_bin, f_max_bin);
 
             if (peak.valid)
             {
                 if (std::isnan(ema_))
                 {
                     // first valid estimate
-                    ema_ = peak.iaf_hz;
+                    ema_ = 10; //peak.iaf_hz;
                     // LOG(INFO) << name() << " First valid IAF estimate: " << peak.iaf_hz << " Hz";
                 }
                 else
@@ -556,7 +551,7 @@ void IAFEstimator::Process(ProcessingContext &context)
                 current_iaf_ = std::numeric_limits<double>::quiet_NaN();
                 current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
             }
-            if (invalid_count_ >= (fs_ * ema_window_seconds_())/calc_interval_())
+            if (invalid_count_ >= (fs_ * ema_window_sec_())/calc_interval_())
             {
                 ema_ = std::numeric_limits<double>::quiet_NaN(); // Reset EMA if too many invalid estimates in the last window
                 // LOG(WARNING) << name() << " Too many invalid IAF estimates, resetting EMA.";

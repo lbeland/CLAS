@@ -323,29 +323,15 @@ if __name__ == "__main__":
         "n_peaks":              1,
         "peak_bw":              0.5,          # Gaussian σ in Hz
         # KEY PARAM: peak power relative to aperiodic floor at aperiodic_ref_freq
-        "peak_snr_db":          15.0,
+        "peak_snr_db":          10.0,
         # Noise
         "noise_type":           "white",       # "None" | "white" | "pink"
         # Noise PSD relative to power at carrier_freq
-        "noise_snr_db":         -30.0,
+        "noise_snr_db":         -20.0,
         # Analysis
         "window_length_sec":    5,
         "fft_method":          "fft",       # "fft" | "welch"
     }
-
-    ## Old script
-    # default_filter =     default = {
-    #     "carrier_freq": 10.0,
-    #     "carrier_waveform": "gaussian",
-    #     "mod_amp":      0.5,
-    #     "mod_freq":     0.0,
-    #     "noise_type":   "None",
-    #     "noise_snr_db":  0,
-    #     "window_length_sec": 5,
-    #     "n_peaks": 1,
-    #     "has_aperiodic": True,
-    #     "alpha_bursts": False,
-    # }
 
     error_label = "error"
 
@@ -447,13 +433,13 @@ if __name__ == "__main__":
         title="Effect of Aperiodic Exponent\n"
     )
 
-    plot_box(
-        load_samples_for_plot(HDF_PATH, df_metrics,
-                              **params_excluding(default_filter, "fft_method")),
-        HDF_PATH,
-        x="algorithm", y=error_label, hue="fft_method",
-        title="Effect of FFT method\n"
-    )
+    # plot_box(
+    #     load_samples_for_plot(HDF_PATH, df_metrics,
+    #                           **params_excluding(default_filter, "fft_method")),
+    #     HDF_PATH,
+    #     x="algorithm", y=error_label, hue="fft_method",
+    #     title="Effect of FFT method\n"
+    # )
 
     # # Print detection rates for specific conditions
     # print_detection_table(df_metrics, window_length_sec=5, noise_type="None", noise_snr_db=0, mod_freq=0, mod_amp=0.5, carrier_freq=10.0, 

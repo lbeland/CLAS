@@ -295,7 +295,7 @@ bool StimulusController::start_audio_() {
     const int sample_rate = std::max(1, audio_sample_rate_());
     const int channels = std::clamp(audio_channels_(), 1, 8);
     const snd_pcm_uframes_t period = static_cast<snd_pcm_uframes_t>(std::max(1, period_frames_));
-    const snd_pcm_uframes_t bufsize = period * 8;
+    const snd_pcm_uframes_t bufsize = period * 2;   // How many frames ALSA should buffer internally; must be >= period_frames_
 
     snd_pcm_t* local_pcm = nullptr;
     const std::string dev = audio_device_();
@@ -422,12 +422,19 @@ void StimulusController::audio_thread_main_() {
         // stable for the duration of this (blocking) write.
         snd_pcm_sframes_t written = snd_pcm_writei(local_pcm, buf, frames);
         if (written == -EPIPE) {
-            snd_pcm_prepare(local_pcm);
+            auto rc = snd_pcm_prepare(local_pcm);
+            if (rc < 0) {
+                LOG(ERROR) << name() << " Failed to prepare ALSA device after underrun: " << snd_strerror(rc);
+            }
             // Retry once after xrun recovery
             (void)snd_pcm_writei(local_pcm, buf, frames);
+            LOG(WARNING) << name() << " ALSA buffer underrun occurred; attempted recovery";
         } else if (written < 0) {
             // Other recoverable errors (e.g. suspended)
-            snd_pcm_prepare(local_pcm);
+            auto rc = snd_pcm_prepare(local_pcm);
+            if (rc < 0) {
+                LOG(ERROR) << name() << " Failed to prepare ALSA device after underrun: " << snd_strerror(rc);
+            }
         }
         // Short-write: remaining frames will be covered by the next silence period.
     }
@@ -468,27 +475,26 @@ void StimulusController::Process(ProcessingContext &context)
         data_out = data_out_port_->slot(0)->ClaimData(false);
         // data_out->CloneTimestamps(*data_in);
         data_out->set_hardware_timestamp(data_in->hardware_timestamp());
+        data_out->set_source_timestamp(data_in->source_timestamp());
         double phase = data_in->data_sample(0, 0);
         const double iaf_ = iaf_state_->get();
 
         // In "deg" mode the burst duration depends on IAF. Rebuild buffers
         // when IAF changes (guarded by audio_mutex_ so the audio thread is safe).
-        if (dur_unit_ == DurUnit::kDeg){
-            if ((std::isnan(last_iaf_) && std::isfinite(iaf_)) || iaf_ - last_iaf_ > 1e-2) {
-                const bool frames_changed = compute_burst_params_(iaf_);
-                if (frames_changed) {
-                    std::lock_guard<std::mutex> lock(audio_mutex_);
-                    build_audio_buffers_();
-                    LOG(INFO) << name() << " IAF changed " << last_iaf_ << " -> " << iaf_
-                            << ": burst rebuilt to " << burst_frames_ << " frames";
-                }
-                last_iaf_ = iaf_;
+        if ((std::isnan(last_iaf_) && std::isfinite(iaf_)) || iaf_ - last_iaf_ > 1e-2) {
+            const bool frames_changed = compute_burst_params_(iaf_);
+            if (frames_changed) {
+                std::lock_guard<std::mutex> lock(audio_mutex_);
+                build_audio_buffers_();
+                LOG(INFO) << name() << " IAF changed " << last_iaf_ << " -> " << iaf_
+                        << ": burst rebuilt to " << burst_frames_ << " frames";
             }
+            last_iaf_ = iaf_;
         }
 
         TimePoint now = Clock::now();
         TimePoint sample_ts = data_in->source_timestamp();
-        data_out->set_source_timestamp(now);
+        // data_out->set_source_timestamp(now);
         data_in_port_->slot(0)->ReleaseData();
         
         double delay_sec = std::chrono::duration<double>(now - sample_ts).count();

@@ -102,7 +102,7 @@ class StimulusController : public IProcessor {
     options::Value<double, false> stim_onset_deg_{0};
     options::Value<double, false> audio_latency_s_{0};
     options::Value<double, false> erp_latency_s_{0};  //auditory evoked response potential latency in seconds
-    options::Value<int, false> stim_period_ms_{5};
+    options::Value<double, false> stim_period_ms_{1};
     options::Value<double, false> stim_amplitude_{0.7};
     options::Value<int, false> stim_num_octaves_{6};
 

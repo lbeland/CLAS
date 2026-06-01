@@ -20,6 +20,7 @@
 
 #include "iprocessor.hpp"
 #include "multichanneldata/multichanneldata.hpp"
+#include "scalardata/scalardata.hpp"
 #include <vector>
 
 class ChannelSelector : public IProcessor {
@@ -32,6 +33,8 @@ class ChannelSelector : public IProcessor {
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
 
+  BroadcasterState<unsigned int>* channel_state_ = nullptr;
+
   // VARIABLES
   protected:
     unsigned int packet_count_ = 0;
@@ -43,12 +46,13 @@ class ChannelSelector : public IProcessor {
   protected:
     PortIn<MultiChannelType<float>> *data_in_port_;
     PortOut<MultiChannelType<float>> *data_out_port_;
+    PortOut<ScalarType<unsigned int>> *idx_out_port;
 
   // OPTIONS
   protected:
-    options::Value<int, false> n_messages_{-1};
+    options::Int n_messages_{-1};
     options::Vector<int, false> channel_indices_;
-    options::Value<double, false> rms_window_seconds_{5.0};
+    options::Double rms_window_seconds_{5.0};
 
     unsigned int current_channel_index_ = 0;
     double ema_mu_ = 1.0;

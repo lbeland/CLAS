@@ -32,6 +32,9 @@ ChannelSelector::ChannelSelector() : IProcessor(PRIORITY_HIGH) {
   add_option("channel_indices", channel_indices_, "Comma-separated list of channel indices to select from (1-based).");
   add_option("rms_window_seconds", rms_window_seconds_, "Length of the weighted RMS window in seconds (recent samples get higher weights).");
 
+  channel_state_ = create_broadcaster_state<unsigned int>(
+    "channel_idx", current_channel_index_, Permission::NONE,
+    "Current selected channel index shared with downstream processors.");
 }
 
 void ChannelSelector::CreatePorts() {
@@ -44,16 +47,23 @@ void ChannelSelector::CreatePorts() {
       "out",
       MultiChannelType<float>::Parameters(1,1,1), // Placeholder, will be set in CompleteStreamInfo
       PortOutPolicy(SlotRange(0,MAX_NCHANNELS),200,WaitStrategy::kBlockingStrategy));
+
+  idx_out_port = create_output_port<ScalarType<unsigned int>>(
+      "ch_idx_out",
+      ScalarType<unsigned int>::Parameters(1), // Placeholder, will be set in CompleteStreamInfo
+      PortOutPolicy(SlotRange(0, MAX_NCHANNELS), 200, WaitStrategy::kBlockingStrategy));
 }
 
 void ChannelSelector::CompleteStreamInfo() {
   const auto &input_params = data_in_port_->slot(0)->streaminfo().parameters<MultiChannelType<float>::Parameters>();
 
-  for (int k = 0; k < data_in_port_->number_of_slots(); ++k) {
-    // only pass through the selected channel, so set output nchannels to 1 but keep nsamples and sample_rate the same as input
-    data_out_port_->streaminfo(k).set_parameters(MultiChannelType<float>::Parameters(1, input_params.nsamples, input_params.sample_rate));
-    data_out_port_->streaminfo(k).set_stream_rate(data_in_port_->streaminfo(k));
-  }
+  // only pass through the selected channel, so set output nchannels to 1 but keep nsamples and sample_rate the same as input
+  data_out_port_->streaminfo(0).set_parameters(MultiChannelType<float>::Parameters(1, input_params.nsamples, input_params.sample_rate));
+  data_out_port_->streaminfo(0).set_stream_rate(data_in_port_->streaminfo(0));
+
+  // Set the parameters for the channel index output port
+  idx_out_port->streaminfo(0).set_parameters(ScalarType<unsigned int>::Parameters(1));
+  idx_out_port->streaminfo(0).set_stream_rate(data_in_port_->streaminfo(0));
 }
 
 void ChannelSelector::Prepare(GlobalContext &context) {
@@ -82,6 +92,7 @@ void ChannelSelector::Prepare(GlobalContext &context) {
   }
 
   current_channel_index_ = selected_channels_.front();
+  channel_state_->set(current_channel_index_);
 
   const double tau_seconds = rms_window_seconds_();
   // EMA
@@ -95,6 +106,7 @@ void ChannelSelector::Prepare(GlobalContext &context) {
 void ChannelSelector::Process(ProcessingContext &context) {
   MultiChannelType<float>::Data *data_in = nullptr;
   MultiChannelType<float>::Data *data_out = nullptr;
+  ScalarType<unsigned int>::Data *idx_out = nullptr;
 
   // Measurement phase
   while (!context.terminated()) {
@@ -120,20 +132,28 @@ void ChannelSelector::Process(ProcessingContext &context) {
       }
     }
 
+    channel_state_->set(current_channel_index_);
+
     if (packet_count_ % int(fs_) == 0) {
       LOG(INFO) << name() << ". Packet " << packet_count_ + 1 << ": Selected channel " << current_channel_index_ + 1 << " (RMS: " << ema_[current_channel_index_] << ")";
     }
 
     // Claim output buffer
     data_out = data_out_port_->slot(0)->ClaimData(false);
+    idx_out = idx_out_port->slot(0)->ClaimData(false);
 
     data_out->set_data_sample(0, 0, data_in->data_sample(0, current_channel_index_));
     data_out->set_sample_timestamps(data_in->sample_timestamps());
 
     data_out->CloneTimestamps(*data_in);
 
+    idx_out->set_data(current_channel_index_ + 1); // convert back to 1-based index
+    idx_out->set_hardware_timestamp(data_in->hardware_timestamp());
+    idx_out->set_source_timestamp(Clock::now());
+
     data_in_port_->slot(0)->ReleaseData();
     data_out_port_->slot(0)->PublishData();
+    idx_out_port->slot(0)->PublishData();
 
     packet_count_ ++;
       

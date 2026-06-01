@@ -51,7 +51,7 @@ class MultiChannelFilter : public IProcessor {
   // OPTIONS
  protected:
   options::Value<YAML::Node, false> filter_def_{};
-  options::Value<int, false> n_messages_{-1};
+  options::Int n_messages_{-1};
 
  const uint32_t MAX_NCHANNELS=384;
 };

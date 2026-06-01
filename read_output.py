@@ -117,6 +117,9 @@ def _extract_field(payload: bytes, layout: list, record_size: int, n_records: in
     return flat.reshape((n_records, *dims))
 
 def get_signal_data(path, channel=0, timestamps=False):
+    if not os.path.exists(path):
+        print(f"File not found: {path}")
+        return None, None
     with open(path, "rb") as f:
         blob = f.read()
 
@@ -163,6 +166,6 @@ def get_signal_data(path, channel=0, timestamps=False):
         #     "source_ts": source_ts,
         #     "hardware_ts": hardware_ts,
         # }
-        return samples[:, 0], hardware_ts
+        return samples.squeeze(), hardware_ts
     else:
-        return samples[:, 0], None
+        return samples, None

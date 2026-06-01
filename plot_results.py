@@ -7,25 +7,30 @@ from meegkit.phase import ECHT
 from scipy.signal import hilbert, butter, sosfiltfilt, sosfreqz
 from read_output import get_signal_data
 from scipy.fft import fft, ifft, fftshift, ifftshift, next_fast_len
+from pathlib import Path
 
 def wrap_phase_deg(x_deg):
     return (x_deg + 180.0) % 360.0 - 180.0
 
 def get_results_file(processor_name, slot=0):
-    # Look for files matching the pattern "Serializer2.0_PhaseEstimator.out.0.bin"
+    # Look for files matching the serializer naming pattern under the current run folder.
+    root_candidates = [Path("_last_run"), Path("results") / Path("_last_run")]
+    root = next((candidate for candidate in root_candidates if candidate.exists()), root_candidates[0])
 
-    for filename in os.listdir("rt_c_results"):
-        if filename.endswith(f"{slot}.bin"):
-            if processor_name in filename:
-                return os.path.join("rt_c_results", filename)
-    return None
+    expected_suffix = f"{processor_name}.out.{slot}.bin"
+    matches = [path for path in root.rglob("*.bin") if path.name.endswith(expected_suffix)]
+    if not matches:
+        return None
 
-def plot_results(fs, f0, graph_name, timestamps="source_ts"):
+    matches.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return str(matches[0])
+
+def plot_results(fs, f0, graph_name, timestamps=True):
 
     if graph_name == "TurboLinkCLAS.yaml":
-        processors = ["SourceClient","BandpassFilter", "PhaseEstimator", "IAFEstimator","StimulusController"]
+        processors = ["SourceClient", "PhaseEstimator", "IAFEstimator","StimulusController"] # "GlobalFilter",
     elif graph_name == "SimulateCLAS.yaml":
-        processors = ["Producer", "PhaseEstimator", "IAFEstimator", "StimulusController"]
+        processors = ["Producer", "GlobalFilter", "PhaseEstimator", "IAFEstimator", "StimulusController"]
     elif graph_name == "IAFtests.yaml":
         processors = ["Producer", "IAFEstimator"]
     elif graph_name == "ecHTtests.yaml":
@@ -38,6 +43,21 @@ def plot_results(fs, f0, graph_name, timestamps="source_ts"):
                 signal,time = get_signal_data(get_results_file(processor, slot),timestamps=timestamps)
                 if signal is not None:
                     samples[f"{processor}_{slot}"] = {"x": time, "y": signal}
+        elif processor == "SourceClient":
+            for slot in range(2):
+                if slot == 0:
+                    signal,time = get_signal_data(get_results_file(processor, slot),channel = 0, timestamps=timestamps)
+                    if signal is not None:
+                        samples[f"{processor}_{slot}"] = {"x": time, "y": signal}
+                else:
+                    channel = 0  # AUX channel
+                    signal,time = get_signal_data(get_results_file(processor, slot),channel = channel, timestamps=timestamps)
+                    if signal is not None:
+                        samples[f"{processor}_{slot}_AUX"] = {"x": time, "y": signal}
+                    channel = 8  # Trigger channel
+                    signal,time = get_signal_data(get_results_file(processor, slot),channel = channel, timestamps=timestamps)
+                    if signal is not None:
+                        samples[f"{processor}_{slot}_TRIGGER"] = {"x": time, "y": signal}
         elif processor == "PhaseEstimator":
             for slot in range(2):
                 signal, time = get_signal_data(get_results_file(processor, slot), timestamps=timestamps)
@@ -88,7 +108,7 @@ def plot_results(fs, f0, graph_name, timestamps="source_ts"):
     # echt_Xf = echt.fit_transform(samples_orig)[:,0]
     # echt_phase = np.angle(echt_Xf)
 
-    sos = butter(1, [8, 12], btype='band', fs=fs, output='sos')
+    sos = butter(1, [4, 8], btype='band', fs=fs, output='sos')
     samples_filt = sosfiltfilt(sos, samples_orig)
     hilbert_Xf = hilbert(samples_filt)
     hilbert_phase = np.angle(hilbert_Xf)
@@ -110,32 +130,40 @@ def plot_results(fs, f0, graph_name, timestamps="source_ts"):
 
     ## Samples plot ----------------------
     start_ts = time_orig[0]
-    time_orig = (time_orig - start_ts)/10e6   # align to 0
+    time_orig = (time_orig - start_ts)/1e6   # align to 0
     ax0.plot(time_orig, samples_orig, 'o-',linewidth=1.2, markersize=2.5,label="Original")
     ax0b = ax0.twinx()
-    ax0b.plot(time_orig, hilbert_phase, linewidth=2, alpha=0.7, label="Hilbert offline",c="tab:red")
+    ax0b.plot(time_orig, np.rad2deg(hilbert_phase), linewidth=2, alpha=0.7, label="Hilbert offline",c="tab:red")
     # ax0.plot(cecht_phase, linestyle=":", linewidth=1.2, label="cecHT offline")
     # ax0.plot(echt_phase, linestyle="--", linewidth=1.2, label="ecHT offline")
     if true_phase is not None:
-        ax0.plot(time_orig, true_phase, linewidth=1.2, alpha=0.7, label="True phase")
-    if samples.get("BandpassFilter_0") is not None:
-        x = samples["BandpassFilter_0"]["x"]
-        ax0.plot((x-start_ts)/10e6, samples["BandpassFilter_0"]["y"], linewidth=1.2, label="Bandpass filtered")
+        ax0b.plot(time_orig, np.rad2deg(true_phase), linewidth=1.2, alpha=0.7, label="True phase")
+    if samples.get("GlobalFilter_0") is not None:
+        x = samples["GlobalFilter_0"]["x"]
+        ax0.plot((x-start_ts)/1e6, samples["GlobalFilter_0"]["y"], linewidth=1.2, label="Bandpass filtered")
     if samples.get("PhaseEstimator_0") is not None:
         x = samples["PhaseEstimator_0"]["x"]
         samples_phase = samples["PhaseEstimator_0"]["y"]
-        ax0b.plot((x-start_ts)/10e6, samples_phase, linestyle="-.", linewidth=1.4, label="Online phase",c="tab:olive")
+        ax0b.plot((x-start_ts)/1e6, np.rad2deg(samples_phase), linestyle="-.", linewidth=1.4, label="Online phase",c="tab:olive")
     if samples.get("StimulusController_0") is not None:
         x = samples["StimulusController_0"]["x"]
         samples_stim = np.where(samples["StimulusController_0"]["y"] == 1)[0]
-        ax0.plot((x[samples_stim]-start_ts)/10e6, 0*samples["StimulusController_0"]["y"][samples_stim], "o", markersize=3, label="Stimulus")
+        ax0.plot((x[samples_stim]-start_ts)/1e6, 0*samples["StimulusController_0"]["y"][samples_stim], "o", alpha=0.5,markersize=3, label="Stimulus")
         # ax0.plot(time_orig[samples_stim], samples_orig[samples_stim], "o", markersize=3, label="Stimulus")
+    if samples.get("SourceClient_1_AUX") is not None:
+        x = samples["SourceClient_1_AUX"]["x"]
+        ax0.plot((x-start_ts)/1e6, samples["SourceClient_1_AUX"]["y"], linewidth=1.2, label="AUX")
+    if samples.get("SourceClient_1_TRIGGER") is not None:
+        x = samples["SourceClient_1_TRIGGER"]["x"]
+        samples_stim = np.where(samples["SourceClient_1_TRIGGER"]["y"] == 1)[0]
+        ax0.plot((x[samples_stim]-start_ts)/1e6, 0*samples["SourceClient_1_TRIGGER"]["y"][samples_stim], "o", alpha=0.5, markersize=3, label="Trigger")
     
     # if samples.get("PhaseEstimator_1") is not None:
     #     samples_real = samples["PhaseEstimator_1"]
     #     ax0.plot(time, samples_real, linewidth=1.2, label="Online real part")
 
-    ax0.set_ylabel("Amplitude / Phase (rad)")
+    ax0.set_ylabel("Amplitude")
+    ax0b.set_ylabel("Phase (degrees)")
     handles, labels = ax0.get_legend_handles_labels()
     handles2, labels2 = ax0b.get_legend_handles_labels()
     ax0.legend(handles + handles2, labels + labels2, loc='upper left', frameon=False)
@@ -153,9 +181,8 @@ def plot_results(fs, f0, graph_name, timestamps="source_ts"):
     if samples.get("IAFEstimator_0") is not None:
         x = samples["IAFEstimator_0"]["x"]
         est_inst_freq = samples["IAFEstimator_0"]["y"]
-        line_est_freq = ax1.plot((x-start_ts)/10e6, est_inst_freq, 'o-', markersize=2.5,linewidth=1.2, label="Estimated IAF")
+        line_est_freq = ax1.plot((x-start_ts)/1e6, est_inst_freq, 'o-', markersize=2.5,linewidth=1.2, label="Estimated IAF")
         legend_items += line_est_freq
-
 
     ax1.get_yaxis().get_major_formatter().set_useOffset(False)
     ax1.set_ylabel("Frequency (Hz)")
@@ -179,19 +206,19 @@ def plot_results(fs, f0, graph_name, timestamps="source_ts"):
             # ax2.plot(message_indices, echt_error, linestyle="--", linewidth=1.2, label="ecHT error")
             hilbert_error = np.angle(np.exp(1j * (true_phase - hilbert_phase)), deg=True)
             # hlbert_error_calib = np.angle(np.exp(1j * (true_phase - (np.angle(hilbert_Xf*calibs)))), deg=True)
-            ax2.plot((x-start_ts)/10e6, hilbert_error, linestyle="--", linewidth=1.2, label="Hilbert error")
-            # ax2.plot((x-start_ts)/10e6, hlbert_error_calib, linestyle=":", linewidth=1.2, label="Hilbert error (calibrated)")
+            ax2.plot((x-start_ts)/1e6, hilbert_error, linestyle="--", linewidth=1.2, label="Hilbert error")
+            # ax2.plot((x-start_ts)/1e6, hlbert_error_calib, linestyle=":", linewidth=1.2, label="Hilbert error (calibrated)")
         else:
             n = min(len(samples_phase), len(hilbert_phase))
             error = np.angle(np.exp(1j * (hilbert_phase[:n] - samples_phase[:n])), deg=True)
         errors.append(error)
-        ax2.plot((x-start_ts)/10e6, error, linewidth=1.2, label="Phase error")
+        ax2.plot((x-start_ts)/1e6, error, linewidth=1.2, label="Phase error")
         units.append("degrees")
     if samples.get("IAFEstimator_0") is not None and true_inst_freq is not None:
         x = samples["IAFEstimator_0"]["x"]
         error = est_inst_freq - true_inst_freq
         errors.append(error)
-        ax2.plot((x-start_ts)/10e6, error, linewidth=1.2, label="Frequency error")
+        ax2.plot((x-start_ts)/1e6, error, linewidth=1.2, label="Frequency error")
         units.append("Hz")
     ax2.set_ylabel(f"Error ({" / ".join(units)})")
     ax2.tick_params(axis="y")
@@ -202,17 +229,17 @@ def plot_results(fs, f0, graph_name, timestamps="source_ts"):
 
 
     ## Hist plot ----------------------
-    for error in errors:
+    for color, error in zip(['tab:orange', 'tab:green'], errors):
         if np.nansum(error) == 0:
             continue
         try:
-            ax3.hist(error, bins="auto",alpha=0.8, edgecolor="black", linewidth=0.5)
+            ax3.hist(error, bins="auto",alpha=0.8, edgecolor="black", linewidth=0.5, color=color)
         except ValueError:
             print(f"Unique error values: {np.unique(error)}")
-        ax3.axvline(np.nanmean(error), linestyle="--", linewidth=1.2, label=f"Mean = {np.nanmean(error):.2f}")
-        ax3.axvline(np.nanmedian(error), linestyle=":", linewidth=1.2, label=f"Median = {np.nanmedian(error):.2f}")
-        ax3.axvline(np.nanmean(error)+np.nanstd(error), linestyle="-.", linewidth=1.2, label=f"Std = {np.nanstd(error):.2f}")
-        ax3.axvline(np.nanmean(error)-np.nanstd(error), linestyle="-.", linewidth=1.2)
+        ax3.axvline(np.nanmean(error), linestyle="--", linewidth=1.2, label=f"Mean = {np.nanmean(error):.2f}", color=color)
+        ax3.axvline(np.nanmedian(error), linestyle=":", linewidth=1.2, label=f"Median = {np.nanmedian(error):.2f}", color=color)
+        ax3.axvline(np.nanmean(error)+np.nanstd(error), linestyle="-.", linewidth=1.2, label=f"Std = {np.nanstd(error):.2f}", color=color)
+        ax3.axvline(np.nanmean(error)-np.nanstd(error), linestyle="-.", linewidth=1.2, color=color)
 
     ax3.set_xlabel("Error value")
     ax3.set_ylabel("Count")

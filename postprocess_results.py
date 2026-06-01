@@ -17,6 +17,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import butter, sosfiltfilt, hilbert, welch
 from read_output import get_signal_data
+from pathlib import Path
 
 # Optional EDF support — install with: pip install pyedflib
 try:
@@ -26,55 +27,106 @@ except ImportError:
     HAS_EDF = False
     print("Warning: pyedflib not installed. EDF export disabled. Install with: pip install pyedflib")
 
-RESULTS_DIR = "rt_c_results"
+# Automatic link to the last run results
+RESULTS_DIR = "_last_run"
 
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
-def get_results_file(processor_name: str, slot: int = 0, results_dir=None) -> str | None:
-    """Return path to the binary results file for a given processor and slot."""
-    dir = results_dir if results_dir is not None else RESULTS_DIR
-    for filename in os.listdir(dir):
-        if filename.endswith(f"{slot}.bin") and processor_name in filename:
-            return os.path.join(dir, filename)
-    return None
+def _resolve_results_root(results_dir=None) -> Path:
+    candidates = []
+    if results_dir is not None:
+        results_path = Path(results_dir)
+        candidates.append(results_path)
+        candidates.append(Path("results") / results_path)
+    else:
+        candidates.append(Path(RESULTS_DIR))
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    return candidates[0]
+
+
+def get_results_file(processor_name: str, name: str = ".out", slot: int = 0, results_dir=None) -> str | None:
+    """Return path to the serializer output file for a given processor and slot."""
+    root = _resolve_results_root(results_dir)
+    if not root.exists():
+        return None
+
+    name_token = name.lstrip(".") if name else "out"
+    expected_suffix = f"{processor_name}.{name_token}.{slot}.bin"
+
+    matches = [path for path in root.rglob("*.bin") if path.name.endswith(expected_suffix)]
+    if not matches:
+        return None
+
+    matches.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return str(matches[0])
 
 
 def load_processor_signals(processors: list[str], timestamps: bool = True, results_dir=None) -> dict:
     """Load raw signal data from all processors into a dict keyed by label."""
     samples = {}
 
+    print(results_dir)
     for processor in processors:
         if processor == "Producer":
-            for slot in range(4):
-                signal, time = get_signal_data(get_results_file(processor, slot, results_dir), timestamps=timestamps)
-                if signal is not None:
-                    samples[f"{processor}_{slot}"] = {"x": time, "y": signal}
+            # Data
+            file = get_results_file(processor, slot=0, results_dir=results_dir)
+            signal, time = get_signal_data(file, channel=list(range(10)), timestamps=timestamps)
+            if signal is None:
+                continue
+            for idx, channel in enumerate(signal.T):
+                samples[f"{processor}_{idx}"] = {"x": time, "y": channel}
+            # Metadata
+            file = get_results_file(processor, name=".meta_out", slot=0, results_dir=results_dir)
+            signal, time = get_signal_data(file, channel=list(range(3)), timestamps=timestamps)
+            if signal is None:
+                continue
+            for idx, channel in enumerate(signal.T):
+                samples[f"{processor}_meta_{idx}"] = {"x": time, "y": channel}
 
         elif processor == "SourceClient":
-            # Slot 0: primary EEG channel
-            signal, time = get_signal_data(get_results_file(processor, 0, results_dir), channel=0, timestamps=timestamps)
-            if signal is not None:
-                samples["SourceClient_0"] = {"x": time, "y": signal}
+            # Slot 0: primary EEG channels (up to 32)
+            file = get_results_file(processor, slot=0, results_dir=results_dir)
+            signal, time = get_signal_data(file, channel=list(range(32)), timestamps=timestamps)
+            if signal is None:
+                continue
+            for idx, channel in enumerate(signal.T):
+                samples[f"SourceClient_{idx}"] = {"x": time, "y": channel}
             # Slot 1: AUX and trigger channels
-            for label, channel in [("AUX", 0), ("TRIGGER", 8)]:
-                signal, time = get_signal_data(get_results_file(processor, 1, results_dir), channel=channel, timestamps=timestamps)
-                if signal is not None:
-                    samples[f"SourceClient_1_{label}"] = {"x": time, "y": signal}
+            file = get_results_file(processor, slot=1, results_dir=results_dir)
+            signal, time = get_signal_data(file, channel=list(range(8)), timestamps=timestamps)
+            if signal is not None:
+                samples["SourceClient_AUX"] = {"x": time, "y": signal[:, 0] if signal.ndim > 1 else signal}
+
+            file = get_results_file(processor, slot=1, results_dir=results_dir)
+            signal, time = get_signal_data(file, channel=8, timestamps=timestamps)
+            if signal is not None:
+                samples["SourceClient_TRIGGER"] = {"x": time, "y": signal}
 
         elif processor == "PhaseEstimator":
-            for slot in range(2):
-                signal, time = get_signal_data(get_results_file(processor, slot, results_dir), timestamps=timestamps)
-                if signal is not None:
-                    samples[f"{processor}_{slot}"] = {"x": time, "y": signal}
+            # Slot 0: phase estimates
+            file = get_results_file(processor, slot=0, results_dir=results_dir)
+            signal, time = get_signal_data(file, channel=0, timestamps=timestamps)
+            if signal is not None:
+                samples[f"{processor}_phase"] = {"x": time, "y": signal}
+            # Slot 1: Real-part of analytic signal
+            file = get_results_file(processor, slot=1, results_dir=results_dir)
+            signal, time = get_signal_data(file, channel=0, timestamps=timestamps)
+            if signal is not None:
+                samples[f"{processor}_real"] = {"x": time, "y": signal}
 
         else:
-            file = get_results_file(processor, 0, results_dir)
+            result_name = "ch_idx_out" if processor == "ChannelSelector" else ".out"
+            file = get_results_file(processor, name=result_name, slot=0, results_dir=results_dir)
             if file is not None:
-                signal, time = get_signal_data(file, timestamps=timestamps)
-            if signal is not None:
-                samples[f"{processor}_0"] = {"x": time, "y": signal}
+                signal, time = get_signal_data(file, channel=0, timestamps=timestamps)
+                if signal is not None:
+                    samples[f"{processor}"] = {"x": time, "y": signal}
 
     return samples
 
@@ -86,8 +138,20 @@ def extract_ground_truth(samples: dict) -> dict:
     Returns dict with keys: raw, time, true_phase, true_amplitude, true_inst_freq.
     """
     if "SourceClient_0" in samples:
-        raw   = samples["SourceClient_0"]["y"]
-        time  = samples["SourceClient_0"]["x"]
+        # From the 32 EEG channels, generate one "raw" signal that is build sample by sample with the signal that was selected by the ChannelSelector in real time
+        # Because thats what the PhaseEstimator got as input
+        if "ChannelSelector" in samples:
+            channel_selected = samples["ChannelSelector"]["y"]
+
+            raw = []
+            for sample_idx, select_idx in enumerate(channel_selected):
+                raw.append(samples[f"SourceClient_{select_idx}"]["y"][sample_idx])
+
+            time  = samples["ChannelSelector"]["x"]
+        else:
+            raw = samples["SourceClient_0"]["y"]
+            time = samples["SourceClient_0"]["x"]
+            
         if os.path.exists("simulated_signal.npy"):
             loaded = np.load("simulated_signal.npy")
             assert raw[0, 0] == loaded["value"][0], \
@@ -102,13 +166,25 @@ def extract_ground_truth(samples: dict) -> dict:
                 "true_amplitude": None, "true_phase": None, "true_inst_freq": None}
 
     elif "Producer_0" in samples:
+        if "ChannelSelector" in samples:
+            channel_selected = samples["ChannelSelector"]["y"]
+
+            raw = []
+            for sample_idx, select_idx in enumerate(channel_selected):
+                raw.append(samples[f"Producer_{select_idx-1}"]["y"][sample_idx])    # zero based
+
+            raw = np.array(raw)
+            time  = samples["ChannelSelector"]["x"]
+        else:
+            raw = samples["Producer_0"]["y"]
+            time = samples["Producer_0"]["x"]
+
         return {
-            "raw":            samples["Producer_0"]["y"],
-            "time":           samples["Producer_0"]["x"],
-            "true_amplitude": samples.get("Producer_1", {}).get("y"),
-            "true_phase":     np.angle(np.exp(1j * samples["Producer_2"]["y"]))
-                              if "Producer_2" in samples else None,
-            "true_inst_freq": samples.get("Producer_3", {}).get("y"),
+            "raw":            raw,
+            "time":           time,
+            "true_amplitude": samples.get("Producer_meta_0", {}).get("y"),
+            "true_phase":     np.angle(np.exp(1j * samples["Producer_meta_1"]["y"])),
+            "true_inst_freq": samples.get("Producer_meta_2", {}).get("y"),
         }
 
     return None
@@ -167,7 +243,7 @@ def write_edf(
         print("Skipping EDF export (pyedflib not available).")
         return
 
-    raw  = ground_truth["raw"].squeeze()
+    raw  = ground_truth["raw"]
     time = ground_truth["time"]
     n    = len(raw)
 
@@ -178,9 +254,9 @@ def write_edf(
     if filtered is not None:
         channels.append(("EEG_filt_offline", filtered[:n]))
 
-    if samples.get("GlobalFilter_0") is not None:
-        bp = samples["GlobalFilter_0"]["y"].squeeze()
-        t_bp = samples["GlobalFilter_0"]["x"]
+    if samples.get("GlobalFilter") is not None:
+        bp = samples["GlobalFilter"]["y"]
+        t_bp = samples["GlobalFilter"]["x"]
         if len(bp) != n:
             bp = np.interp(time, t_bp, bp)
         channels.append(("EEG_filt_online", bp[:n]))
@@ -192,9 +268,9 @@ def write_edf(
     if ground_truth["true_phase"] is not None:
         channels.append(("True_phase_rad", ground_truth["true_phase"][:n]))
 
-    if samples.get("PhaseEstimator_0") is not None:
-        phase_est = samples["PhaseEstimator_0"]["y"].squeeze()
-        t_est = samples["PhaseEstimator_0"]["x"]
+    if samples.get("PhaseEstimator_phase") is not None:
+        phase_est = samples["PhaseEstimator_phase"]["y"]
+        t_est = samples["PhaseEstimator_phase"]["x"]
         if len(phase_est) != n:
             phase_est = np.interp(time, t_est, phase_est)
         channels.append(("Online_phase_rad", phase_est[:n]))
@@ -204,12 +280,12 @@ def write_edf(
         channels.append(("Target_Stim", stim_ref[:n]))
 
     for key, label, ann_label, trim_ms in [
-        ("StimulusController_0",   "Stimulus", "Stimulus", 0.0),
-        ("SourceClient_1_TRIGGER", "Trigger",  "Trigger",  11.0),
+        ("StimulusController",   "Stimulus", "Stimulus", 0.0),
+        ("SourceClient_TRIGGER", "Trigger",  "Trigger",  11.0),
     ]:
         if samples.get(key) is not None:
             t_ev  = samples[key]["x"]
-            y_ev  = samples[key]["y"].squeeze()
+            y_ev  = samples[key]["y"]
             # Resample onto raw timeline as a continuous 0/1 channel
             binary = np.interp(time, t_ev, y_ev.astype(float))
             binary = (binary > 0.5).astype(float)   # re-binarise after interp
@@ -218,9 +294,9 @@ def write_edf(
             channels.append((label, binary[:n]))
 
     # AUX channel (raw, interpolated onto the EEG timeline)
-    if samples.get("SourceClient_1_AUX") is not None:
-        t_aux = samples["SourceClient_1_AUX"]["x"]
-        y_aux = samples["SourceClient_1_AUX"]["y"].squeeze()
+    if samples.get("SourceClient_AUX") is not None:
+        t_aux = samples["SourceClient_AUX"]["x"]
+        y_aux = samples["SourceClient_AUX"]["y"]
         if len(y_aux) != n:
             y_aux = np.interp(time, t_aux, y_aux)
         channels.append(("AUX_raw", y_aux[:n]))
@@ -233,9 +309,9 @@ def write_edf(
     if ground_truth["true_inst_freq"] is not None:
         channels.append(("True_inst_freq_Hz", ground_truth["true_inst_freq"][:n]))
 
-    if samples.get("IAFEstimator_0") is not None:
-        iaf = samples["IAFEstimator_0"]["y"].squeeze()
-        t_iaf = samples["IAFEstimator_0"]["x"]
+    if samples.get("IAFEstimator") is not None:
+        iaf = samples["IAFEstimator"]["y"]
+        t_iaf = samples["IAFEstimator"]["x"]
         if len(iaf) != n:
             iaf = np.interp(time, t_iaf, iaf)
         channels.append(("IAF_est_Hz", iaf[:n]))
@@ -284,12 +360,12 @@ def compute_errors(
     errors = []
     true_phase     = ground_truth["true_phase"]
     true_inst_freq = ground_truth["true_inst_freq"]
-    raw            = ground_truth["raw"].squeeze()
+    raw            = ground_truth["raw"]
  
     # Phase error
-    if samples.get("PhaseEstimator_0") is not None:
-        t   = (samples["PhaseEstimator_0"]["x"] - start_ts) / 1e6
-        phi = samples["PhaseEstimator_0"]["y"].squeeze()
+    if samples.get("PhaseEstimator_phase") is not None:
+        t   = (samples["PhaseEstimator_phase"]["x"] - start_ts) / 1e6
+        phi = samples["PhaseEstimator_phase"]["y"]
         n   = len(phi)
  
         if true_phase is not None:
@@ -306,9 +382,9 @@ def compute_errors(
                            "unit": "degrees", "linestyle": "--"})
  
     # IAF error
-    if samples.get("IAFEstimator_0") is not None and true_inst_freq is not None:
-        t   = (samples["IAFEstimator_0"]["x"] - start_ts) / 1e6
-        iaf = samples["IAFEstimator_0"]["y"].squeeze()
+    if samples.get("IAFEstimator") is not None and true_inst_freq is not None:
+        t   = (samples["IAFEstimator"]["x"] - start_ts) / 1e6
+        iaf = samples["IAFEstimator"]["y"]
         n   = min(len(iaf), len(true_inst_freq))
         err = iaf[:n] - true_inst_freq[:n]
         errors.append({"label": "IAF error", "time_s": t[:n], "values": err, "unit": "Hz"})
@@ -316,15 +392,15 @@ def compute_errors(
     # Stimulus onset/offset errors: compare actual trigger edges against a
     # reference stimulus reconstructed from the offline/true phase.
     stim_ref = None
-    if samples.get("StimulusController_0") is not None:
-        if samples.get("SourceClient_1_TRIGGER") is not None:
+    if samples.get("StimulusController") is not None:
+        if samples.get("SourceClient_TRIGGER") is not None:
             trigger_source = "measured"
-            trigger_t = samples["SourceClient_1_TRIGGER"]["x"]
-            trigger_y = samples["SourceClient_1_TRIGGER"]["y"].squeeze()
-        elif samples.get("StimulusController_0") is not None:
+            trigger_t = samples["SourceClient_TRIGGER"]["x"]
+            trigger_y = samples["SourceClient_TRIGGER"]["y"]
+        elif samples.get("StimulusController") is not None:
             trigger_source = "internal"
-            trigger_t = samples["StimulusController_0"]["x"]
-            trigger_y = samples["StimulusController_0"]["y"].squeeze()
+            trigger_t = samples["StimulusController"]["x"]
+            trigger_y = samples["StimulusController"]["y"]
 
         ref_phase = true_phase if true_phase is not None else hilbert_phase
         ref_label = "true" if true_phase is not None else "Hilbert"
@@ -333,9 +409,9 @@ def compute_errors(
         # Priority: ground truth estimate → true IAF → constant 10 Hz fallback.
         if true_inst_freq is not None:
             iaf_interp = true_inst_freq
-        elif samples.get("IAFEstimator_0") is not None:
-            iaf_t = samples["IAFEstimator_0"]["x"]
-            iaf_y = samples["IAFEstimator_0"]["y"].squeeze()
+        elif samples.get("IAFEstimator") is not None:
+            iaf_t = samples["IAFEstimator"]["x"]
+            iaf_y = samples["IAFEstimator"]["y"]
             iaf_interp = np.interp(ground_truth["time"], iaf_t, iaf_y)
         else:
             iaf_interp = np.full(len(ground_truth["time"]), 10.0)
@@ -508,10 +584,10 @@ def compute_stimulus_edge_errors(
             print(f"Warning: {label} edge count mismatch — "
                   f"ref={len(ref_t)}, actual={len(act_t)}. Matching by nearest time.")
         times, errs = [], []
-        for rt, rp in zip(ref_t, ref_phi):
-            j   = int(np.argmin(np.abs(act_t - rt)))
-            err = float(np.angle(np.exp(1j * (act_phi[j] - rp)), deg=True))
-            times.append((rt - start_ts) / 1e6)
+        for at, ap in zip(act_t, act_phi):
+            j   = int(np.argmin(np.abs(ref_t - at)))
+            err = float(np.angle(np.exp(1j * (ref_phi[j] - ap)), deg=True))
+            times.append((at - start_ts) / 1e6)
             errs.append(err)
         return {"time_s": np.array(times), "values": np.array(errs)}
  
@@ -582,10 +658,10 @@ def plot_spectrum(raw, samples: dict, fs: float) -> None:
 
     # freqs, raw_spectrum = welch(raw, fs=fs, nperseg=fs*5)  # Welch PSD estimate for smoother spectrum
 
-    if samples.get("GlobalFilter_0") is not None:
-        filt = samples["GlobalFilter_0"]["y"].squeeze()
+    if samples.get("GlobalFilter") is not None:
+        filt = samples["GlobalFilter"]["y"]
         filt_spectrum = np.fft.rfft(filt)
-        # freqs, filt_spectrum = welch(samples["GlobalFilter_0"]["y"].squeeze(), fs=fs, nperseg=fs*5)
+        # freqs, filt_spectrum = welch(samples["GlobalFilter"]["y"], fs=fs, nperseg=fs*5)
     else:
         filt_spectrum = None
 
@@ -611,7 +687,7 @@ def analyse_pipeline(
     graph_config: dict,
     edf_path: str = "pipeline_signals.edf",
     plot_path: str = "error_analysis.png",
-    results_dir: str = RESULTS_DIR,
+    results_dir: str | None = None,
 ) -> None:
     fs = graph_config.get("graph", {}).get("defaults", {}).get("fs", None)
 
@@ -625,11 +701,11 @@ def analyse_pipeline(
     # 2. Identify ground-truth signals
     ground_truth = extract_ground_truth(samples)
     if ground_truth is None:
-        print("Error: no source signal found (SourceClient_0 or Producer_0). Aborting.")
+        print("Error: no source signal found (SourceClient or Producer). Aborting.")
         return
 
     # 3. Offline Hilbert reference
-    raw = ground_truth["raw"].squeeze()
+    raw = ground_truth["raw"]
     _, hilbert_phase = compute_hilbert_reference(raw, fs, f_low=f0-2.0, f_high=f0+2.0)
 
     # 4. Compute errors
@@ -652,8 +728,10 @@ def analyse_pipeline(
 if __name__ == "__main__":
     with open("resources/graphs/TurboLinkCLAS.yaml", "r") as f:
         graph_config = yaml.safe_load(f)
-    analyse_pipeline(
-        f0=6,
-        graph_config=graph_config,
-        results_dir="rt_c_results",
-    )
+
+    analyse_pipeline(f0=6,graph_config=graph_config,results_dir="eike_20260529_1600")
+
+    # _last_run
+    # eike_20260529_1600
+    # SimulateCLAS
+    # TurboLinkCLAS

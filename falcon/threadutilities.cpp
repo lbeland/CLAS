@@ -35,8 +35,6 @@ bool set_realtime_priority(pthread_t thread, ThreadPriority priority) {
 
     auto priority_max = sched_get_priority_max(SCHED_FIFO);
     auto priority_min = sched_get_priority_min(SCHED_FIFO);
-    printf("Setting thread priority to %d%% (priority value: %d)\n", priority, (int) (fraction * (priority_max - priority_min) + priority_min));
-
     // struct sched_param is used to store the scheduling priority
     struct sched_param params;
     // calculate priority value

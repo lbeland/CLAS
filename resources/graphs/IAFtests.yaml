@@ -1,7 +1,7 @@
 graph:
   name: CLAS
   defaults:
-    n_messages: &n_messages 100000
+    n_messages: &n_messages 80100
     window_size: &window_size 20000
     fs: &fs 10000
   processors:
@@ -17,7 +17,6 @@ graph:
         modulation_type: "phase"
         modulation_amplitude: 0
         modulation_frequency: 0.1
-        output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
       advanced:
         buffer_sizes:
           out: 2
@@ -27,7 +26,7 @@ graph:
       options:
         n_messages: *n_messages
         calc_interval: 1
-        window_size_sec: 2
+        window_size_sec: 4
         f_min: 5.0
         f_max: 18.0
       advanced:
@@ -45,11 +44,11 @@ graph:
     Serializer(1-2):    # one serializer per output stream
       class: FileSerializer
       options:
-        path: /home/linda/Documents/CLAS/rt_c_results
+        path: run://
         encoding: binary
         throttle/enabled: false
         overwrite: true 
-        format: compact
+        format: full
         n_messages: *n_messages
   connections:
   - Producer.out.0 = IAFEstimator.in

@@ -12,7 +12,6 @@ graph:
         nchannels: 32
         nsamples: 1
         n_messages: *n_messages
-        output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
         store_aux: true
       advanced:
         buffer_sizes:
@@ -47,7 +46,7 @@ graph:
         n_messages: *n_messages
         calc_interval: 100
         window_size_sec: 5
-        ema_window_sec: 10
+        ema_window_sec: 60
         f_min: 5.0
         f_max: 18.0
       advanced:
@@ -89,13 +88,11 @@ graph:
       options:
         n_messages: *n_messages
         window_size: *window_size
-        output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
       advanced:
         thread_core: 6
-    Serializer1:    # one serializers per output stream
+    Serializer(1-5):    # one serializers per output stream
       class: FileSerializer
       options:
-        path: /home/linda/Documents/CLAS/rt_c_results
         encoding: binary
         throttle/enabled: false
         overwrite: true 
@@ -103,50 +100,6 @@ graph:
         n_messages: *n_messages
       advanced:
         thread_core: 7
-    Serializer2:    # one serializers per output stream
-      class: FileSerializer
-      options:
-        path: /home/linda/Documents/CLAS/rt_c_results
-        encoding: binary
-        throttle/enabled: false
-        overwrite: true 
-        format: full
-        n_messages: *n_messages
-      advanced:
-        thread_core: 8
-    Serializer3:    # one serializers per output stream
-      class: FileSerializer
-      options:
-        path: /home/linda/Documents/CLAS/rt_c_results
-        encoding: binary
-        throttle/enabled: false
-        overwrite: true 
-        format: full
-        n_messages: *n_messages
-      advanced:
-        thread_core: 9
-    Serializer4:    # one serializers per output stream
-      class: FileSerializer
-      options:
-        path: /home/linda/Documents/CLAS/rt_c_results
-        encoding: binary
-        throttle/enabled: false
-        overwrite: true 
-        format: full
-        n_messages: *n_messages
-      advanced:
-        thread_core: 10
-    Serializer5:    # one serializers per output stream
-      class: FileSerializer
-      options:
-        path: /home/linda/Documents/CLAS/rt_c_results
-        encoding: binary
-        throttle/enabled: false
-        overwrite: true 
-        format: full
-        n_messages: *n_messages
-      advanced:
-        thread_core: 11
     
   connections:
   # - Producer.out.0 = GlobalFilter.in
@@ -163,6 +116,7 @@ graph:
   - PhaseEstimator.out.0 = Serializer3.in
   - PhaseEstimator.out.1 = Serializer3.in
   - IAFEstimator.out.0 = Serializer4.in
+  - ChannelSelector.ch_idx_out.0 = Serializer4.in
   - StimulusController.out.0 = Serializer5.in
 
   states:

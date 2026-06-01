@@ -17,7 +17,6 @@ graph:
         modulation_type: "phase"
         modulation_amplitude: 0
         modulation_frequency: 0.05
-        output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
       advanced:
         buffer_sizes:
           out: 32
@@ -92,13 +91,11 @@ graph:
       options:
         n_messages: *n_messages
         window_size: *window_size
-        output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
       advanced:
         thread_core: 6
     Serializer(1-5):    # one serializers per output stream
       class: FileSerializer
       options:
-        path: /home/linda/Documents/CLAS/rt_c_results
         encoding: binary
         throttle/enabled: false
         overwrite: true 
@@ -113,14 +110,13 @@ graph:
   - StimulusController.out.0 = Consumer.in
 
 
-  - Producer.out.0 = Serializer1.in
-  - Producer.out.1 = Serializer1.in
-  - Producer.out.2 = Serializer1.in
-  - Producer.out.3 = Serializer1.in
+  - Producer.out = Serializer1.in
+  - Producer.meta_out = Serializer1.in
   - GlobalFilter.out.0 = Serializer2.in
   - PhaseEstimator.out.0 = Serializer3.in
   - PhaseEstimator.out.1 = Serializer3.in
   - IAFEstimator.out.0 = Serializer4.in
+  - ChannelSelector.ch_idx_out.0 = Serializer4.in
   - StimulusController.out.0 = Serializer5.in
 
   states:

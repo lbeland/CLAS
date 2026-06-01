@@ -17,7 +17,6 @@ graph:
         modulation_type: "phase"
         modulation_amplitude: 2
         modulation_frequency: 0.1
-        output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
       advanced:
         buffer_sizes:
           out: 32
@@ -30,7 +29,7 @@ graph:
         iaf_read_interval: 1
         calibrate: true
         filter:
-          bandwith: 4
+          bandwidth: 4
       advanced:
         buffer_sizes:
           out: 32
@@ -46,11 +45,11 @@ graph:
     Serializer(1-2):    # one serializer per output stream
       class: FileSerializer
       options:
-        path: /home/linda/Documents/CLAS/rt_c_results
+        path: run://
         encoding: binary
         throttle/enabled: false
         overwrite: true 
-        format: compact
+        format: full
         n_messages: *n_messages
   connections:
   - Producer.out.0 = PhaseEstimator.in

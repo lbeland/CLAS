@@ -384,7 +384,7 @@ void IAFEstimator::CompleteStreamInfo()
     // Set the parameters for the output stream
     for (int k = 0; k < data_out_port_->number_of_slots(); ++k)
     {
-        data_out_port_->streaminfo(k).set_stream_rate(data_in_port_->streaminfo(0).stream_rate());
+        data_out_port_->streaminfo(k).set_stream_rate(data_in_port_->streaminfo(0).stream_rate() / calc_interval_());
     }
 }
 

@@ -36,9 +36,9 @@ class Consumer : public IProcessor {
  protected:
   PortIn<AnyType> *data_in_port_;
 
-  options::Value<int, false> n_messages_{-1};
-  options::Value<int, false> window_size_{2000};
-  options::Value<std::string, false> output_file_{"Consumer.csv"};
+  options::Int n_messages_{-1};
+  options::Int window_size_{2000};
+  options::String output_file_{"Consumer.csv"};
   
   unsigned int packet_count_ = 0;
   inline static std::vector<std::array<float, 3>> samples;

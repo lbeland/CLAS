@@ -98,25 +98,25 @@ class StimulusController : public IProcessor {
 
   // OPTIONS
   protected:
-    options::Value<int, false> n_messages_{-1};
-    options::Value<double, false> stim_onset_deg_{0};
-    options::Value<double, false> audio_latency_s_{0};
-    options::Value<double, false> erp_latency_s_{0};  //auditory evoked response potential latency in seconds
-    options::Value<double, false> stim_period_ms_{1};
-    options::Value<double, false> stim_amplitude_{0.7};
-    options::Value<int, false> stim_num_octaves_{6};
+    options::Int n_messages_{-1};
+    options::Double stim_onset_deg_{0};
+    options::Double audio_latency_s_{0};
+    options::Double erp_latency_s_{0};  //auditory evoked response potential latency in seconds
+    options::Double stim_period_ms_{1};
+    options::Double stim_amplitude_{0.7};
+    options::Int stim_num_octaves_{6};
 
-    options::Value<std::string, false> stim_dur_unit_{"deg"};
-    options::Value<int, false> stim_dur_ms_{20};
-    options::Value<double, false> stim_dur_deg_{90};
+    options::String stim_dur_unit_{"deg"};
+    options::Int stim_dur_ms_{20};
+    options::Double stim_dur_deg_{90};
 
     // Audio options
-    options::Value<std::string, false> audio_device_{"hw:1,0"};
-    options::Value<int, false> audio_sample_rate_{44100};
-    options::Value<int, false> audio_channels_{2};
+    options::String audio_device_{"hw:1,0"};
+    options::Int audio_sample_rate_{44100};
+    options::Int audio_channels_{2};
 
 
     // Audio sample format: "float" (FLOAT_LE) or "s16" (S16_LE)
-    options::Value<std::string, false> audio_format_{"float"};
+    options::String audio_format_{"float"};
 
 };

@@ -64,11 +64,11 @@ class IAFEstimator : public IProcessor {
 
   // OPTIONS
   protected:
-    options::Value<int, false> n_messages_{-1};
-    options::Value<double, false> window_size_sec_{5};
-    options::Value<double, false> f_min_{5.0};
-    options::Value<double, false> f_max_{18.0};
+    options::Int n_messages_{-1};
+    options::Double window_size_sec_{5};
+    options::Double f_min_{5.0};
+    options::Double f_max_{18.0};
     options::Value<unsigned int, false> calc_interval_{100};
-    options::Value<double, false> ema_window_sec_{5.0};
+    options::Double ema_window_sec_{5.0};
 };
     

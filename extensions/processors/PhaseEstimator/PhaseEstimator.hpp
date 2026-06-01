@@ -68,11 +68,11 @@ class PhaseEstimator : public IProcessor {
 
   // OPTIONS
   protected:
-    options::Value<int, false> n_messages_{-1};
+    options::Int n_messages_{-1};
     // options::Value<unsigned int, false> n_fft_{4096};
-    options::Value<bool> calibrate_{false};
+    options::Bool calibrate_{false};
     options::Value<unsigned int, false> iaf_read_interval_{5000};
     options::Value<YAML::Node, false> filter_def_{};
-    options::Value<bool, false> compensate_filter_{true};
+    options::Bool compensate_filter_{true};
 
 };

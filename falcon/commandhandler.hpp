@@ -32,11 +32,6 @@ class CommandHandler {
    public:
     CommandHandler(GlobalContext& context) { global_context_ = &context; }
 
-    void setAutoShutdownAfterProcessing(bool enabled) {
-        auto_shutdown_after_processing_ = enabled;
-        observed_processing_state_ = false;
-    }
-
     /**
      * Add a source to receive commands from it (example: cloud/zmq, command
      * line, keyboard)
@@ -85,7 +80,5 @@ class CommandHandler {
     VectSources sources_;
     GlobalContext* global_context_;
     zmq::socket_t* graph_socket_;
-    bool auto_shutdown_after_processing_ = false;
-    bool observed_processing_state_ = false;
 };
 }  // namespace commands

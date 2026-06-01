@@ -97,13 +97,6 @@ bool CommandHandler::HandleCommand(std::deque<std::string>& command,
         // delegate
         command.pop_front();
         finished = DelegateGraphCommand(command, reply);
-        if (auto_shutdown_after_processing_ && !reply.empty() && reply[0] == "ERR") {
-            std::deque<std::string> destroy_command;
-            std::deque<std::string> destroy_reply;
-            destroy_command.push_back("destroy");
-            DelegateGraphCommand(destroy_command, destroy_reply);
-            finished = true;
-        }
     } else if (command[0] == "resources") {
         command.pop_front();
         finished = DelegateResourcesCommand(command, reply);
@@ -202,30 +195,6 @@ void CommandHandler::start() {
 
             if (finished) {
                 break;
-            }
-        }
-
-        if (!finished && auto_shutdown_after_processing_) {
-            std::deque<std::string> state_command;
-            std::deque<std::string> state_reply;
-
-            state_command.push_back("state");
-            DelegateGraphCommand(state_command, state_reply);
-
-            if (!state_reply.empty()) {
-                const auto& state = state_reply[0];
-
-                if (state == "PROCESSING" || state == "STARTING" || state == "STOPPING") {
-                    observed_processing_state_ = true;
-                }
-
-                if (observed_processing_state_ && (state == "READY" || state == "NOGRAPH")) {
-                    std::deque<std::string> destroy_command;
-                    std::deque<std::string> destroy_reply;
-                    destroy_command.push_back("destroy");
-                    DelegateGraphCommand(destroy_command, destroy_reply);
-                    finished = true;
-                }
             }
         }
     }

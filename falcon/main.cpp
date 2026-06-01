@@ -200,12 +200,13 @@ int main(int argc, char** argv) {
             command.push_back("start");
 
             cl.AddCommand(command);
+
+            command.clear();
         }
     }
 
     // set up Command handler
     commands::CommandHandler commandhandler(context);
-    commandhandler.setAutoShutdownAfterProcessing(config.graph_autostart() && graph_file.size() > 0);
 
     // add command sources to handler
     commandhandler.addSource(cl);

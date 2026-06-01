@@ -115,7 +115,12 @@ void Producer::CreatePorts()
     data_out_port_ = create_output_port<MultiChannelType<float>>(
         "out",
         MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()),
-        PortOutPolicy(SlotRange(4), 200, WaitStrategy::kBlockingStrategy));
+        PortOutPolicy(SlotRange(1), 200, WaitStrategy::kBlockingStrategy));
+    
+    meta_out_port_ = create_output_port<MultiChannelType<double>>(
+        "meta_out",
+        MultiChannelType<double>::Parameters(3,1, fs_()),
+        PortOutPolicy(SlotRange(1), 200, WaitStrategy::kBlockingStrategy));
 }
 
 void Producer::CompleteStreamInfo()
@@ -123,10 +128,16 @@ void Producer::CompleteStreamInfo()
     data_out_port_->slot(0)->streaminfo().set_parameters(
         MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
     data_out_port_->slot(0)->streaminfo().set_stream_rate(fs_());
+
+    meta_out_port_->slot(0)->streaminfo().set_parameters(
+        MultiChannelType<double>::Parameters(3,1, fs_()));
+    meta_out_port_->slot(0)->streaminfo().set_stream_rate(fs_());
 }
 
 void Producer::Process(ProcessingContext &context)
 {
+    MultiChannelType<float>::Data *data_out = nullptr;
+    MultiChannelType<double>::Data *meta_out = nullptr;
     send_times.clear();
     double carrier_phase = 0.0;
     double modulation_phase = 0.0;
@@ -147,12 +158,8 @@ void Producer::Process(ProcessingContext &context)
             break;
         }
 
-        std::array<MultiChannelType<float>::Data *, 4> data_outs = {
-            data_out_port_->slot(0)->ClaimData(false),
-            data_out_port_->slot(1)->ClaimData(false),
-            data_out_port_->slot(2)->ClaimData(false),
-            data_out_port_->slot(3)->ClaimData(false),
-        };
+        data_out = data_out_port_->slot(0)->ClaimData(false);
+        meta_out = meta_out_port_->slot(0)->ClaimData(false);
 
         const SignalState state = ComputeSignalState(
             carrier_phase,
@@ -163,11 +170,10 @@ void Producer::Process(ProcessingContext &context)
             modulation_frequency_(),
             modulation_phase);
 
-        const std::array<float, 4> values = {
-            static_cast<float>(state.value),
-            static_cast<float>(state.amplitude),
-            static_cast<float>(state.theta),
-            static_cast<float>(state.inst_freq),
+        std::vector<double> meta_data = {
+            state.amplitude,
+            state.theta,
+            state.inst_freq,
         };
 
         current_iaf_ = static_cast<float>(state.inst_freq);
@@ -178,15 +184,18 @@ void Producer::Process(ProcessingContext &context)
         timestamp = Clock::now();
         hardware_time_us = start_time + (uint64_t)packet_count * 1000000ULL / fs_();
 
-        for (std::size_t slot_index = 0; slot_index < data_outs.size(); ++slot_index)
-        {
-            std::vector<float> sample_vec(nchannels_(), values[slot_index]);
-            data_outs[slot_index]->set_data_sample(0, sample_vec);
-            data_outs[slot_index]->set_sample_timestamp(0, hardware_time_us);
-            data_outs[slot_index]->set_source_timestamp(timestamp);
-            data_outs[slot_index]->set_hardware_timestamp(hardware_time_us);
-            data_out_port_->slot(slot_index)->PublishData();
-        }
+        std::vector<float> sample_vec(nchannels_(), static_cast<float>(state.value));
+        data_out->set_data_sample(0, sample_vec);
+        data_out->set_sample_timestamp(0, hardware_time_us);
+        data_out->set_source_timestamp(timestamp);
+        data_out->set_hardware_timestamp(hardware_time_us);
+        data_out_port_->slot(0)->PublishData();
+
+        meta_out->set_data_sample(0, meta_data);
+        meta_out->set_sample_timestamp(0, hardware_time_us);
+        meta_out->set_source_timestamp(timestamp);
+        meta_out->set_hardware_timestamp(hardware_time_us);
+        meta_out_port_->slot(0)->PublishData();
 
         send_times.push_back(timestamp);
         ++packet_count;

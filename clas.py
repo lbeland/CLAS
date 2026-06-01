@@ -69,10 +69,7 @@ def main():
 
     run_id = Path(args.results_dir).name
 
-    graph_process = subprocess.Popen([
-        "sudo", "-E", "chrt", "-f", "99", "./build/release/falcon/falcon",
-        args.graph, "--config", WORKSPACE_FALCON_CONFIG
-    ])
+    graph_process = subprocess.Popen(["./build/release/falcon/falcon",args.graph, "--config", WORKSPACE_FALCON_CONFIG])
 
     time.sleep(0.5)
 

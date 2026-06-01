@@ -229,6 +229,11 @@ if (COMPILE_EXTENSIONS)
             endforeach ()
         endforeach ()
 
+        ADD_CUSTOM_COMMAND(TARGET falcon
+            POST_BUILD
+            COMMAND sudo setcap cap_sys_nice+ep $<TARGET_FILE:falcon>
+            )
+
         # install in the installation folder
         install(DIRECTORY ${BUILD_RESOURCES_PATH}/resources
                 CONFIGURATIONS Release

@@ -6,6 +6,7 @@ import time
 import subprocess
 from pathlib import Path
 import yaml
+import zmq
 from gen_filter_coeff import gen_filter, gen_filter_ecHT
 from plot_results import plot_results
 from postprocess_results import analyse_pipeline
@@ -18,7 +19,11 @@ WORKSPACE_FALCON_CONFIG = REPO_ROOT / ".falcon" / "config.yaml"
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--graph", default="TurboLinkCLAS.yaml")
+    parser.add_argument("--results_dir")
     args = parser.parse_args()
+
+    if not args.results_dir:
+        args.results_dir = input("Enter the results directory: ")
 
     # Load the Falcon configuration
     with open(WORKSPACE_FALCON_CONFIG, "r") as f:
@@ -35,6 +40,7 @@ def main():
         graph_config = yaml.safe_load(f)
         fs = graph_config.get("graph", {}).get("defaults", {}).get("fs", None)
         
+        # Iterate through processors in the graph to find filter configurations and precompute filter coefficients if needed
         for processor in graph_config.get("graph", {}).get("processors", []):
             processor_config = graph_config.get("graph", {}).get("processors", {}).get(processor, {})
             if processor_config.get("class") == "MultiChannelFilter":
@@ -56,10 +62,25 @@ def main():
                         filter_length = int(2.0 * fs/iaf)    # 2 cycles of iaf frequency
                         params = [(1, iaf-bandwidth/2, iaf+bandwidth/2, fs, filter_length, "bandpass")]
                         gen_filter_ecHT(params, output_folder=os.path.join(resources_folder, "filters"))
+            elif processor_config.get("class") == "FileSerializer":
+                serializer_options = processor_config.get("options", {})
 
     gen_filter(filter_params, fs, output_folder=os.path.join(resources_folder, "filters"))
 
-    graph_process = subprocess.Popen(["sudo", "-E", "chrt", "-f", "99","./build/release/falcon/falcon", args.graph, "--config", WORKSPACE_FALCON_CONFIG, "--autostart"]) 
+    run_id = Path(args.results_dir).name
+
+    graph_process = subprocess.Popen([
+        "sudo", "-E", "chrt", "-f", "99", "./build/release/falcon/falcon",
+        args.graph, "--config", WORKSPACE_FALCON_CONFIG
+    ])
+
+    time.sleep(0.5)
+
+    context = zmq.Context()
+    socket = context.socket(zmq.REQ)
+    socket.connect(f"tcp://127.0.0.1:{config['network']['port']}")
+    socket.send_multipart([b"graph", b"start", "results".encode(), run_id.encode(), b""])
+    socket.recv_multipart()
     try:
         # Wait for falcon to complete (processors will auto-exit after processing n_messages)
         return_code = graph_process.wait()

@@ -84,19 +84,16 @@ class RunContext : public StorageContext {
         }
 
         // generate default destination
-        if (run_id.empty()) {
-            char buffer[20];
+        char buffer[20];
+        time_t rawtime;
+        struct tm* timeinfo;
 
-            time_t rawtime;
-            struct tm* timeinfo;
+        time(&rawtime);
+        timeinfo = localtime(&rawtime);
+        strftime(buffer, 20, "%Y%m%d_%H%M%S", timeinfo);
 
-            time(&rawtime);
-            timeinfo = localtime(&rawtime);
-
-            strftime(buffer, 20, "%Y%m%d_%H%M%S", timeinfo);
-
-            run_id = buffer;
-        }
+        std::string timestamp = buffer;
+        run_id = run_id.empty() ? timestamp : run_id + "_" + timestamp;
 
         add_storage_context("runbase", storage_context("rungroup") + "/" + run_id);
         run_id_ = run_id;

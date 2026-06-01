@@ -36,6 +36,7 @@ class Producer : public IProcessor {
   PortOut<MultiChannelType<float>> *data_out_port_;
   PortOut<MultiChannelType<double>> *meta_out_port_;
 
+  options::String path_{"run://"};
   options::Double fs_{10000.0};
   options::Double carrier_amplitude_{3.0};
   options::Double carrier_frequency_{8.0};
@@ -45,7 +46,6 @@ class Producer : public IProcessor {
   options::Value<unsigned int, false> nchannels_{10};
   options::Value<unsigned int, false> nsamples_{1};
   options::Int n_messages_{-1};
-  options::String output_file_{"Producer.csv"};
   
   BroadcasterState<double>* iaf_state_ = nullptr;
   double current_iaf_ = 10.0;

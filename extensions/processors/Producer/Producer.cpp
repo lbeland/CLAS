@@ -94,6 +94,7 @@ namespace
 
 Producer::Producer() : IProcessor(PRIORITY_HIGH)
 {
+    add_option("path", path_, "Path (server-side) where to save data.");
     add_option("fs", fs_, "Sample Frequency");
     add_option("carrier_amplitude", carrier_amplitude_, "Carrier signal amplitude.");
     add_option("carrier_frequency", carrier_frequency_, "Carrier signal frequency in Hz.");
@@ -103,7 +104,6 @@ Producer::Producer() : IProcessor(PRIORITY_HIGH)
     add_option("nchannels", nchannels_, "Number of channels to generate.");
     add_option("nsamples", nsamples_, "Number of samples per packet.");
     add_option("n_messages", n_messages_, "Number of packets to generate (-1 = infinite).");
-    add_option("output_file", output_file_, "Path to output CSV file.");
 
     iaf_state_ = create_broadcaster_state<double>(
         "iaf", current_iaf_, Permission::NONE,
@@ -262,7 +262,8 @@ void Producer::Postprocess(ProcessingContext &context)
 
     const std::string append = "_Producer.csv";
     std::ofstream output;
-    output.open(output_file_() + append);
+    std::string filename = context.resolve_path(path_(), "run");
+    output.open(filename + append);
     output << "Metric,Send_period\n";
     output << "mean," << avg_period << "\n";
     output << "std," << std_period << "\n";
@@ -272,7 +273,7 @@ void Producer::Postprocess(ProcessingContext &context)
     const std::string send_times_append = "_send_times.csv";
     std::ofstream send_times_output;
     send_times_output << std::fixed << std::setprecision(17);
-    send_times_output.open(output_file_() + send_times_append);
+    send_times_output.open(filename + send_times_append);
     for (double t : send_times_diff)
     {
         send_times_output << t << "\n";

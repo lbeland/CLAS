@@ -80,7 +80,6 @@ SourceClient::SourceClient() : IProcessor(PRIORITY_HIGH)
     add_option("nsamples", nsamples_, "Number of samples per packet.");
     add_option("n_messages", n_messages_, "Number of packets to generate (-1 = infinite).");
     add_option("store_aux", store_aux_, "Whether to store auxiliary data.");
-    add_option("output_file", output_file_, "Path to output CSV file.");
 }
 
 void SourceClient::CreatePorts()
@@ -316,26 +315,6 @@ void SourceClient::Postprocess(ProcessingContext &context)
     statistic_print << "\n Average send period (us): " << avg_period;
     statistic_print << "\n Max send period (us): " << max_diff_us << ", idx: " << max_idx;
     statistic_print << "\n Std send period (us): " << std_period << "\n";
-
-    // Save to CSV
-    std::string append = "_SourceClient.csv";
-    std::ofstream output;
-    output.open(output_file_().c_str() + append);
-    output << "Metric,Send_period\n";
-    output << "mean," << avg_period << "\n";
-    output << "std," << std_period << "\n";
-    output << "max," << max_diff_us << "\n";
-    output.close();
-
-    append = "_send_times.csv";
-    std::ofstream send_times_output;
-    send_times_output << std::fixed << std::setprecision(17);
-    send_times_output.open(output_file_().c_str() + append);
-    for (double t : send_times_diff)
-    {
-        send_times_output << t << "\n";
-    }
-    send_times_output.close();
 
     std::cout << statistic_print.str();
 

@@ -30,7 +30,7 @@ Consumer::Consumer() : IProcessor(PRIORITY_HIGH)
 {
     add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
     add_option("window_size", window_size_, "Window size of PhaseEstimator (exclude the first window_size packets in statistics calculation).");
-    add_option("output_file", output_file_, "Path to output CSV file.");
+    add_option("path", path_, "Path (server-side) where to save data.");
 }
 
 void Consumer::CreatePorts()
@@ -223,7 +223,8 @@ void Consumer::Postprocess(ProcessingContext &context)
     // Save to CSV
     std::string append = "_Consumer.csv";
     std::ofstream output;
-    output.open(output_file_().c_str() + append);
+    std::string filename = context.resolve_path(path_(), "run");
+    output.open(filename + append);
     output << "Metric,Recv_period,Latency,Throughput\n";
     output << "mean," << avg_period << "," << avg_latency << "," << throughput << "\n";
     output << "std," << std_period << "," << std_latency << ",\n";
@@ -233,7 +234,7 @@ void Consumer::Postprocess(ProcessingContext &context)
     append = "_recv_times.csv";
     std::ofstream recv_times_output;
     recv_times_output << std::fixed << std::setprecision(17);
-    recv_times_output.open(output_file_().c_str() + append);
+    recv_times_output.open(filename + append);
     for (double t : recv_times_diff)
     {
         recv_times_output << t << "\n";
@@ -243,7 +244,7 @@ void Consumer::Postprocess(ProcessingContext &context)
     append = "_process_times.csv";
     std::ofstream process_times_output;
     process_times_output << std::fixed << std::setprecision(17);
-    process_times_output.open(output_file_().c_str() + append);
+    process_times_output.open(filename + append);
     for (double t : process_times)
     {
         process_times_output << t << "\n";

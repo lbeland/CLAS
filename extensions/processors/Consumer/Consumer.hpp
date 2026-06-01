@@ -38,7 +38,7 @@ class Consumer : public IProcessor {
 
   options::Int n_messages_{-1};
   options::Int window_size_{2000};
-  options::String output_file_{"Consumer.csv"};
+  options::String path_{"run://"};
   
   unsigned int packet_count_ = 0;
   inline static std::vector<std::array<float, 3>> samples;

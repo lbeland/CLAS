@@ -54,7 +54,6 @@ class SourceClient : public IProcessor {
   options::Int nsamples_{100};
   options::Int n_messages_{-1};
   options::Bool store_aux_{true};
-  options::String output_file_{"SourceClient.csv"};
   
   inline static std::vector<std::chrono::steady_clock::time_point> send_times;
 };

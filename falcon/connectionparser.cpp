@@ -190,7 +190,7 @@ ConnectionRule parseConnectionRule(const std::string& rulestring) {
             }
 
             if (specifier == PORT) {
-                name = std::regex_replace(name, std::regex("[ _]"), "-");
+                name = std::regex_replace(name, std::regex("[ ]"), "-");
             }
             // construct ConnectionPart and add to SingleConnectionRule
             single_rules[current_rule_part][current_connection_part] =

@@ -27,7 +27,7 @@
 
 void convert_name(std::string& s) {
     if (std::regex_match(s, std::regex("^\\w(?:(?:[ -][\\w])|\\w)*$"))) {
-        s = std::regex_replace(s, std::regex("[ _]"), "-");
+        s = std::regex_replace(s, std::regex("[ ]"), "-");
     } else {
         throw ProcessorInternalError(s + " is not a valid name.");
     }

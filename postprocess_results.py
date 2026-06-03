@@ -506,7 +506,7 @@ def compute_reference_stimulus(
     diff         = corrected_phase - onset_rad
     wrapped_diff = np.arctan2(np.sin(diff), np.cos(diff))
  
-    stim_ref[iaf_safe] = (np.abs(wrapped_diff[iaf_safe]) < stim_dur_rad[iaf_safe] / 2.0).astype(float)
+    stim_ref[iaf_safe] = (np.abs(wrapped_diff[iaf_safe]) < (stim_dur_rad[iaf_safe] / 2.0)).astype(float)
  
     rising  = np.where((stim_ref[1:] == 1) & (stim_ref[:-1] == 0))[0] + 1
     falling = np.where((stim_ref[1:] == 0) & (stim_ref[:-1] == 1))[0] + 1
@@ -517,7 +517,13 @@ def compute_reference_stimulus(
  
     return stim_ref, onset_phases, offset_phases
  
- 
+def get_edges(signal, kind):
+    if kind == "rising":
+        idx = np.where((signal[1:] == 1) & (signal[:-1] == 0))[0] + 1
+    else:
+        idx = np.where((signal[1:] == 0) & (signal[:-1] == 1))[0] + 1
+    return idx
+    
 def compute_stimulus_edge_errors(
     ref_signal: np.ndarray,
     actual_signal: np.ndarray,
@@ -529,55 +535,43 @@ def compute_stimulus_edge_errors(
     Compare rising/falling edges of the actual trigger against the reference
     stimulus. For each matched edge pair, compute the phase error
     (actual − reference) in degrees, wrapped to [−180, +180].
- 
-    Edges are matched by nearest-neighbour in time. If reference and actual
+    Edges are matched by nearest-neighbour in index. If reference and actual
     have different numbers of edges a warning is printed; extra edges on
     either side are left unmatched and discarded.
- 
     Returns two dicts (onset_error, offset_error), each with:
-        time_s  : time of the *reference* edge in seconds from start_ts
-        values  : phase error in degrees  (actual phase − reference phase)
+        time_s  : time of the *actual* edge in seconds from start_ts
+        values  : phase error in degrees (actual phase − reference phase)
     Returns None if no matched pairs exist for that edge type.
     """
-    n             = min(len(ref_signal), len(actual_signal), len(time_us), len(phase))
+    n = min(len(ref_signal), len(actual_signal), len(time_us), len(phase))
     ref_signal    = ref_signal[:n]
     actual_signal = actual_signal[:n]
-    t             = time_us[:n]
-    ph            = phase[:n]
- 
-    def get_edges(signal, kind):
-        if kind == "rising":
-            idx = np.where((signal[1:] == 1) & (signal[:-1] == 0))[0] + 1
-        else:
-            idx = np.where((signal[1:] == 0) & (signal[:-1] == 1))[0] + 1
-        return t[idx], ph[idx]
- 
-    ref_on_t,  ref_on_phi  = get_edges(ref_signal,    "rising")
-    act_on_t,  act_on_phi  = get_edges(actual_signal, "rising")
-    ref_off_t, ref_off_phi = get_edges(ref_signal,    "falling")
-    act_off_t, act_off_phi = get_edges(actual_signal, "falling")
- 
-    def match_and_diff(ref_t, ref_phi, act_t, act_phi, label):
-        if len(ref_t) == 0 or len(act_t) == 0:
+    time_us       = time_us[:n]
+    phase         = phase[:n]
+
+    def match_and_diff(ref_idx, act_idx, label):
+        if len(ref_idx) == 0 or len(act_idx) == 0:
             return None
-        if len(ref_t) != len(act_t):
+        if len(ref_idx) != len(act_idx):
             print(f"Warning: {label} edge count mismatch — "
-                  f"ref={len(ref_t)}, actual={len(act_t)}. Matching by nearest time.")
+                  f"ref={len(ref_idx)}, actual={len(act_idx)}. Matching by nearest index.")
+
         times, errs = [], []
-        for at, ap in zip(act_t, act_phi):
-            j   = int(np.argmin(np.abs(ref_t - at)))
-            err = float(np.angle(np.exp(1j * (ref_phi[j] - ap)), deg=True))
-            times.append((at - start_ts) / 1e6)
+        for i in act_idx:
+            j   = int(np.argmin(np.abs(ref_idx - i)))
+            err = float(np.angle(np.exp(1j * (phase[i] - phase[j])), deg=True))
+            times.append((time_us[i] - start_ts) / 1e6)
             errs.append(err)
-        # for rt, rp in zip(ref_t, ref_phi):
-        #     j   = int(np.argmin(np.abs(act_t - rt)))
-        #     err = float(np.angle(np.exp(1j * (rp - act_phi[j])), deg=True))
-        #     times.append((rt - start_ts) / 1e6)
-        #     errs.append(err)
-        return {"time_s": np.array(times), "values": np.array(errs)}
- 
-    onset_err  = match_and_diff(ref_on_t,  ref_on_phi,  act_on_t,  act_on_phi,  "onset")
-    offset_err = match_and_diff(ref_off_t, ref_off_phi, act_off_t, act_off_phi, "offset")
+
+        return {
+            "time_s": np.array(times),
+            "values": np.array(errs),
+        }
+
+    onset_err  = match_and_diff(get_edges(ref_signal, "rising"),
+                                get_edges(actual_signal, "rising"),  "onset")
+    offset_err = match_and_diff(get_edges(ref_signal, "falling"),
+                                get_edges(actual_signal, "falling"), "offset")
     return onset_err, offset_err
 
 
@@ -814,7 +808,7 @@ def plot_time_series(ground_truth, samples: dict, hilbert_phase, stim_ref, fs: f
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def analyse_pipeline(
+def analyse_results(
     f0: float,
     results_dir: str,
     plot_path: str = "error_analysis.svg",
@@ -868,9 +862,87 @@ def analyse_pipeline(
     plt.show()
 
 
+
+def get_erp_latency(fs, samples, channel=1):
+    channel = channel - 1 # zero-based index
+    
+    if samples.get(f"SourceClient_{channel}") is not None:
+        eeg_y = samples[f"SourceClient_{channel}"]["y"]
+        eeg_t = samples[f"SourceClient_{channel}"]["x"]
+    else:
+        print(f"Error: SourceClient_{channel} not found in samples.")
+        return
+    
+    if samples.get("SourceClient_TRIGGER") is not None:
+        trigger_y = samples["SourceClient_TRIGGER"]["y"]
+        trigger_t = samples["SourceClient_TRIGGER"]["x"]
+    else:
+        print("Error: SourceClient_TRIGGER not found in samples.")
+        return
+    
+    # Prepare EEG
+    sos = butter(1, [2, 30], btype="band", fs=fs, output="sos")
+    eeg_filtered = sosfiltfilt(sos, eeg_y)
+    
+    time_s = (eeg_t - eeg_t[0]) / 1e6  # convert to seconds from start
+    
+    trigger_binary = (trigger_y > 0.5).astype(float)
+    trigger_onset_idx  = get_edges(trigger_binary, "rising")[0]
+
+    # Get windows around each trigger onset (-250ms to +500ms)
+    windows = []
+    for idx in trigger_onset_idx:
+        start_idx = idx - int(0.25 * fs)
+        end_idx   = idx + int(0.5 * fs)
+        if start_idx >= 0 and end_idx < len(eeg_y):
+            windows.append({"time_s": time_s[start_idx:end_idx], "eeg_y": eeg_y[start_idx:end_idx]})
+
+    # Average across windows
+    if not windows:
+        print("No valid trigger windows found.")
+        return
+    
+    avg_eeg = np.mean([w["eeg_y"] for w in windows], axis=0)
+    std_eeg = np.std([w["eeg_y"] for w in windows], axis=0)
+
+    # Plot max 20 randomly selected windows and the average on same time base
+    time = windows[0]["time_s"] - windows[0]["time_s"][int(0.25 * fs)]  # relative time from trigger onset
+    plt.figure(figsize=(8, 4))
+    for w in windows[:20]:
+        plt.plot(time, w["eeg_y"], color="0.8", linewidth=0.8, alpha=0.7)
+    plt.plot(time, avg_eeg, color="tab:blue", linewidth=2, label="Average ERP")
+    plt.fill_between(time, avg_eeg - std_eeg, avg_eeg + std_eeg, color="tab:blue", alpha=0.3, label="±1 SD")
+    plt.axvline(0, color="tab:orange", linestyle="--", label="Trigger onset")
+    plt.xlabel("Peri-stimulus time (s)")
+    plt.ylabel("EEG amplitude (µV)")
+    plt.legend()
+    plt.show()
+
+def get_ERP_latency(results_dir, channel=1):
+    graph_file = glob.glob(os.path.join(results_dir, "*.yaml"))
+    print(results_dir)
+
+    with open(graph_file[0], "r") as f:
+        graph_config = yaml.safe_load(f)
+
+    fs = graph_config.get("graph", {}).get("defaults", {}).get("fs", None)
+
+    processors = graph_config.get("graph", {}).get("processors", [])
+    if processors is None:
+        raise ValueError(f"No processors found in graph config.")
+    
+    # 1. Load SourceClient signals
+    samples = load_processor_signals(fs, results_dir, processors)
+    print(samples.keys())
+
+    get_erp_latency(fs, samples, channel)
+
+
+
+
 if __name__ == "__main__":
 
-    analyse_pipeline(f0=10,results_dir="results/eike_20260529_1600")
+    analyse_results(f0=10,results_dir="results/eike_20260529_1600")
 
     # _last_run
     # eike_20260529_1600

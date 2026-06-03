@@ -34,6 +34,7 @@ class IAFEstimator : public IProcessor {
   void CreatePorts() override;
   void CompleteStreamInfo() override;
   void Prepare(GlobalContext &context) override;
+  void Preprocess(ProcessingContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
   void Unprepare(GlobalContext &context) override;
@@ -41,10 +42,12 @@ class IAFEstimator : public IProcessor {
   // VARIABLES
   protected:
     unsigned int packet_count_ = 0;
+    double freq_resolution;
     double fs_ = 0.0;
     size_t n_fft_ = 0;
     size_t window_size_ = 1;
     inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Prepare
+    gram_sg::SavitzkyGolayFilter savgol_;
     
     BroadcasterState<double>* iaf_state_ = nullptr;
     double current_iaf_ = std::numeric_limits<double>::quiet_NaN();
@@ -54,6 +57,13 @@ class IAFEstimator : public IProcessor {
     double ema_;
     int invalid_count_ = 0;
     int invalid_threshold_;
+    int max_analyze_bin;
+    int f_min_bin;
+    int f_max_bin;
+    fftwf_plan fft_plan_;
+    float *signal_in;
+    fftwf_complex *freq_half;
+    std::vector<double> freqs;
 
     const uint32_t MAX_NCHANNELS=384;
 

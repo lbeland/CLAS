@@ -33,9 +33,12 @@
 #include <cstdint>
 #include <random>
 
-static inline int16_t double_to_s16_(double x) {
-    if (x > 1.0) x = 1.0;
-    if (x < -1.0) x = -1.0;
+static inline int16_t double_to_s16_(double x)
+{
+    if (x > 1.0)
+        x = 1.0;
+    if (x < -1.0)
+        x = -1.0;
     // symmetric mapping; -1.0 maps to -32767 to avoid overflow on int16
     return static_cast<int16_t>(lrint(x * 32767.0));
 }
@@ -58,7 +61,7 @@ StimulusController::StimulusController() : IProcessor(PRIORITY_HIGH)
     add_option("stim_dur_deg", stim_dur_deg_, "Stimulus duration in degrees.");
     add_option("stim_dur_ms", stim_dur_ms_, "Fallback burst duration in ms (used only when IAF is unavailable).");
     add_option("stim_dur_unit", stim_dur_unit_, "Burst duration unit: 'deg' or 'ms' (default: 'deg').");
-    
+
     iaf_state_ = create_follower_state<double>(
         "iaf", 10.0, Permission::NONE,
         "Individual alpha frequency shared by an upstream processor.");
@@ -85,39 +88,49 @@ void StimulusController::CompleteStreamInfo()
     }
 }
 
-bool StimulusController::compute_burst_params_(double iaf) {
+bool StimulusController::compute_burst_params_(double iaf)
+{
     const int sample_rate = std::max(1, audio_sample_rate_());
     int new_burst_frames = 0;
 
-    if (dur_unit_ == DurUnit::kMs) {
+    if (dur_unit_ == DurUnit::kMs)
+    {
         // Fixed duration — IAF is irrelevant for burst length.
         // stim_dur_rad_ still uses IAF so the phase window scales with alpha.
         const int burst_ms = std::max(1, stim_dur_ms_());
         new_burst_frames = burst_ms * sample_rate / 1000;
-        if (std::isfinite(iaf) && iaf > 0.0) {
+        if (std::isfinite(iaf) && iaf > 0.0)
+        {
             stim_dur_rad_ = (burst_ms / 1000.0) * (2.0 * M_PI * iaf);
-        } else {
+        }
+        else
+        {
             // No IAF available: assume 10 Hz
             stim_dur_rad_ = (burst_ms / 1000.0) * (2.0 * M_PI * 10.0);
             LOG(WARNING) << name() << " IAF unavailable in ms-mode; phase window assumes 10 Hz";
         }
-
-    } else if (dur_unit_ == DurUnit::kDeg) {
+    }
+    else if (dur_unit_ == DurUnit::kDeg)
+    {
         // Duration tracks IAF — burst must be rebuilt whenever IAF changes.
-        if (!std::isfinite(iaf) || iaf <= 0.0) {
+        if (!std::isfinite(iaf) || iaf <= 0.0)
+        {
             // Fallback to stim_dur_ms_ until a valid IAF arrives.
             const int burst_ms = std::max(1, stim_dur_ms_());
             new_burst_frames = burst_ms * sample_rate / 1000;
             stim_dur_rad_ = stim_dur_deg_() * (1.0 / 180.0 * M_PI);
             // LOG(WARNING) << name() << " IAF unavailable in deg-mode; using stim_dur_ms=" << burst_ms << " ms as fallback";
-        } else {
+        }
+        else
+        {
             const double deg = std::clamp(stim_dur_deg_(), 0.0, 360.0);
             const double duration_sec = std::clamp((deg / 360.0) / iaf, 0.0, 5.0);
             new_burst_frames = static_cast<int>(std::lround(duration_sec * sample_rate));
             stim_dur_rad_ = deg * (1.0 / 180.0 * M_PI);
         }
-
-    } else {
+    }
+    else
+    {
         // Should never reach here — dur_unit_ is set from validated option in Prepare().
         LOG(ERROR) << name() << " Invalid dur_unit_ enum value";
         throw std::runtime_error("Invalid dur_unit_: must be kMs or kDeg");
@@ -136,7 +149,7 @@ void StimulusController::Prepare(GlobalContext &context)
     const auto &p = info.parameters<MultiChannelType<double>::Parameters>();
     LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels
               << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
-    
+
     fs_ = p.sample_rate;
 
     stim_onset_rad_ = stim_onset_deg_() * (1.0 / 180.0 * M_PI);
@@ -145,17 +158,19 @@ void StimulusController::Prepare(GlobalContext &context)
 
     const double iaf = iaf_state_ ? iaf_state_->get() : std::numeric_limits<double>::quiet_NaN();
     last_iaf_ = iaf;
-    compute_burst_params_(iaf);   // sets stim_dur_rad_, burst_frames_, period_ms_
+    compute_burst_params_(iaf); // sets stim_dur_rad_, burst_frames_, period_ms_
 
-    build_audio_buffers_();       // uses burst_frames_ and period_ms_ set above
+    build_audio_buffers_(); // uses burst_frames_ and period_ms_ set above
 
-    if (!start_audio_()) {
+    if (!start_audio_())
+    {
         LOG(ERROR) << name() << " failed to start audio playback (device: " << audio_device_() << ")";
         throw std::runtime_error("Failed to start audio playback");
     }
 }
 
-void StimulusController::build_audio_buffers_() {
+void StimulusController::build_audio_buffers_()
+{
     const int sample_rate = std::max(1, audio_sample_rate_());
     const int channels = std::clamp(audio_channels_(), 1, 8);
     const double amplitude = std::clamp(stim_amplitude_(), 0.0, 1.0);
@@ -163,8 +178,10 @@ void StimulusController::build_audio_buffers_() {
 
     // burst_frames_ and period_ms_ are already set by compute_burst_params_().
     period_frames_ = static_cast<int>(period_ms_ * sample_rate / 1000.0);
-    if (burst_frames_ <= 0) burst_frames_ = 1;
-    if (period_frames_ <= 0) period_frames_ = 1;
+    if (burst_frames_ <= 0)
+        burst_frames_ = 1;
+    if (period_frames_ <= 0)
+        period_frames_ = 1;
 
     LOG(INFO) << name() << " Building audio buffers: burst=" << burst_frames_
               << " frames (" << (static_cast<double>(burst_frames_) / sample_rate * 1000.0) << " ms)"
@@ -175,32 +192,42 @@ void StimulusController::build_audio_buffers_() {
     // intentional for controlled stimulation. Remove the seed for random bursts.
     std::mt19937 rng(42);
     std::uniform_real_distribution<double> dist(-1.0, 1.0);
-    auto white_noise = [&] { return dist(rng); };
+    auto white_noise = [&]
+    { return dist(rng); };
 
     std::vector<double> bands(static_cast<size_t>(num_octaves), 0.0);
     unsigned int counter = 0;
 
     std::vector<double> mono(static_cast<size_t>(burst_frames_));
-    for (int i = 0; i < burst_frames_; ++i) {
+    for (int i = 0; i < burst_frames_; ++i)
+    {
         ++counter;
-        for (int b = 0; b < num_octaves; ++b) {
-            if ((counter >> b) & 1U) {
+        for (int b = 0; b < num_octaves; ++b)
+        {
+            if ((counter >> b) & 1U)
+            {
                 bands[static_cast<size_t>(b)] = white_noise();
             }
         }
         double sum = 0.0;
-        for (double v : bands) sum += v;
+        for (double v : bands)
+            sum += v;
         mono[static_cast<size_t>(i)] = sum / static_cast<double>(num_octaves);
     }
 
     double peak = 0.0;
-    for (double v : mono) peak = std::max(peak, std::abs(v));
-    if (peak < 1e-12) peak = 1.0;
-    for (double &v : mono) v = (v / peak) * amplitude;
+    for (double v : mono)
+        peak = std::max(peak, std::abs(v));
+    if (peak < 1e-12)
+        peak = 1.0;
+    for (double &v : mono)
+        v = (v / peak) * amplitude;
 
     burst_buf_.assign(static_cast<size_t>(burst_frames_ * channels), 0.0);
-    for (int i = 0; i < burst_frames_; ++i) {
-        for (int ch = 0; ch < channels; ++ch) {
+    for (int i = 0; i < burst_frames_; ++i)
+    {
+        for (int ch = 0; ch < channels; ++ch)
+        {
             burst_buf_[static_cast<size_t>(i * channels + ch)] = mono[static_cast<size_t>(i)];
         }
     }
@@ -208,99 +235,123 @@ void StimulusController::build_audio_buffers_() {
     silence_buf_.assign(static_cast<size_t>(period_frames_ * channels), 0.0);
 
     burst_buf_s16_.assign(burst_buf_.size(), 0);
-    for (size_t i = 0; i < burst_buf_.size(); ++i) {
+    for (size_t i = 0; i < burst_buf_.size(); ++i)
+    {
         burst_buf_s16_[i] = double_to_s16_(burst_buf_[i]);
     }
     silence_buf_s16_.assign(silence_buf_.size(), 0);
 }
 
-static bool set_hw_params_interleaved_(snd_pcm_t* pcm,
-                                             int sample_rate,
-                                             int channels,
-                                             snd_pcm_uframes_t period_frames,
-                                             snd_pcm_uframes_t buffer_frames,
-                                             snd_pcm_format_t format,
-                                             const char* format_name,
-                                             std::string* fail_step,
-                                             int* fail_rc) {
-    snd_pcm_hw_params_t* hw;
+static bool set_hw_params_interleaved_(snd_pcm_t *pcm,
+                                       int sample_rate,
+                                       int channels,
+                                       snd_pcm_uframes_t period_frames,
+                                       snd_pcm_uframes_t buffer_frames,
+                                       snd_pcm_format_t format,
+                                       const char *format_name,
+                                       std::string *fail_step,
+                                       int *fail_rc)
+{
+    snd_pcm_hw_params_t *hw;
     snd_pcm_hw_params_alloca(&hw);
 
-    const auto fail = [&](const char* step, int rc) {
-        if (fail_step) *fail_step = step;
-        if (fail_rc) *fail_rc = rc;
+    const auto fail = [&](const char *step, int rc)
+    {
+        if (fail_step)
+            *fail_step = step;
+        if (fail_rc)
+            *fail_rc = rc;
         return false;
     };
 
     int rc = 0;
     rc = snd_pcm_hw_params_any(pcm, hw);
-    if (rc < 0) return fail("snd_pcm_hw_params_any", rc);
+    if (rc < 0)
+        return fail("snd_pcm_hw_params_any", rc);
 
     rc = snd_pcm_hw_params_set_access(pcm, hw, SND_PCM_ACCESS_RW_INTERLEAVED);
-    if (rc < 0) return fail("snd_pcm_hw_params_set_access(RW_INTERLEAVED)", rc);
+    if (rc < 0)
+        return fail("snd_pcm_hw_params_set_access(RW_INTERLEAVED)", rc);
 
     rc = snd_pcm_hw_params_test_format(pcm, hw, format);
-    if (rc < 0) {
+    if (rc < 0)
+    {
         std::string step = std::string("snd_pcm_hw_params_test_format(") + format_name + ")";
         return fail(step.c_str(), rc);
     }
 
     rc = snd_pcm_hw_params_set_format(pcm, hw, format);
-    if (rc < 0) {
+    if (rc < 0)
+    {
         std::string step = std::string("snd_pcm_hw_params_set_format(") + format_name + ")";
         return fail(step.c_str(), rc);
     }
 
     rc = snd_pcm_hw_params_set_channels(pcm, hw, static_cast<unsigned int>(channels));
-    if (rc < 0) return fail("snd_pcm_hw_params_set_channels", rc);
+    if (rc < 0)
+        return fail("snd_pcm_hw_params_set_channels", rc);
 
     unsigned int rate = static_cast<unsigned int>(sample_rate);
     rc = snd_pcm_hw_params_set_rate_near(pcm, hw, &rate, 0);
-    if (rc < 0) return fail("snd_pcm_hw_params_set_rate_near", rc);
+    if (rc < 0)
+        return fail("snd_pcm_hw_params_set_rate_near", rc);
 
     snd_pcm_uframes_t period = period_frames;
     rc = snd_pcm_hw_params_set_period_size_near(pcm, hw, &period, 0);
-    if (rc < 0) return fail("snd_pcm_hw_params_set_period_size_near", rc);
+    if (rc < 0)
+        return fail("snd_pcm_hw_params_set_period_size_near", rc);
 
     snd_pcm_uframes_t bufsize = buffer_frames;
     rc = snd_pcm_hw_params_set_buffer_size_near(pcm, hw, &bufsize);
-    if (rc < 0) return fail("snd_pcm_hw_params_set_buffer_size_near", rc);
+    if (rc < 0)
+        return fail("snd_pcm_hw_params_set_buffer_size_near", rc);
 
     rc = snd_pcm_hw_params(pcm, hw);
-    if (rc < 0) return fail("snd_pcm_hw_params(commit)", rc);
+    if (rc < 0)
+        return fail("snd_pcm_hw_params(commit)", rc);
 
     rc = snd_pcm_prepare(pcm);
-    if (rc < 0) return fail("snd_pcm_prepare", rc);
+    if (rc < 0)
+        return fail("snd_pcm_prepare", rc);
     return true;
 }
 
-static snd_pcm_format_t parse_audio_format_(const std::string& s) {
-    if (s == "s16" || s == "S16" || s == "S16_LE" || s == "s16le" || s == "s16_le") {
+static snd_pcm_format_t parse_audio_format_(const std::string &s)
+{
+    if (s == "s16" || s == "S16" || s == "S16_LE" || s == "s16le" || s == "s16_le")
+    {
         return SND_PCM_FORMAT_S16_LE;
     }
     return SND_PCM_FORMAT_FLOAT_LE;
 }
 
-static const char* format_name_(snd_pcm_format_t fmt) {
-    switch (fmt) {
-        case SND_PCM_FORMAT_S16_LE: return "S16_LE";
-        case SND_PCM_FORMAT_FLOAT_LE: return "FLOAT_LE";
-        default: return "<other>";
+static const char *format_name_(snd_pcm_format_t fmt)
+{
+    switch (fmt)
+    {
+    case SND_PCM_FORMAT_S16_LE:
+        return "S16_LE";
+    case SND_PCM_FORMAT_FLOAT_LE:
+        return "FLOAT_LE";
+    default:
+        return "<other>";
     }
 }
 
-bool StimulusController::start_audio_() {
+bool StimulusController::start_audio_()
+{
     stop_audio_();
 
     const int sample_rate = std::max(1, audio_sample_rate_());
     const int channels = std::clamp(audio_channels_(), 1, 8);
     const snd_pcm_uframes_t period = static_cast<snd_pcm_uframes_t>(std::max(1, period_frames_));
-    const snd_pcm_uframes_t bufsize = period * 2;   // How many frames ALSA should buffer internally; must be >= period_frames_
+    const snd_pcm_uframes_t bufsize = period * 2; // How many frames ALSA should buffer internally; must be >= period_frames_
 
-    snd_pcm_t* local_pcm = nullptr;
+    snd_pcm_t *local_pcm = nullptr;
     const std::string dev = audio_device_();
     int rc = snd_pcm_open(&local_pcm, dev.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
-    if (rc < 0) {
+    if (rc < 0)
+    {
         LOG(ERROR) << name() << " Cannot open ALSA device '" << dev << "': " << snd_strerror(rc);
         return false;
     }
@@ -309,29 +360,36 @@ bool StimulusController::start_audio_() {
     snd_pcm_format_t desired_fmt = parse_audio_format_(audio_format_());
     snd_pcm_format_t active_fmt = desired_fmt;
 
-    auto try_config = [&](snd_pcm_format_t fmt, std::string& fail_step, int& fail_rc) {
+    auto try_config = [&](snd_pcm_format_t fmt, std::string &fail_step, int &fail_rc)
+    {
         return set_hw_params_interleaved_(local_pcm, sample_rate, channels, period, bufsize,
                                           fmt, format_name_(fmt), &fail_step, &fail_rc);
     };
 
     std::string fail_step;
     int fail_rc = 0;
-    if (!try_config(desired_fmt, fail_step, fail_rc)) {
+    if (!try_config(desired_fmt, fail_step, fail_rc))
+    {
         // Fallback: if user requested float (or defaulted) and the device rejects it, try S16_LE.
-        if (desired_fmt == SND_PCM_FORMAT_FLOAT_LE) {
+        if (desired_fmt == SND_PCM_FORMAT_FLOAT_LE)
+        {
             std::string fail_step2;
             int fail_rc2 = 0;
             // Reset hw params state by reopening the device.
             snd_pcm_close(local_pcm);
             local_pcm = nullptr;
             rc = snd_pcm_open(&local_pcm, dev.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
-            if (rc < 0) {
+            if (rc < 0)
+            {
                 LOG(ERROR) << name() << " Cannot reopen ALSA device '" << dev << "' for fallback: " << snd_strerror(rc);
                 return false;
             }
-            if (try_config(SND_PCM_FORMAT_S16_LE, fail_step2, fail_rc2)) {
+            if (try_config(SND_PCM_FORMAT_S16_LE, fail_step2, fail_rc2))
+            {
                 active_fmt = SND_PCM_FORMAT_S16_LE;
-            } else {
+            }
+            else
+            {
                 LOG(ERROR) << name() << " Failed to configure ALSA HW params for '" << dev << "'"
                            << " (step: " << (fail_step.empty() ? "<unknown>" : fail_step) << ", error: "
                            << snd_strerror(fail_rc) << ")"
@@ -344,7 +402,9 @@ bool StimulusController::start_audio_() {
                 snd_pcm_close(local_pcm);
                 return false;
             }
-        } else {
+        }
+        else
+        {
             LOG(ERROR) << name() << " Failed to configure ALSA HW params for '" << dev << "'"
                        << " (step: " << (fail_step.empty() ? "<unknown>" : fail_step) << ", error: "
                        << snd_strerror(fail_rc) << ")"
@@ -367,72 +427,87 @@ bool StimulusController::start_audio_() {
     return true;
 }
 
-void StimulusController::stop_audio_() noexcept {
+void StimulusController::stop_audio_() noexcept
+{
     audio_running_.store(false);
     audio_trigger_pending_.store(false);
 
-    snd_pcm_t* local_pcm = nullptr;
+    snd_pcm_t *local_pcm = nullptr;
     {
         std::lock_guard<std::mutex> lock(audio_mutex_);
         local_pcm = pcm_;
     }
-    if (local_pcm) {
+    if (local_pcm)
+    {
         // Attempt to unblock any blocking write.
         snd_pcm_drop(local_pcm);
     }
 
-    if (audio_thread_.joinable()) {
+    if (audio_thread_.joinable())
+    {
         audio_thread_.join();
     }
 
     {
         std::lock_guard<std::mutex> lock(audio_mutex_);
-        if (pcm_) {
+        if (pcm_)
+        {
             snd_pcm_close(pcm_);
             pcm_ = nullptr;
         }
     }
 }
 
-void StimulusController::audio_thread_main_() {
-    while (audio_running_.load()) {
-        snd_pcm_t* local_pcm = nullptr;
-        const void* buf = nullptr;
+void StimulusController::audio_thread_main_()
+{
+    while (audio_running_.load())
+    {
+        snd_pcm_t *local_pcm = nullptr;
+        const void *buf = nullptr;
         snd_pcm_uframes_t frames = 0;
 
         {
             std::lock_guard<std::mutex> lock(audio_mutex_);
             local_pcm = pcm_;
-            if (!local_pcm) break;
+            if (!local_pcm)
+                break;
 
             // Resolve buffer pointer and frame count under the mutex so we never
             // race with build_audio_buffers_() rewriting these vectors.
             const bool do_burst = audio_trigger_pending_.exchange(false);
             frames = static_cast<snd_pcm_uframes_t>(do_burst ? burst_frames_ : period_frames_);
-            if (pcm_format_ == SND_PCM_FORMAT_S16_LE) {
-                buf = do_burst ? static_cast<const void*>(burst_buf_s16_.data())
-                               : static_cast<const void*>(silence_buf_s16_.data());
-            } else {
-                buf = do_burst ? static_cast<const void*>(burst_buf_.data())
-                               : static_cast<const void*>(silence_buf_.data());
+            if (pcm_format_ == SND_PCM_FORMAT_S16_LE)
+            {
+                buf = do_burst ? static_cast<const void *>(burst_buf_s16_.data())
+                               : static_cast<const void *>(silence_buf_s16_.data());
+            }
+            else
+            {
+                buf = do_burst ? static_cast<const void *>(burst_buf_.data())
+                               : static_cast<const void *>(silence_buf_.data());
             }
         }
         // buf points into vector heap storage. Reallocation only happens inside
         // build_audio_buffers_() which requires audio_mutex_, so the pointer is
         // stable for the duration of this (blocking) write.
         snd_pcm_sframes_t written = snd_pcm_writei(local_pcm, buf, frames);
-        if (written == -EPIPE) {
+        if (written == -EPIPE)
+        {
             auto rc = snd_pcm_prepare(local_pcm);
-            if (rc < 0) {
+            if (rc < 0)
+            {
                 LOG(ERROR) << name() << " Failed to prepare ALSA device after underrun: " << snd_strerror(rc);
             }
             // Retry once after xrun recovery
             (void)snd_pcm_writei(local_pcm, buf, frames);
             LOG(WARNING) << name() << " ALSA buffer underrun occurred; attempted recovery";
-        } else if (written < 0) {
+        }
+        else if (written < 0)
+        {
             // Other recoverable errors (e.g. suspended)
             auto rc = snd_pcm_prepare(local_pcm);
-            if (rc < 0) {
+            if (rc < 0)
+            {
                 LOG(ERROR) << name() << " Failed to prepare ALSA device after underrun: " << snd_strerror(rc);
             }
         }
@@ -440,16 +515,16 @@ void StimulusController::audio_thread_main_() {
     }
 
     // Drain only if we still have a valid handle
-    snd_pcm_t* local_pcm = nullptr;
+    snd_pcm_t *local_pcm = nullptr;
     {
         std::lock_guard<std::mutex> lock(audio_mutex_);
         local_pcm = pcm_;
     }
-    if (local_pcm) {
+    if (local_pcm)
+    {
         snd_pcm_drain(local_pcm);
     }
 }
-
 
 void StimulusController::Process(ProcessingContext &context)
 {
@@ -464,7 +539,6 @@ void StimulusController::Process(ProcessingContext &context)
         {
             break;
         }
-
 
         // Try to retrieve all new data
         if (!data_in_port_->slot(0)->RetrieveData(data_in))
@@ -481,13 +555,15 @@ void StimulusController::Process(ProcessingContext &context)
 
         // In "deg" mode the burst duration depends on IAF. Rebuild buffers
         // when IAF changes (guarded by audio_mutex_ so the audio thread is safe).
-        if ((std::isnan(last_iaf_) && std::isfinite(iaf_)) || iaf_ - last_iaf_ > 1e-2) {
+        if ((std::isnan(last_iaf_) && std::isfinite(iaf_)) || iaf_ - last_iaf_ > 1e-2)
+        {
             const bool frames_changed = compute_burst_params_(iaf_);
-            if (frames_changed) {
+            if (frames_changed)
+            {
                 std::lock_guard<std::mutex> lock(audio_mutex_);
                 build_audio_buffers_();
                 LOG(INFO) << name() << " IAF changed " << last_iaf_ << " -> " << iaf_
-                        << ": burst rebuilt to " << burst_frames_ << " frames";
+                          << ": burst rebuilt to " << burst_frames_ << " frames";
             }
             last_iaf_ = iaf_;
         }
@@ -496,25 +572,27 @@ void StimulusController::Process(ProcessingContext &context)
         TimePoint sample_ts = data_in->source_timestamp();
         // data_out->set_source_timestamp(now);
         data_in_port_->slot(0)->ReleaseData();
-        
+
         double delay_sec = std::chrono::duration<double>(now - sample_ts).count();
         delay_sec += audio_latency_s_() + erp_latency_s_();
 
-        double phase_advance  = 2.0 * M_PI * iaf_ * delay_sec;
+        double phase_advance = 2.0 * M_PI * iaf_ * delay_sec;
         double corrected_phase = std::fmod(phase + phase_advance, 2.0 * M_PI);
-        double diff            = corrected_phase - stim_onset_rad_;
+        double diff = corrected_phase - stim_onset_rad_;
 
         // Wrap diff to [-pi, pi] once
         const double wrapped_diff = std::atan2(std::sin(diff), std::cos(diff));
 
-        output_ = (std::abs(wrapped_diff) < stim_dur_rad_ / 2);
+        output_ = std::abs(wrapped_diff) < (stim_dur_rad_ / 2);
 
         // Trigger a single burst on the rising edge (false -> true)
-        if (output_ && !last_output_) {
+        if (output_ && !last_output_)
+        {
             audio_trigger_pending_.store(true);
             // LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated phase = " << phase << " , delay = " << delay_sec << " s, corr_phase = " << corrected_phase;
         }
-        else if (!output_ && last_output_) {
+        else if (!output_ && last_output_)
+        {
             // LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated phase = " << phase << " , delay = " << delay_sec << " s, corr_phase = " << corrected_phase;
         }
         last_output_ = output_;
@@ -537,6 +615,5 @@ void StimulusController::Unprepare(GlobalContext &context)
     (void)context;
     stop_audio_();
 }
-
 
 REGISTERPROCESSOR(StimulusController);

@@ -82,8 +82,14 @@ void Consumer::Prepare(GlobalContext &context)
             LOG(WARNING) << name() << ": Failed to cast to ScalarType";
         }
     }
+    
+}
+
+void Consumer::Preprocess(ProcessingContext &context)
+{
     packet_count_ = 0;
 }
+
 
 void Consumer::Process(ProcessingContext &context)
 {
@@ -221,7 +227,7 @@ void Consumer::Postprocess(ProcessingContext &context)
     std::cout << statistic_print.str() << "\n";
 
     // Save to CSV
-    std::string append = "_Consumer.csv";
+    std::string append = "Consumer.csv";
     std::ofstream output;
     std::string filename = context.resolve_path(path_(), "run");
     output.open(filename + append);
@@ -231,7 +237,7 @@ void Consumer::Postprocess(ProcessingContext &context)
     output << "max," << max_diff_us << "," << max_latency_us << ",\n";
     output.close();
 
-    append = "_recv_times.csv";
+    append = "recv_times.csv";
     std::ofstream recv_times_output;
     recv_times_output << std::fixed << std::setprecision(17);
     recv_times_output.open(filename + append);
@@ -241,7 +247,7 @@ void Consumer::Postprocess(ProcessingContext &context)
     }
     recv_times_output.close();
 
-    append = "_process_times.csv";
+    append = "process_times.csv";
     std::ofstream process_times_output;
     process_times_output << std::fixed << std::setprecision(17);
     process_times_output.open(filename + append);

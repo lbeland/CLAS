@@ -260,7 +260,7 @@ void Producer::Postprocess(ProcessingContext &context)
     statistic_print << "\n Max send period (us): " << max_diff_us << ", idx: " << max_idx;
     statistic_print << "\n Std send period (us): " << std_period << "\n";
 
-    const std::string append = "_Producer.csv";
+    const std::string append = "Producer.csv";
     std::ofstream output;
     std::string filename = context.resolve_path(path_(), "run");
     output.open(filename + append);
@@ -270,7 +270,7 @@ void Producer::Postprocess(ProcessingContext &context)
     output << "max," << max_diff_us << "\n";
     output.close();
 
-    const std::string send_times_append = "_send_times.csv";
+    const std::string send_times_append = "send_times.csv";
     std::ofstream send_times_output;
     send_times_output << std::fixed << std::setprecision(17);
     send_times_output.open(filename + send_times_append);

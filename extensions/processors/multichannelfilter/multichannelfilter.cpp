@@ -99,6 +99,10 @@ void MultiChannelFilter::Prepare(GlobalContext &context) {
   }
 }
 
+void MultiChannelFilter::Preprocess(ProcessingContext &context) {
+  packet_count_ = 0;
+}
+
 void MultiChannelFilter::Process(ProcessingContext &context) {
   MultiChannelType<float>::Data *data_in = nullptr;
   MultiChannelType<float>::Data *data_out = nullptr;

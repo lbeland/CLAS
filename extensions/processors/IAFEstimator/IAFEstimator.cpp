@@ -136,14 +136,15 @@ namespace
         {
             return seed;
         }
-        
+
         if (parabolic && max_bin > f_min_bin && max_bin < f_max_bin)
         {
             double y1 = smoothed_power[max_bin - 1];
             double y2 = smoothed_power[max_bin];
             double y3 = smoothed_power[max_bin + 1];
             double denom = (y1 - 2 * y2 + y3);
-            if (denom != 0){
+            if (denom != 0)
+            {
                 double delta = 0.5 * (y1 - y3) / denom;
                 iaf += delta * resolution;
             }
@@ -226,13 +227,14 @@ namespace
         double y_mean = std::accumulate(y.begin(), y.end(), 0.0) / n;
 
         double ss_xy = 0.0, ss_xx = 0.0, ss_yy = 0.0;
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < n; i++)
+        {
             ss_xy += (x[i] - x_mean) * (y[i] - y_mean);
             ss_xx += (x[i] - x_mean) * (x[i] - x_mean);
             ss_yy += (y[i] - y_mean) * (y[i] - y_mean);
         }
 
-        double slope     = ss_xy / ss_xx;
+        double slope = ss_xy / ss_xx;
         double intercept = y_mean - slope * x_mean;
         double r_squared = (ss_xy * ss_xy) / (ss_xx * ss_yy);
 
@@ -240,13 +242,13 @@ namespace
     }
 
     std::vector<double> remove_aperiodic(const std::vector<double> &power, const std::vector<double> &freqs)
-    {     
+    {
         size_t N = power.size();
         // Safe power (no zeros)
         std::vector<double> safe_power(N);
         for (size_t k = 0; k < N; ++k)
         {
-            safe_power[k] = std::max(power[k],1e-12);
+            safe_power[k] = std::max(power[k], 1e-12);
         }
 
         // Ignore DC-bin
@@ -263,13 +265,13 @@ namespace
         // LOG(INFO) << "Aperiodic fit: slope = " << fit.slope << ", intercept = " << fit.intercept << ", R^2 = " << fit.r_squared;
 
         std::vector<double> power_flat(N);
-        
+
         for (size_t k = 1; k < N; ++k)
         {
             double aperiodic_fit = fit.slope * log_freqs[k - 1] + fit.intercept;
             power_flat[k] = safe_power[k] / std::pow(10, aperiodic_fit);
         }
-        power_flat[0] = power_flat[1]; // Set DC bin to same as first non-DC bin to avoid causing artificial rise/fall 
+        power_flat[0] = power_flat[1]; // Set DC bin to same as first non-DC bin to avoid causing artificial rise/fall
         std::vector<double> log_freqs_select;
         std::vector<double> log_power_select;
 
@@ -306,9 +308,10 @@ namespace
         data.insert(data.end(), half_window_size, data.back());
 
         std::vector<double> window;
-        for (int i=0; i < power.size(); i++)
+        for (int i = 0; i < power.size(); i++)
         {
-            for (int j = i; j < i+window_size; ++j) {
+            for (int j = i; j < i + window_size; ++j)
+            {
                 window.push_back(data[j]);
             }
             filtered[i] = savgol.filter(window);
@@ -396,75 +399,84 @@ void IAFEstimator::Prepare(GlobalContext &context)
     fs_ = p.sample_rate;
     window_size_ = window_size_sec_() * fs_; // Convert window size from seconds to samples
     n_fft_ = static_cast<int>(good_size_real(window_size_));
-    sample_window.set_capacity(n_fft_); // Initialize window size with next fast fft len 
+    sample_window.set_capacity(n_fft_); // Initialize window size with next fast fft len
     LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
     iaf_state_->set(current_iaf_);
 
     const double tau_seconds = ema_window_sec_();
     ema_mu_ = std::exp(-static_cast<double>(calc_interval_()) / (p.sample_rate * tau_seconds));
-    ema_= std::numeric_limits<double>::quiet_NaN();
+
     invalid_threshold_ = static_cast<int>(std::ceil(tau_seconds * fs_ / calc_interval_()));
-  
+
     LOG(INFO) << name() << " EMA tau: " << p.sample_rate * ema_window_sec_()
               << " s, mu: " << ema_mu_ << ", invalid_threshold: " << invalid_threshold_ << " estimates";
 
     // Load FFTW wisdom if available to speed up plan creation
     fftwf_import_wisdom_from_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
-}
 
-
-void IAFEstimator::Process(ProcessingContext &context)
-{
-    MultiChannelType<float>::Data *data_in;
-    ScalarType<double>::Data *data_out;
-
-    double freq_resolution = fs_ / n_fft_;
+    freq_resolution = fs_ / n_fft_;
     LOG(INFO) << name() << " Frequency resolution: " << freq_resolution << " Hz";
+
     int savgol_window_length = static_cast<int>(2.5 / freq_resolution); // 2.5 Hz window for smoothing
     if (savgol_window_length % 2 == 0)
-    {      
+    {
         savgol_window_length += 1; // Ensure window length is odd
     }
 
     int savgol_polyorder = 3;
     if (savgol_polyorder >= savgol_window_length)
     {
-        savgol_window_length = savgol_polyorder + 2;    // Ensure window length is greater than polynomial order
+        savgol_window_length = savgol_polyorder + 2; // Ensure window length is greater than polynomial order
     }
-    int m = (savgol_window_length) / 2; 
+    int m = (savgol_window_length) / 2;
     LOG(INFO) << name() << " Savitzky-Golay filter length: " << savgol_window_length << ", polynomial order: " << savgol_polyorder << ", m: " << m;
     gram_sg::SavitzkyGolayFilterConfig sg_conf(m, 0, savgol_polyorder, 0);
-    gram_sg::SavitzkyGolayFilter savgol(sg_conf);
+    savgol_ = gram_sg::SavitzkyGolayFilter(sg_conf);
 
-    int f_min_bin = std::floor(f_min_() / freq_resolution);
-    int f_max_bin = std::ceil(f_max_() / freq_resolution);
+
+    f_min_bin = std::floor(f_min_() / freq_resolution);
+    f_max_bin = std::ceil(f_max_() / freq_resolution);
     LOG(INFO) << name() << " IAF search range: " << f_min_() << " - " << f_max_() << " Hz (bins " << f_min_bin << " - " << f_max_bin << ")";
 
-    int max_analyze_bin = 30 / freq_resolution + 1; // Analyze up to 30 Hz to avoid high-frequency noise
+    max_analyze_bin = 30 / freq_resolution + 1; // Analyze up to 30 Hz to avoid high-frequency noise
 
     // FFTW output spectrum
-    float *signal_in = fftwf_alloc_real(n_fft_);
-    fftwf_complex *freq_half = fftwf_alloc_complex(n_fft_ / 2 + 1);
+    signal_in = fftwf_alloc_real(n_fft_);
+    freq_half = fftwf_alloc_complex(n_fft_ / 2 + 1);
 
     // FFT frequency bins
-    std::vector<double> freqs(max_analyze_bin);
+    freqs.resize(max_analyze_bin);
     for (size_t k = 0; k < max_analyze_bin; ++k)
     {
         freqs[k] = static_cast<double>(k) * freq_resolution;
     }
 
-    fftwf_plan p;
-    
     {
         std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
-        p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_WISDOM_ONLY);
-        if (p == nullptr)
+        fft_plan_ = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half, FFTW_WISDOM_ONLY);
+        if (fft_plan_ == nullptr)
         {
             LOG(WARNING) << name() << "No wisdom available for FFT planning, using patient mode.";
-            p = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_PATIENT);
+            fft_plan_ = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half, FFTW_PATIENT);
         }
     }
+}
+
+void IAFEstimator::Preprocess(ProcessingContext &context)
+{
+    current_iaf_ = std::numeric_limits<double>::quiet_NaN();
+    iaf_state_->set(current_iaf_);
+    last_valid_iaf_ = std::numeric_limits<double>::quiet_NaN();
+    current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
+    ema_ = std::numeric_limits<double>::quiet_NaN();
+    packet_count_ = 0;
+}
+
+void IAFEstimator::Process(ProcessingContext &context)
+{
+    MultiChannelType<float>::Data *data_in;
+    ScalarType<double>::Data *data_out;
 
     // Measurement phase
     while (!context.terminated())
@@ -503,20 +515,20 @@ void IAFEstimator::Process(ProcessingContext &context)
                 signal_in[i] = 0.0f;
             }
 
-            fftwf_execute(p);
+            fftwf_execute(fft_plan_);
 
             std::vector<double> power(max_analyze_bin);
             // Compute power spectrum
             for (size_t k = 0; k < max_analyze_bin; ++k)
             {
-                power[k] = (pow(freq_half[k][0], 2) + pow(freq_half[k][1], 2)) / (n_fft_*fs_);
+                power[k] = (pow(freq_half[k][0], 2) + pow(freq_half[k][1], 2)) / (n_fft_ * fs_);
             }
 
             std::vector<double> power_flat(max_analyze_bin);
             power_flat = remove_aperiodic(power, freqs);
 
             std::vector<double> power_smooth(max_analyze_bin);
-            power_smooth = savgol_filter(savgol, power_flat);
+            power_smooth = savgol_filter(savgol_, power_flat);
 
             PeakSeed seed = find_peak_seed(power_smooth, f_min_bin, f_max_bin, freq_resolution, true);
             PeakFitResult peak = fit_gaussian_peak(power_smooth, seed, freq_resolution);
@@ -528,7 +540,7 @@ void IAFEstimator::Process(ProcessingContext &context)
                 if (std::isnan(ema_))
                 {
                     // first valid estimate
-                    ema_ = 10; //peak.iaf_hz;
+                    ema_ = 10; // peak.iaf_hz;
                     // LOG(INFO) << name() << " First valid IAF estimate: " << peak.iaf_hz << " Hz";
                 }
                 else
@@ -551,7 +563,7 @@ void IAFEstimator::Process(ProcessingContext &context)
                 current_iaf_ = std::numeric_limits<double>::quiet_NaN();
                 current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
             }
-            if (invalid_count_ >= (fs_ * ema_window_sec_())/calc_interval_())
+            if (invalid_count_ >= (fs_ * ema_window_sec_()) / calc_interval_())
             {
                 ema_ = std::numeric_limits<double>::quiet_NaN(); // Reset EMA if too many invalid estimates in the last window
                 // LOG(WARNING) << name() << " Too many invalid IAF estimates, resetting EMA.";
@@ -571,7 +583,6 @@ void IAFEstimator::Process(ProcessingContext &context)
             }
             // double processing_time_us = std::chrono::duration<double, std::micro>(end_time - start_time).count();
             // LOG(INFO) << name() << " Processed packet "<< packet_count_ << " in " << std::fixed << std::setprecision(2) << processing_time_us << " us";
-            
         }
         data_out->set_data(ema_);
         data_out->set_source_timestamp(Clock::now());
@@ -582,7 +593,7 @@ void IAFEstimator::Process(ProcessingContext &context)
 
     {
         std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
-        fftwf_destroy_plan(p);
+        fftwf_destroy_plan(fft_plan_);
     }
     fftwf_free(signal_in);
     fftwf_free(freq_half);

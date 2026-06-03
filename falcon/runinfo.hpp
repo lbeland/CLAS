@@ -93,7 +93,9 @@ class RunContext : public StorageContext {
         strftime(buffer, 20, "%Y%m%d_%H%M%S", timeinfo);
 
         std::string timestamp = buffer;
-        run_id = run_id.empty() ? timestamp : run_id + "_" + timestamp;
+        if (run_id.empty()) {
+            run_id = timestamp;
+        }
 
         add_storage_context("runbase", storage_context("rungroup") + "/" + run_id);
         run_id_ = run_id;

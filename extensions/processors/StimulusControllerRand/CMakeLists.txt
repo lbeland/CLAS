@@ -1,0 +1,3 @@
+find_package(gram_savitzky_golay REQUIRED)
+ADD_LIBRARY(StimulusControllerRand "StimulusControllerRand.cpp")
+TARGET_LINK_LIBRARIES(StimulusControllerRand utilities asound)

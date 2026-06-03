@@ -5,15 +5,17 @@ import numpy as np
 import time
 import subprocess
 from pathlib import Path
+import shutil
 import yaml
 import zmq
 from gen_filter_coeff import gen_filter, gen_filter_ecHT
 from plot_results import plot_results
-from postprocess_results import analyse_pipeline
+from postprocess_results import analyse_results, get_ERP_latency
 
 
 REPO_ROOT = Path(__file__).resolve().parent
 WORKSPACE_FALCON_CONFIG = REPO_ROOT / ".falcon" / "config.yaml"
+RESULTS_DIR = "results"
 
 
 def main():
@@ -62,12 +64,11 @@ def main():
                         filter_length = int(2.0 * fs/iaf)    # 2 cycles of iaf frequency
                         params = [(1, iaf-bandwidth/2, iaf+bandwidth/2, fs, filter_length, "bandpass")]
                         gen_filter_ecHT(params, output_folder=os.path.join(resources_folder, "filters"))
-            elif processor_config.get("class") == "FileSerializer":
-                serializer_options = processor_config.get("options", {})
 
-    gen_filter(filter_params, fs, output_folder=os.path.join(resources_folder, "filters"))
+    if filter_params:
+        gen_filter(filter_params, fs, output_folder=os.path.join(resources_folder, "filters"))
 
-    run_id = Path(args.results_dir).name
+    output = f"{Path(args.results_dir).name}_{time.strftime('%Y%m%d_%H%M%S')}"
 
     graph_process = subprocess.Popen(["./build/release/falcon/falcon",args.graph, "--config", WORKSPACE_FALCON_CONFIG])
 
@@ -76,7 +77,7 @@ def main():
     context = zmq.Context()
     socket = context.socket(zmq.REQ)
     socket.connect(f"tcp://127.0.0.1:{config['network']['port']}")
-    socket.send_multipart([b"graph", b"start", "results".encode(), run_id.encode(), b""])
+    socket.send_multipart([b"graph", b"start", RESULTS_DIR.encode(), output.encode(), b""])
     socket.recv_multipart()
     try:
         # Wait for falcon to complete (processors will auto-exit after processing n_messages)
@@ -91,8 +92,21 @@ def main():
         print(f"Error during benchmark: {e}")
         terminate(graph_process)
 
-    # Postprocessing results
-    analyse_pipeline(12, graph_config)
+    # Copy graph file to results directory for record-keeping
+    results_dir_path =  Path(RESULTS_DIR) / Path(output)
+    results_dir_path.mkdir(parents=True, exist_ok=True)
+    output_graph_path = results_dir_path / args.graph
+    shutil.copy2(graph_path, output_graph_path)
+
+
+
+    if args.graph == "ERPCLAS.yaml":
+        get_ERP_latency(results_dir_path, channel=1)
+    else:
+        # Postprocessing results
+        analyse_results(10, results_dir_path)
+
+
     # plot_results(fs, 7.5, GRAPH_CONFIG)
 
 

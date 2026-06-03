@@ -1,0 +1,47 @@
+graph:
+  name: CLAS
+  defaults:
+    n_messages: &n_messages -1
+    window_size: &window_size 50000
+    fs: &fs 10000
+  processors:
+    SourceClient:
+      class: SourceClient
+      options:
+        fs: *fs
+        nchannels: 32
+        nsamples: 1
+        n_messages: *n_messages
+        store_aux: true
+      advanced:
+        buffer_sizes:
+          out: 32
+        thread_core: 0
+    StimulusController:
+      class: StimulusControllerRand
+      options:
+        stim_dur_ms: 12
+        stim_amplitude: 0.5
+        stim_period_ms: 1
+        min_stim_dist_sec: 0.075
+        max_stim_dist_sec: 2
+      advanced:
+        buffer_sizes:
+          out: 32
+        thread_core: 5
+    Serializer:    # one serializers per output stream
+      class: FileSerializer
+      options:
+        encoding: binary
+        throttle/enabled: false
+        overwrite: true 
+        format: full
+        n_messages: *n_messages
+      advanced:
+        thread_core: 7
+    
+  connections:
+  - SourceClient.out.0 = Serializer.in
+  - SourceClient.out.1 = Serializer.in
+
+

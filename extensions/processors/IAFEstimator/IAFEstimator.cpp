@@ -30,7 +30,6 @@
 #include <sstream>
 #include <string>
 #include <fftw3.h>
-#include <gram_savitzky_golay/gram_savitzky_golay.h>
 #include <complex>
 #include <dsp/fftw_planner_mutex.hpp>
 

@@ -21,6 +21,7 @@
 #include "iprocessor.hpp"
 #include "scalardata/scalardata.hpp"
 #include "multichanneldata/multichanneldata.hpp"
+#include <gram_savitzky_golay/gram_savitzky_golay.h>
 #include <dsp/filter.hpp>
 #include <boost/circular_buffer.hpp>
 #include <complex>

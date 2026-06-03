@@ -13,22 +13,34 @@ import datetime
 import pytz
 import os
 import yaml
+import glob
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 from scipy.signal import butter, sosfiltfilt, hilbert, welch
+from scipy.stats import circmean, circstd
 from read_output import get_signal_data
 from pathlib import Path
+import mne
 
-# Optional EDF support — install with: pip install pyedflib
-try:
-    import pyedflib
-    HAS_EDF = True
-except ImportError:
-    HAS_EDF = False
-    print("Warning: pyedflib not installed. EDF export disabled. Install with: pip install pyedflib")
+mne.viz.set_browser_backend("matplotlib")
+mne.viz.use_browser_backend("matplotlib")
+
+# mpl.rcParams.update({
+#     "text.usetex": True,
+# })
+
 
 # Automatic link to the last run results
 RESULTS_DIR = "_last_run"
+
+COMMON_BBOX = dict(
+    facecolor="white",
+    edgecolor="0.8",
+    boxstyle="round,pad=0.2",
+    alpha=0.85,
+)
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -67,7 +79,7 @@ def get_results_file(processor_name: str, name: str = ".out", slot: int = 0, res
     return str(matches[0])
 
 
-def load_processor_signals(processors: list[str], timestamps: bool = True, results_dir=None) -> dict:
+def load_processor_signals(results_dir, processors: list[str], timestamps: bool = True) -> dict:
     """Load raw signal data from all processors into a dict keyed by label."""
     samples = {}
 
@@ -239,45 +251,43 @@ def write_edf(
     filtered: np.ndarray = None,
 ) -> None:
     """Write all pipeline signals to an EDF file."""
-    if not HAS_EDF:
-        print("Skipping EDF export (pyedflib not available).")
-        return
 
     raw  = ground_truth["raw"]
     time = ground_truth["time"]
     n    = len(raw)
 
     # Build channel list: (label, data, physical_min, physical_max, dimension)
-    channels = [("EEG_raw", raw)]
+    channels = [("Raw", "eeg", raw)]
 
     # Filter channels
     if filtered is not None:
-        channels.append(("EEG_filt_offline", filtered[:n]))
+        channels.append(("Filt_off", "misc", filtered[:n]))
 
     if samples.get("GlobalFilter") is not None:
         bp = samples["GlobalFilter"]["y"]
         t_bp = samples["GlobalFilter"]["x"]
         if len(bp) != n:
             bp = np.interp(time, t_bp, bp)
-        channels.append(("EEG_filt_online", bp[:n]))
+        channels.append(("Filt_on", "misc", bp[:n]))
 
     # Phase channels
     if hilbert_phase is not None:
-        channels.append(("Hilbert_phase_rad", hilbert_phase[:n]))
+        channels.append(("Hilbert_phi", "misc", hilbert_phase[:n]))
 
     if ground_truth["true_phase"] is not None:
-        channels.append(("True_phase_rad", ground_truth["true_phase"][:n]))
+        channels.append(("True_phi", "misc", ground_truth["true_phase"][:n]))
 
     if samples.get("PhaseEstimator_phase") is not None:
         phase_est = samples["PhaseEstimator_phase"]["y"]
         t_est = samples["PhaseEstimator_phase"]["x"]
         if len(phase_est) != n:
             phase_est = np.interp(time, t_est, phase_est)
-        channels.append(("Online_phase_rad", phase_est[:n]))
+        phase_est = np.nan_to_num(phase_est)   # replace any NaN with zero for EDF export
+        channels.append(("Online_phi", "misc", phase_est[:n]))
 
     # Stimuli channels
     if stim_ref is not None:
-        channels.append(("Target_Stim", stim_ref[:n]))
+        channels.append(("Target_Stim", "stim", stim_ref[:n]))
 
     for key, label, ann_label, trim_ms in [
         ("StimulusController",   "Stimulus", "Stimulus", 0.0),
@@ -291,7 +301,7 @@ def write_edf(
             binary = (binary > 0.5).astype(float)   # re-binarise after interp
             if trim_ms > 0.0:
                 binary = _trim_falling_edges(binary, fs, trim_ms)
-            channels.append((label, binary[:n]))
+            channels.append((label, "stim", binary[:n]))
 
     # AUX channel (raw, interpolated onto the EEG timeline)
     if samples.get("SourceClient_AUX") is not None:
@@ -299,45 +309,41 @@ def write_edf(
         y_aux = samples["SourceClient_AUX"]["y"]
         if len(y_aux) != n:
             y_aux = np.interp(time, t_aux, y_aux)
-        channels.append(("AUX_raw", y_aux[:n]))
+        channels.append(("AUX", "misc", y_aux[:n]))
 
+    eeg_channels = [channel for channel in samples.keys() if channel.startswith("SourceClient_") and channel.split("_")[1].isdigit()]
+    for ch in eeg_channels:
+        ch_idx = ch.split("_")[1]
+        t_ch = samples[ch]["x"]
+        y_ch = samples[ch]["y"]
+        if len(y_ch) != n:
+            y_ch = np.interp(time, t_ch, y_ch)
+        channels.append((f"EEG_{ch_idx}", "eeg", y_ch[:n]))
 
     # if ground_truth["true_amplitude"] is not None:
     #     channels.append(("True_amplitude", ground_truth["true_amplitude"][:n]))
 
     # IAF channels
     if ground_truth["true_inst_freq"] is not None:
-        channels.append(("True_inst_freq_Hz", ground_truth["true_inst_freq"][:n]))
+        channels.append(("True_inst_freq_Hz", "misc",ground_truth["true_inst_freq"][:n]))
 
     if samples.get("IAFEstimator") is not None:
         iaf = samples["IAFEstimator"]["y"]
         t_iaf = samples["IAFEstimator"]["x"]
         if len(iaf) != n:
             iaf = np.interp(time, t_iaf, iaf)
-        channels.append(("IAF_est_Hz", iaf[:n]))
+        iaf = np.nan_to_num(iaf)   # replace any NaN with zero for EDF export
+        channels.append(("IAF_est_Hz", "misc", iaf[:n]))
 
-    with pyedflib.EdfWriter(filepath, len(channels), file_type=pyedflib.FILETYPE_EDFPLUS) as f:
-        start_dt = datetime.datetime.fromtimestamp(time[0] / 1e6, tz=pytz.timezone("Europe/Berlin"))
-        f.setStartdatetime(start_dt)
-        for i, (label, data) in enumerate(channels):
-            data = data.astype(np.float64)
-            pmin, pmax = float(np.nanmin(data)) - 1, float(np.nanmax(data)) + 1
-            if pmin == pmax:           # flat signal / all-zeros edge-case
-                pmax = pmin + 1.0
-            f.setSignalHeader(i, {
-                "label":            label,
-                "dimension":        "",
-                "sample_frequency": fs,
-                "physical_min":     pmin,
-                "physical_max":     pmax,
-                "digital_min":      -32768,
-                "digital_max":      32767,
-                "transducer":       "",
-                "prefilter":        "",
-            })
-        f.writeSamples([data.astype(np.float64) for _, data in channels])
-        # for onset, duration, ann_label in annotations:
-        #     f.writeAnnotation(onset, duration, ann_label)
+
+    info = mne.create_info([ch[0] for ch in channels], sfreq=fs, ch_types=[ch[1] for ch in channels], verbose=False)
+    raw = mne.io.RawArray([ch[2] for ch in channels], info, verbose=False)
+    # Scale to volts
+    raw.apply_function(lambda x: x * 1e-6, picks="eeg")  # EEG channels in microvolts → volts
+    start_dt = datetime.datetime.fromtimestamp(time[0] / 1e6, tz=pytz.timezone("Europe/Berlin")).replace(tzinfo=datetime.timezone.utc)
+    raw.set_meas_date(start_dt)
+    raw.export(filepath, fmt="edf", add_ch_type=True, physical_range="channelwise", overwrite=True, verbose=False)
+
     print("EDF written.")
 
 
@@ -445,14 +451,14 @@ def compute_errors(
  
         if onset_err is not None:
             errors.append({
-                "label": f"Stim onset error ({ref_label} ref)",
+                "label": f"Stim onset error",
                 "time_s": onset_err["time_s"],
                 "values": onset_err["values"],
                 "unit": "degrees",
             })
         if offset_err is not None:
             errors.append({
-                "label": f"Stim offset error ({ref_label} ref)",
+                "label": f"Stim offset error",
                 "time_s": offset_err["time_s"],
                 "values": offset_err["values"],
                 "unit": "degrees",
@@ -533,7 +539,8 @@ def compute_reference_stimulus(
     falling = np.where((stim_ref[1:] == 0) & (stim_ref[:-1] == 1))[0] + 1
  
     onset_phases  = phase[rising]  if len(rising)  else np.array([])
-    offset_phases = phase[falling] if len(falling) else np.array([])
+    offset_phases = onset_phases + stim_dur_rad[rising]
+    # offset_phases = phase[falling] if len(falling) else np.array([])
  
     return stim_ref, onset_phases, offset_phases
  
@@ -589,6 +596,11 @@ def compute_stimulus_edge_errors(
             err = float(np.angle(np.exp(1j * (ref_phi[j] - ap)), deg=True))
             times.append((at - start_ts) / 1e6)
             errs.append(err)
+        # for rt, rp in zip(ref_t, ref_phi):
+        #     j   = int(np.argmin(np.abs(act_t - rt)))
+        #     err = float(np.angle(np.exp(1j * (rp - act_phi[j])), deg=True))
+        #     times.append((rt - start_ts) / 1e6)
+        #     errs.append(err)
         return {"time_s": np.array(times), "values": np.array(errs)}
  
     onset_err  = match_and_diff(ref_on_t,  ref_on_phi,  act_on_t,  act_on_phi,  "onset")
@@ -600,21 +612,80 @@ def compute_stimulus_edge_errors(
 # Plotting (errors only)
 # ---------------------------------------------------------------------------
 
-def plot_errors(errors: list[dict], output_path: str = "error_analysis.png") -> None:
+def _style_polar_axis(ax, r_max, radial_ticks):
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(-1)
+    ax.set_thetagrids(np.arange(0, 360, 45), labels=[""] * 8)
+
+    ax.set_ylim(0, r_max)
+    ax.set_yticks(radial_ticks)
+    ax.set_yticklabels([rf"{t:.0f}%" for t in radial_ticks])
+
+    ax.grid(True, linestyle=":", linewidth=0.6, alpha=1.0)
+    ax.spines["polar"].set_linewidth(0.8)
+    ax.set_rlabel_position(90)
+
+    for label in ax.get_yticklabels():
+        label.set_horizontalalignment("center")
+
+    r0 = r_max * 1.15
+    ax.text(np.deg2rad(45),  r0, r"$+45^\circ$", ha="center", va="center")
+    ax.text(np.deg2rad(-45), r0, r"$-45^\circ$", ha="center", va="center")
+
+def _circ_stats(phi_rad):
+    """
+    Returns:
+        mu, sd, plv, pli
+    """
+    phi = np.asarray(phi_rad, float)
+    if phi.size == 0:
+        return np.nan, np.nan, np.nan, np.nan
+
+    mu = float(circmean(phi, high=np.pi, low=-np.pi))
+    sd = float(circstd(phi, high=np.pi, low=-np.pi))
+    plv = float(np.abs(np.mean(np.exp(1j * phi))))
+    pli = float(np.abs(np.mean(np.sign(np.sin(phi)))))
+
+    return mu, sd, plv, pli
+
+def _wrap_phase(phi):
+    """Wrap phase to [-pi, pi]."""
+    return (phi + np.pi) % (2 * np.pi) - np.pi
+
+
+def plot_errors(errors: list[dict], output_path: str = "error_analysis.png", time_range: tuple = None) -> None:
     """Plot error time series and histograms; save to output_path."""
     if not errors:
         print("No errors to plot.")
         return
 
-    fig, axes = plt.subplots(2, 1, figsize=(9, 6), constrained_layout=True)
-    ax_ts, ax_hist = axes
+    ax_ts = plt.figure(figsize=(10, 5)).add_subplot(111)
+    fig_polars = plt.figure(figsize=(3 * len(errors), 3.5))
+    fig_polars.suptitle("Error distributions", fontsize=12)
+    ax_polars = [fig_polars.add_subplot(1, len(errors), i+1, projection="polar") for i in range(len(errors))]
 
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
+    bin_width_deg = 10
+    bin_width_rad = np.radians(bin_width_deg)
+    bins = np.arange(-180, 181, bin_width_deg)
+    centers = (np.radians(bins[:-1]) + np.radians(bins[1:])) / 2
+    
+    hists = []
+    for i, err in enumerate(errors):
+        val_deg = err["values"]  # in degree
+        vals_deg = val_deg[~np.isnan(val_deg)]
+        hist = np.histogram(vals_deg, bins=bins)[0] / max(1, vals_deg.size) * 100
+        hists.append(hist)
+
+    r_max = max([x.max() for x in hists]) * 1.05
+    r_max = max(r_max, 5)
+    r_ticks = [t for t in [10, 20, 30] if t < r_max]
 
     for i, err in enumerate(errors):
         color = colors[i % len(colors)]
         ls    = err.get("linestyle", "-")
-        vals  = err["values"]
+        vals  = err["values"]   # in degree
         t     = err["time_s"]
         label = err["label"]
         unit  = err["unit"]
@@ -626,29 +697,37 @@ def plot_errors(errors: list[dict], output_path: str = "error_analysis.png") -> 
         # Histogram
         if np.nansum(np.abs(vals)) == 0:
             continue
-        mean, median, std = np.nanmean(vals), np.nanmedian(vals), np.nanstd(vals)
-        ax_hist.hist(vals, bins="auto", alpha=0.65, edgecolor="black",
-                     linewidth=0.4, color=color, label=f"{label}")
-        ax_hist.axvline(mean,            linestyle="--", linewidth=1.2, color=color,
-                        label=f"μ={mean:.2f}  σ={std:.2f}  med={median:.2f}")
-        ax_hist.axvline(mean + std,      linestyle="-.", linewidth=0.9, color=color, alpha=0.7)
-        ax_hist.axvline(mean - std,      linestyle="-.", linewidth=0.9, color=color, alpha=0.7)
+        vals_deg = vals[~np.isnan(vals)]
+        vals_rad = np.radians(vals_deg)
+        mu_u, sd_u, plv_u, pli_u = _circ_stats(vals_rad)
 
-    # Style
-    for ax in axes:
-        ax.minorticks_on()
-        ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
-        ax.legend(frameon=False, fontsize=8)
+        ax_polars[i].bar(centers, hists[i], width=bin_width_rad, color=color, edgecolor="0", linewidth=0.75)
+        ax_polars[i].plot([mu_u, mu_u], [0, r_max], color="0", linewidth=2)
+        _style_polar_axis(ax_polars[i], r_max, r_ticks)
+        ax_polars[i].text(
+        0.5, 0.45,
+        rf"${np.round(np.degrees(mu_u), 1) + 0.0:.1f}^\circ \pm {np.round(np.degrees(sd_u), 1):.1f}^\circ$",
+        transform=ax_polars[i].transAxes, bbox=COMMON_BBOX, va="top", ha="center"
+        )
+        ax_polars[i].set_title(label, fontsize=10)
+    # # Style
+    # for ax in axes:
+    #     ax.minorticks_on()
+    #     ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
+    #     ax.legend(frameon=False, fontsize=8)
 
     ax_ts.set_xlabel("Time (s)")
     ax_ts.set_ylabel("Error")
     ax_ts.set_title("Error over time")
 
-    ax_hist.set_xlabel("Error value")
-    ax_hist.set_ylabel("Count")
-    ax_hist.set_title("Error distribution")
+    # ax_hist.set_xlabel("Error value")
+    # ax_hist.set_ylabel("Count")
+    # ax_hist.set_title("Error distribution")
 
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    if time_range is not None:
+        ax_ts.set_xlim(time_range)
+
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
     print(f"Error plot saved: {output_path}")
 
 def plot_spectrum(raw, samples: dict, fs: float) -> None:
@@ -675,7 +754,84 @@ def plot_spectrum(raw, samples: dict, fs: float) -> None:
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Magnitude")
     plt.title("Spectrum")
-    plt.legend()
+    plt.legend(facecolor="white", frameon=True)
+
+def plot_time_series(ground_truth, samples: dict, hilbert_phase, stim_ref, fs: float, time_range: tuple = None) -> None:
+    time_s = (ground_truth["time"] - ground_truth["time"][0]) / 1e6  # convert to seconds from start
+
+    def _pick(label: str):
+        for signal in samples.keys():
+            if signal == label:
+                return samples[signal]["y"]
+        return None
+
+    raw_eeg = ground_truth["raw"]-np.mean(ground_truth["raw"])
+    filt_online = _pick("GlobalFilter")
+
+    online_phase = _pick("PhaseEstimator_phase")
+    true_phase = ground_truth["true_phase"] if ground_truth["true_phase"] is not None else None
+
+    stimulus = _pick("StimulusController")
+    trigger = _pick("SourceClient_TRIGGER")
+    aux = _pick("SourceClient_AUX")
+    if aux is not None:
+        # Scale to be between 0 and 1 for plotting, and zero-centre
+        aux = (aux - np.min(aux)) / (np.max(aux) - np.min(aux))
+        aux = aux - np.mean(aux)
+
+    fig, axes = plt.subplots(2, 1, sharex=True, figsize=(14, 9), height_ratios=[3, 1])
+    ax_raw, ax_phase = axes
+
+    if raw_eeg is not None:
+        ax_raw.plot(time_s, raw_eeg, color="0.6", linewidth=0.8, label="Raw EEG")
+    if filt_online is not None:
+        ax_raw.plot(time_s, filt_online, color="0.3", linewidth=1.5, label="Filtered EEG (online)")
+    if stim_ref is not None:
+        # ax_raw.fill_between(time_s, stim_ref, color="tab:red", alpha=0.3, label="Target stim")
+        ax_raw.fill_between(time_s, 0, 1, where=stim_ref,
+                        color='tab:blue', alpha=0.4, transform=ax_raw.get_xaxis_transform(), label="Target stim")
+    if trigger is not None:
+        ax_raw.fill_between(time_s, 0, 1, where=trigger,
+                        color='tab:orange', alpha=0.4, transform=ax_raw.get_xaxis_transform(), label="Stim")
+    ax_raw.set_ylabel("Amplitude (µV)")
+    ax_raw.set_title("Raw and Filtered EEG with Stimuli")
+    ax_raw.set_ylim(-150,100)
+    ax_raw.legend(facecolor="white", frameon=True, fontsize=8, loc="upper right")
+
+    if hilbert_phase is not None:
+        ax_phase.plot(time_s, hilbert_phase, color="tab:blue", linewidth=1.5, label="Offline Hilbert phase")
+    if online_phase is not None:
+        ax_phase.plot(time_s, online_phase, color="tab:orange", linewidth=1.5, label="Online phase")
+    if true_phase is not None:
+        ax_phase.plot(time_s, true_phase, color="tab:brown", linewidth=1.0, label="True phase")
+    ax_phase.set_ylabel("Phase (rad)")
+    ax_phase.set_title("Phase Estimates")
+    ax_phase.legend(facecolor="white", frameon=True, fontsize=8, loc="upper right")
+    ax_phase.set_xlabel("Time (s)")
+
+    # if stim_ref is not None:
+    #     ax_stim.step(time_s, stim_ref, where="post", color="tab:red", linewidth=1.2, label="Target stim")
+    # # if stimulus is not None:
+    # #     ax_stim.step(time_s, stimulus, where="post", color="tab:olive", linewidth=1.1, alpha=0.9, label="Stimulus")
+    # if trigger is not None:
+    #     ax_stim.step(time_s, trigger, where="post", color="tab:purple", linewidth=1.0, alpha=0.9, label="Stim")
+    # if aux is not None:
+    #     ax_stim.plot(time_s, aux, color="tab:orange", linewidth=1, alpha=0.5, label="AUX")
+    # ax_stim.set_ylabel("State")
+    # ax_stim.set_xlabel("Time (s)")
+    # ax_stim.set_title("Stimulus Signals")
+    # ax_stim.set_ylim(-0.1, 1.1)
+    # ax_stim.legend(frameon=False, fontsize=8, loc="upper right")
+
+    ax_raw.set_xlim(time_range) if time_range is not None else None
+
+    for ax in axes:
+        ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.5)
+
+    plt.savefig("time_series.svg", dpi=300, bbox_inches="tight")
+
+    return
+
 
 
 # ---------------------------------------------------------------------------
@@ -684,11 +840,16 @@ def plot_spectrum(raw, samples: dict, fs: float) -> None:
 
 def analyse_pipeline(
     f0: float,
-    graph_config: dict,
-    edf_path: str = "pipeline_signals.edf",
-    plot_path: str = "error_analysis.png",
-    results_dir: str | None = None,
+    results_dir: str,
+    plot_path: str = "error_analysis.svg",
 ) -> None:
+
+    graph_file = glob.glob(os.path.join(results_dir, "*.yaml"))
+    print(results_dir)
+
+    with open(graph_file[0], "r") as f:
+        graph_config = yaml.safe_load(f)
+
     fs = graph_config.get("graph", {}).get("defaults", {}).get("fs", None)
 
     processors = graph_config.get("graph", {}).get("processors", [])
@@ -696,7 +857,7 @@ def analyse_pipeline(
         raise ValueError(f"No processors found in graph config.")
 
     # 1. Load raw processor outputs
-    samples = load_processor_signals(processors, results_dir=results_dir)
+    samples = load_processor_signals(results_dir, processors)
 
     # 2. Identify ground-truth signals
     ground_truth = extract_ground_truth(samples)
@@ -706,32 +867,34 @@ def analyse_pipeline(
 
     # 3. Offline Hilbert reference
     raw = ground_truth["raw"]
-    _, hilbert_phase = compute_hilbert_reference(raw, fs, f_low=f0-2.0, f_high=f0+2.0)
+    filtered, hilbert_phase = compute_hilbert_reference(raw, fs, f_low=f0-2.0, f_high=f0+2.0)
 
     # 4. Compute errors
     start_ts = ground_truth["time"][0]
     errors, stim_ref = compute_errors(samples, ground_truth, hilbert_phase, start_ts, fs, graph_config)
 
+    # # 5. Export to EDF
+    edf_path = os.path.join(results_dir, os.path.basename(results_dir) + ".edf")
+    write_edf(edf_path, fs, ground_truth, samples, hilbert_phase, stim_ref, filtered)
 
-    # 5. Export to EDF
-    write_edf(edf_path, fs, ground_truth, samples, hilbert_phase, stim_ref)
+    time_range_to_plot = (17, 18)  # seconds, relative to start of recording
 
     # 6. Plot errors
     plot_errors(errors, output_path=plot_path)
 
     # 7. Plot example spectrum of filtered data
-    plot_spectrum(raw, samples, fs)
+    # plot_spectrum(raw, samples, fs)
+
+    # 8. Plot time series from EDF
+    plot_time_series(ground_truth, samples, hilbert_phase, stim_ref, fs, time_range=time_range_to_plot)
+    # plot_errors(errors, output_path=plot_path, time_range=time_range_to_plot)
 
     plt.show()
 
 
 if __name__ == "__main__":
-    with open("resources/graphs/TurboLinkCLAS.yaml", "r") as f:
-        graph_config = yaml.safe_load(f)
 
-    analyse_pipeline(f0=6,graph_config=graph_config,results_dir="eike_20260529_1600")
+    analyse_pipeline(f0=10,results_dir="results/eike_20260529_1600")
 
     # _last_run
     # eike_20260529_1600
-    # SimulateCLAS
-    # TurboLinkCLAS

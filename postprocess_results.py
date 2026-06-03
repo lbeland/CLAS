@@ -79,7 +79,7 @@ def get_results_file(processor_name: str, name: str = ".out", slot: int = 0, res
     return str(matches[0])
 
 
-def load_processor_signals(results_dir, processors: list[str], timestamps: bool = True) -> dict:
+def load_processor_signals(fs, results_dir, processors: list[str], timestamps: bool = True) -> dict:
     """Load raw signal data from all processors into a dict keyed by label."""
     samples = {}
 
@@ -118,6 +118,8 @@ def load_processor_signals(results_dir, processors: list[str], timestamps: bool 
             file = get_results_file(processor, slot=1, results_dir=results_dir)
             signal, time = get_signal_data(file, channel=8, timestamps=timestamps)
             if signal is not None:
+                binary = (signal > 0.5).astype(float)
+                signal = _trim_falling_edges(binary, fs, 11.0)
                 samples["SourceClient_TRIGGER"] = {"x": time, "y": signal}
 
         elif processor == "PhaseEstimator":
@@ -140,6 +142,9 @@ def load_processor_signals(results_dir, processors: list[str], timestamps: bool 
                 if signal is not None:
                     samples[f"{processor}"] = {"x": time, "y": signal}
 
+    first_timestamps = [samples[key]["x"][0] for key in samples]
+    assert len(set(first_timestamps)) == 1, "Mismatched timestamps across processors"
+
     return samples
 
 
@@ -153,7 +158,7 @@ def extract_ground_truth(samples: dict) -> dict:
         # From the 32 EEG channels, generate one "raw" signal that is build sample by sample with the signal that was selected by the ChannelSelector in real time
         # Because thats what the PhaseEstimator got as input
         if "ChannelSelector" in samples:
-            channel_selected = samples["ChannelSelector"]["y"]
+            channel_selected = samples["ChannelSelector"]["y"] - 1 # convert to zero-based
 
             raw = []
             for sample_idx, select_idx in enumerate(channel_selected):
@@ -266,8 +271,6 @@ def write_edf(
     if samples.get("GlobalFilter") is not None:
         bp = samples["GlobalFilter"]["y"]
         t_bp = samples["GlobalFilter"]["x"]
-        if len(bp) != n:
-            bp = np.interp(time, t_bp, bp)
         channels.append(("Filt_on", "misc", bp[:n]))
 
     # Phase channels
@@ -279,9 +282,6 @@ def write_edf(
 
     if samples.get("PhaseEstimator_phase") is not None:
         phase_est = samples["PhaseEstimator_phase"]["y"]
-        t_est = samples["PhaseEstimator_phase"]["x"]
-        if len(phase_est) != n:
-            phase_est = np.interp(time, t_est, phase_est)
         phase_est = np.nan_to_num(phase_est)   # replace any NaN with zero for EDF export
         channels.append(("Online_phi", "misc", phase_est[:n]))
 
@@ -289,35 +289,23 @@ def write_edf(
     if stim_ref is not None:
         channels.append(("Target_Stim", "stim", stim_ref[:n]))
 
-    for key, label, ann_label, trim_ms in [
-        ("StimulusController",   "Stimulus", "Stimulus", 0.0),
-        ("SourceClient_TRIGGER", "Trigger",  "Trigger",  11.0),
-    ]:
-        if samples.get(key) is not None:
-            t_ev  = samples[key]["x"]
-            y_ev  = samples[key]["y"]
-            # Resample onto raw timeline as a continuous 0/1 channel
-            binary = np.interp(time, t_ev, y_ev.astype(float))
-            binary = (binary > 0.5).astype(float)   # re-binarise after interp
-            if trim_ms > 0.0:
-                binary = _trim_falling_edges(binary, fs, trim_ms)
-            channels.append((label, "stim", binary[:n]))
+    if samples.get("StimulusController") is not None:
+        y_st  = samples["StimulusController"]["y"]
+        channels.append(("Stimulus", "stim", y_st[:n]))
 
-    # AUX channel (raw, interpolated onto the EEG timeline)
+    if samples.get("SourceClient_TRIGGER") is not None:
+        y_st  = samples["SourceClient_TRIGGER"]["y"]
+        channels.append(("Trigger", "stim", y_st[:n]))
+
+    # AUX channel
     if samples.get("SourceClient_AUX") is not None:
-        t_aux = samples["SourceClient_AUX"]["x"]
         y_aux = samples["SourceClient_AUX"]["y"]
-        if len(y_aux) != n:
-            y_aux = np.interp(time, t_aux, y_aux)
         channels.append(("AUX", "misc", y_aux[:n]))
 
     eeg_channels = [channel for channel in samples.keys() if channel.startswith("SourceClient_") and channel.split("_")[1].isdigit()]
     for ch in eeg_channels:
         ch_idx = ch.split("_")[1]
-        t_ch = samples[ch]["x"]
         y_ch = samples[ch]["y"]
-        if len(y_ch) != n:
-            y_ch = np.interp(time, t_ch, y_ch)
         channels.append((f"EEG_{ch_idx}", "eeg", y_ch[:n]))
 
     # if ground_truth["true_amplitude"] is not None:
@@ -329,12 +317,8 @@ def write_edf(
 
     if samples.get("IAFEstimator") is not None:
         iaf = samples["IAFEstimator"]["y"]
-        t_iaf = samples["IAFEstimator"]["x"]
-        if len(iaf) != n:
-            iaf = np.interp(time, t_iaf, iaf)
         iaf = np.nan_to_num(iaf)   # replace any NaN with zero for EDF export
         channels.append(("IAF_est_Hz", "misc", iaf[:n]))
-
 
     info = mne.create_info([ch[0] for ch in channels], sfreq=fs, ch_types=[ch[1] for ch in channels], verbose=False)
     raw = mne.io.RawArray([ch[2] for ch in channels], info, verbose=False)
@@ -400,12 +384,8 @@ def compute_errors(
     stim_ref = None
     if samples.get("StimulusController") is not None:
         if samples.get("SourceClient_TRIGGER") is not None:
-            trigger_source = "measured"
-            trigger_t = samples["SourceClient_TRIGGER"]["x"]
             trigger_y = samples["SourceClient_TRIGGER"]["y"]
         elif samples.get("StimulusController") is not None:
-            trigger_source = "internal"
-            trigger_t = samples["StimulusController"]["x"]
             trigger_y = samples["StimulusController"]["y"]
 
         ref_phase = true_phase if true_phase is not None else hilbert_phase
@@ -414,19 +394,17 @@ def compute_errors(
         # IAF for phase-advance correction and dur_unit="ms" window scaling.
         # Priority: ground truth estimate → true IAF → constant 10 Hz fallback.
         if true_inst_freq is not None:
-            iaf_interp = true_inst_freq
+            iaf_y = true_inst_freq
         elif samples.get("IAFEstimator") is not None:
-            iaf_t = samples["IAFEstimator"]["x"]
             iaf_y = samples["IAFEstimator"]["y"]
-            iaf_interp = np.interp(ground_truth["time"], iaf_t, iaf_y)
         else:
-            iaf_interp = np.full(len(ground_truth["time"]), 10.0)
+            print("No IAF information available; using constant 10 Hz for stimulus reconstruction")
+            iaf_y = np.full(len(ground_truth["time"]), 10.0)
  
         stim_config = config.get("graph", {}).get("processors", {}).get("StimulusController", {}).get("options",{})
         stim_ref, _, _ = compute_reference_stimulus(
             phase=ref_phase,
-            iaf=iaf_interp,
-            time_us=ground_truth["time"],
+            iaf=iaf_y,
             stim_onset_deg=stim_config.get("stim_onset_deg", 0.0),   # match TurboLinkCLAS.yaml
             stim_dur_deg=stim_config.get("stim_dur_deg", 90.0),      # match TurboLinkCLAS.yaml
             stim_dur_unit=stim_config.get("stim_dur_unit", "deg"),    # match TurboLinkCLAS.yaml
@@ -435,11 +413,7 @@ def compute_errors(
         )
  
         # Bring actual trigger onto the raw EEG timeline
-        trigger_binary = np.interp(ground_truth["time"], trigger_t, trigger_y.astype(float))
-        trigger_binary = (trigger_binary > 0.5).astype(float)
-        if trigger_source == "measured":
-            # Trim falling edges to correct for any stimulus duration (onset timing preserved)
-            trigger_binary = _trim_falling_edges(trigger_binary, fs=fs, trim_ms=11.0)
+        trigger_binary = (trigger_y > 0.5).astype(float)
  
         onset_err, offset_err = compute_stimulus_edge_errors(
             ref_signal=stim_ref,
@@ -475,7 +449,6 @@ def compute_errors(
 def compute_reference_stimulus(
     phase: np.ndarray,
     iaf: np.ndarray,
-    time_us: np.ndarray,
     stim_onset_deg: float = 0.0,
     stim_dur_deg: float = 90.0,
     stim_dur_unit: str = "deg",
@@ -793,6 +766,9 @@ def plot_time_series(ground_truth, samples: dict, hilbert_phase, stim_ref, fs: f
     if trigger is not None:
         ax_raw.fill_between(time_s, 0, 1, where=trigger,
                         color='tab:orange', alpha=0.4, transform=ax_raw.get_xaxis_transform(), label="Stim")
+    elif stimulus is not None:
+        ax_raw.fill_between(time_s, 0, 1, where=stimulus,
+                        color='tab:orange', alpha=0.4, transform=ax_raw.get_xaxis_transform(), label="Stimulus")
     ax_raw.set_ylabel("Amplitude (µV)")
     ax_raw.set_title("Raw and Filtered EEG with Stimuli")
     ax_raw.set_ylim(-150,100)
@@ -857,7 +833,7 @@ def analyse_pipeline(
         raise ValueError(f"No processors found in graph config.")
 
     # 1. Load raw processor outputs
-    samples = load_processor_signals(results_dir, processors)
+    samples = load_processor_signals(fs, results_dir, processors)
 
     # 2. Identify ground-truth signals
     ground_truth = extract_ground_truth(samples)
@@ -877,7 +853,7 @@ def analyse_pipeline(
     edf_path = os.path.join(results_dir, os.path.basename(results_dir) + ".edf")
     write_edf(edf_path, fs, ground_truth, samples, hilbert_phase, stim_ref, filtered)
 
-    time_range_to_plot = (17, 18)  # seconds, relative to start of recording
+    time_range_to_plot = (17,18)  # seconds, relative to start of recording
 
     # 6. Plot errors
     plot_errors(errors, output_path=plot_path)

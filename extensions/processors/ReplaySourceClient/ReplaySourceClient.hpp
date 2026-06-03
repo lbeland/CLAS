@@ -18,10 +18,30 @@
 // ---------------------------------------------------------------------
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
+
 #include "iprocessor.hpp"
 #include "multichanneldata/multichanneldata.hpp"
 #include "options/options.hpp"
 #include "utilities/time.hpp"
+
+// ---------------------------------------------------------------------------
+// Field descriptor parsed from the YAML header's "data" list.
+// Each entry encodes name, element type, and shape, e.g.
+//   "signal float32 (32,64)"
+//   "hardware_ts uint64 (1)"
+// ---------------------------------------------------------------------------
+struct FieldDescriptor {
+  std::string name;
+  std::string dtype;       // "float32", "uint64", ...
+  std::vector<int> dims;   // shape, e.g. {32, 64} or {1}
+  std::size_t n_items;     // product of dims
+  std::size_t byte_size;   // n_items * sizeof(element)
+  std::size_t offset;      // byte offset within one record
+};
 
 class ReplaySourceClient : public IProcessor {
  public:
@@ -30,6 +50,7 @@ class ReplaySourceClient : public IProcessor {
   void CreatePorts() override;
   void CompleteStreamInfo() override;
   void Prepare(GlobalContext &context) override;
+  void Preprocess(ProcessingContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
 
@@ -53,4 +74,32 @@ class ReplaySourceClient : public IProcessor {
   options::Double fs_{1000.0};
 
   inline static std::vector<TimePoint> send_times;
+
+ private:
+  // ---- helpers ------------------------------------------------------------
+
+  // Resolve the concrete file path from path_ / file_ / slot_ options.
+  std::string ResolveFilePath(const std::string path) const;
+
+  // Parse the binary file: locate the YAML header terminator, parse the
+  // layout, and load the raw payload.  Fills all members below.
+  void LoadFile(const std::string &filepath);
+
+  // Parse one YAML "data" entry string into a FieldDescriptor.
+  static FieldDescriptor ParseDataEntry(const std::string &entry);
+
+  // Return the byte size of one element for a given dtype string.
+  static std::size_t DtypeSize(const std::string &dtype);
+
+  // ---- parsed file state --------------------------------------------------
+  std::vector<FieldDescriptor> layout_;  // field descriptors in record order
+  std::size_t record_size_{0};           // total bytes per record
+  std::size_t n_records_{0};             // number of complete records
+  std::size_t signal_offset_{0};         // byte offset of "signal" field
+  std::vector<std::uint8_t> payload_;    // raw binary payload (after header)
+
+  // ---- runtime replay state -----------------------------------------------
+  std::size_t current_record_{0};        // index of next record to emit
+  TimePoint last_emit_time_{};           // wall-clock time of previous emit
+  double inter_packet_ns_{0.0};          // expected gap between packets [ns]
 };

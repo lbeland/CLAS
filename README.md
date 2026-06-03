@@ -21,9 +21,6 @@ cmake --build release -- -j$(nproc)
 # Add the installation path in your $PATH if not already the case
 export PATH="$PWD/build/falcon:$PATH"
 
-# Allow falcon to more finely control CPU core utilization.
-sudo setcap 'cap_sys_nice=pe' ./build/falcon/falcon 
-
 # Check if installation worked
 falcon --help
 ```

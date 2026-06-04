@@ -180,7 +180,7 @@ void CommandHandler::start() {
     std::deque<std::string> reply;
 
     while (!finished) {
-        usleep(100000);  // 0.1 second, takes new command every 0.1 second (also my quit command...)
+        usleep(100000);  // 0.1 second
 
         // iterate through sources
         for (auto& it : sources_) {

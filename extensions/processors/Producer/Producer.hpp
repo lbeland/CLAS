@@ -29,6 +29,7 @@ class Producer : public IProcessor {
 
   void CreatePorts() override;
   void CompleteStreamInfo() override;
+  void Preprocess(ProcessingContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
 
@@ -49,5 +50,6 @@ class Producer : public IProcessor {
   
   BroadcasterState<double>* iaf_state_ = nullptr;
   double current_iaf_ = 10.0;
-  inline static std::vector<TimePoint> send_times;
+//   inline static std::vector<TimePoint> send_times;
+  int packet_count_ = 0;
 };

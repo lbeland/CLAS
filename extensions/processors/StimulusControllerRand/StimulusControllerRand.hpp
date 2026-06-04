@@ -39,6 +39,7 @@ public:
     void CreatePorts() override;
     void CompleteStreamInfo() override;
     void Prepare(GlobalContext &context) override;
+    void Preprocess(ProcessingContext &context) override;
     void Process(ProcessingContext &context) override;
     void Postprocess(ProcessingContext &context) override;
 

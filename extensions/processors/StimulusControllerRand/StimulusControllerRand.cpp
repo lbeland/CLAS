@@ -74,8 +74,13 @@ void StimulusControllerRand::Prepare(GlobalContext &context)
     }
 
     compute_burst_params_();
-    build_audio_buffers_(); // uses burst_frames_ and period_ms_ set above
+    build_audio_buffers_(); // uses burst_frames_ and period_ms_
 
+}
+
+void StimulusControllerRand::Preprocess(ProcessingContext &context)
+{
+    stimuli_count_ = 0;
     if (!start_audio_())
     {
         LOG(ERROR) << name() << " failed to start audio playback (device: " << audio_device_() << ")";
@@ -118,6 +123,8 @@ void StimulusControllerRand::Process(ProcessingContext &context)
             stim_dist_sec_ = distrib(gen);
         }
         last_output_ = output_;
+
+        custom_sleep_for(uint64_t(5000)); // Sleep for 5 ms to prevent busy waiting (can freeze the whole system)
 
     }
 }

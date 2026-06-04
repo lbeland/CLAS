@@ -110,7 +110,8 @@ void ChannelSelector::Preprocess(ProcessingContext &context)
     current_channel_index_ = selected_channels_.front();
     channel_state_->set(current_channel_index_);
 
-    ema_.assign(n_channels_, 0.0);
+    // Assign initial value as the exact threshold squared
+    ema_.assign(n_channels_, rms_threshold_uv_() * rms_threshold_uv_());
 
     LOG(INFO) << name() << " RMS selector EMA tau: " << rms_window_seconds_()
               << " s, mu: " << ema_mu_ << ".";
@@ -148,6 +149,7 @@ void ChannelSelector::Process(ProcessingContext &context)
         const double sample_square = sample * sample;
         const double ema_current = ema_mu_ * ema_[current_channel_index_] + (1 - ema_mu_) * sample_square;
 
+        // Because true RMS would take the sqrt, we compare to squared threshold
         if (ema_current > rms_thresh_uv * rms_thresh_uv)
         {
             ema_[current_channel_index_] = ema_current;
@@ -155,7 +157,7 @@ void ChannelSelector::Process(ProcessingContext &context)
         }
         else
         {
-            LOG(INFO) << name() << " Channel " << current_channel_index_ + 1 << " RMS " << std::sqrt(ema_current) << " uV below threshold " << rms_thresh_uv << " uV, checking other channels...";
+            // LOG(DEBUG) << name() << packet_count_ << " Channel " << current_channel_index_ + 1 << " RMS " << std::sqrt(ema_current) << " uV below threshold " << rms_thresh_uv << " uV, checking other channels...";
             for (unsigned int channel_idx : selected_channels_)
             {
                 const double sample = static_cast<double>(data_in->data_sample(0, channel_idx));

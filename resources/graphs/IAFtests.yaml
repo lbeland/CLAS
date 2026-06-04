@@ -47,7 +47,7 @@ graph:
         path: run://
         encoding: binary
         throttle/enabled: false
-        overwrite: true 
+        overwrite: false 
         format: full
         n_messages: *n_messages
   connections:

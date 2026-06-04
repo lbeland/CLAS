@@ -23,18 +23,16 @@ graph:
         stim_dur_ms: 12
         stim_amplitude: 0.5
         stim_period_ms: 1
-        min_stim_dist_sec: 0.075
-        max_stim_dist_sec: 2
+        min_stim_dist_sec: 0.075  # 75ms minimum distance between stimuli
+        max_stim_dist_sec: 1.0
       advanced:
-        buffer_sizes:
-          out: 32
         thread_core: 5
     Serializer:    # one serializers per output stream
       class: FileSerializer
       options:
         encoding: binary
         throttle/enabled: false
-        overwrite: true 
+        overwrite: false
         format: full
         n_messages: *n_messages
       advanced:

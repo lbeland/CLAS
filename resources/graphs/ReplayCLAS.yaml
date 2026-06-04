@@ -6,13 +6,13 @@ graph:
     fs: &fs 10000
   processors:
     SourceClient:
-      class: SourceClient
+      class: ReplaySourceClient
       options:
         fs: *fs
+        path: eike_20260529_1600/  # replay from this run in _last_run_group or results
         nchannels: 32
         nsamples: 1
         n_messages: *n_messages
-        store_aux: true
       advanced:
         buffer_sizes:
           out: 32
@@ -73,8 +73,8 @@ graph:
         n_messages: *n_messages
         stim_onset_deg: 0
         stim_dur_unit: "deg"
-        stim_dur_deg: 90
-        audio_latency_s: 0.003
+        stim_dur_deg: 45
+        audio_latency_s: 0.0 #0.003
         erp_latency_s: 0
         stim_dur_ms: 45
         stim_amplitude: 0.5
@@ -98,11 +98,7 @@ graph:
         overwrite: false 
         format: full
         n_messages: *n_messages
-      advanced:
-        thread_core: 7
-    
   connections:
-  # - Producer.out.0 = GlobalFilter.in
   - SourceClient.out.0 = GlobalFilter.in
   - GlobalFilter.out.0 = ChannelSelector.in
   - ChannelSelector.out.0 = IAFEstimator.in
@@ -110,8 +106,8 @@ graph:
   - PhaseEstimator.out.0 = StimulusController.in
   - StimulusController.out.0 = Consumer.in
 
+
   - SourceClient.out.0 = Serializer1.in
-  - SourceClient.out.1 = Serializer1.in
   - GlobalFilter.out.0 = Serializer2.in
   - PhaseEstimator.out.0 = Serializer3.in
   - PhaseEstimator.out.1 = Serializer3.in
@@ -121,5 +117,4 @@ graph:
 
   states:
   - IAF: [IAFEstimator.iaf, PhaseEstimator.iaf, StimulusController.iaf]
-
 

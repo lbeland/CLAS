@@ -10,12 +10,26 @@ import yaml
 import zmq
 from gen_filter_coeff import gen_filter, gen_filter_ecHT
 from plot_results import plot_results
-from postprocess_results import analyse_results, get_ERP_latency
+from postprocess_results import analyse_results
 
 
 REPO_ROOT = Path(__file__).resolve().parent
 WORKSPACE_FALCON_CONFIG = REPO_ROOT / ".falcon" / "config.yaml"
 RESULTS_DIR = "results"
+
+import tty
+import termios
+import sys
+
+def get_char():
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)  # returns immediately on any keypress
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)  # restore terminal
+    return ch
 
 
 def main():
@@ -68,21 +82,49 @@ def main():
     if filter_params:
         gen_filter(filter_params, fs, output_folder=os.path.join(resources_folder, "filters"))
 
-    output = f"{Path(args.results_dir).name}_{time.strftime('%Y%m%d_%H%M%S')}"
 
-    graph_process = subprocess.Popen(["./build/release/falcon/falcon",args.graph, "--config", WORKSPACE_FALCON_CONFIG])
+
+    graph_process = subprocess.Popen(["./build/release/falcon/falcon",args.graph, "--config", WORKSPACE_FALCON_CONFIG],stdin=subprocess.PIPE)
 
     time.sleep(0.5)
 
     context = zmq.Context()
     socket = context.socket(zmq.REQ)
     socket.connect(f"tcp://127.0.0.1:{config['network']['port']}")
+    output = f"{Path(args.results_dir).name}_{time.strftime('%Y%m%d_%H%M%S')}"
     socket.send_multipart([b"graph", b"start", RESULTS_DIR.encode(), output.encode(), b""])
     socket.recv_multipart()
+    # Copy graph file to results directory for record-keeping
+    results_dir_path =  Path(RESULTS_DIR) / Path(output)
+    results_dir_path.mkdir(parents=True, exist_ok=True)
+    output_graph_path = results_dir_path / args.graph
+    shutil.copy2(graph_path, output_graph_path)
+
     try:
         # Wait for falcon to complete (processors will auto-exit after processing n_messages)
-        return_code = graph_process.wait()
-        print(f"Falcon process exited with code {return_code}")
+        # return_code = graph_process.wait()
+
+        while graph_process.poll() is None:
+            
+            command = get_char()
+            if command.strip().lower() == "s":
+                socket.send_multipart([b"graph", b"stop"])
+                socket.recv_multipart()
+            elif command.strip().lower() == "r":
+                output = f"{Path(args.results_dir).name}_{time.strftime('%Y%m%d_%H%M%S')}"
+                socket.send_multipart([b"graph", b"start", RESULTS_DIR.encode(), output.encode(), b""])
+                socket.recv_multipart()
+                # Copy graph file to results directory for record-keeping
+                results_dir_path =  Path(RESULTS_DIR) / Path(output)
+                results_dir_path.mkdir(parents=True, exist_ok=True)
+                output_graph_path = results_dir_path / args.graph
+                shutil.copy2(graph_path, output_graph_path)
+            elif command.strip().lower() == "q":
+                socket.send_multipart([b"quit"])
+                socket.recv_multipart()
+            time.sleep(0.5)
+
+        # print(f"Falcon process exited with code {return_code}")
     except subprocess.TimeoutExpired:
         print("Timeout: Falcon did not complete within Timeout. Terminating...")
         terminate(graph_process)
@@ -92,23 +134,9 @@ def main():
         print(f"Error during benchmark: {e}")
         terminate(graph_process)
 
-    # Copy graph file to results directory for record-keeping
-    results_dir_path =  Path(RESULTS_DIR) / Path(output)
-    results_dir_path.mkdir(parents=True, exist_ok=True)
-    output_graph_path = results_dir_path / args.graph
-    shutil.copy2(graph_path, output_graph_path)
-
-
-
-    if args.graph == "ERPCLAS.yaml":
-        get_ERP_latency(results_dir_path, channel=1)
-    else:
-        # Postprocessing results
-        analyse_results(10, results_dir_path)
-
-
+    # Postprocessing results
+    analyse_results(10, "_last_run/")
     # plot_results(fs, 7.5, GRAPH_CONFIG)
-
 
 def terminate(proc):
     try:

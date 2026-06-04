@@ -111,34 +111,16 @@ std::string ReplaySourceClient::ResolveFilePath(const std::string path) const
         return file_();
     }
 
-    // path_ may carry a "run://" prefix; strip it to keep local resolution
-    // explicit and deterministic.
     std::string input = path;
 
-    std::vector<fs::path> candidate_dirs;
-    const fs::path as_path(input);
+    fs::path run_dir(input);
 
     // If an existing directory is given explicitly, use it directly.
-    if (fs::is_directory(as_path))
-    {
-        candidate_dirs.push_back(as_path);
-    }
-
-    fs::path run_dir;
-    for (const auto &candidate : candidate_dirs)
-    {
-        if (fs::is_directory(candidate))
-        {
-            run_dir = candidate;
-            break;
-        }
-    }
-
-    if (run_dir.empty())
+    if (!fs::is_directory(run_dir))
     {
         throw std::runtime_error(
             "ReplaySourceClient: could not resolve replay folder from path='" +
-            path_() + "'. Tried _last_run_group/<run> and results/<run>.");
+            path_() + "'. Not a directory.");
     }
 
     auto ends_with = [](const std::string &value, const std::string &suffix)

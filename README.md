@@ -5,18 +5,16 @@ sudo apt-get install libzmq3-dev
 sudo apt install gcc-14 g++-14
 
 mkdir build
-cd build
-
 make clean-cmake
 
-cmake .. -B debug -DCMAKE_BUILD_TYPE=Debug
+cmake .. -B build/debug -DCMAKE_BUILD_TYPE=Debug
 # or in my case i needed to use this:
-cmake .. -B debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
-cmake --build debug -- -j$(nproc) 
+cmake -B build/debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
+cmake --build build/debug -- -j$(nproc) 
 
 # or for release:
-cmake .. -B release -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
-cmake --build release -- -j$(nproc)
+cmake -B build/release -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
+cmake --build build/release -- -j$(nproc)
 
 # Add the installation path in your $PATH if not already the case
 export PATH="$PWD/build/falcon:$PATH"

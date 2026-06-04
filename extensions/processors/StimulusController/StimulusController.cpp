@@ -169,6 +169,8 @@ void StimulusController::Preprocess(ProcessingContext &context)
         LOG(ERROR) << name() << " failed to start audio playback (device: " << audio_device_() << ")";
         throw std::runtime_error("Failed to start audio playback");
     }
+
+    packet_count_ = 0;
 }
 
 void StimulusController::build_audio_buffers_()

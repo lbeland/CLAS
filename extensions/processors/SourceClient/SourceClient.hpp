@@ -41,13 +41,16 @@ class SourceClient : public IProcessor {
   void CreatePorts() override;
   void CompleteStreamInfo() override;
   void Prepare(GlobalContext &context) override;
+  void Preprocess(ProcessingContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
+  void Unprepare(GlobalContext &context) override;
 
  protected:
   PortOut<MultiChannelType<float>> *data_out_port_;
   int sock = -1;
   bool audio_aux_ = false;
+  int packet_count_ = 0;
 
   options::Double fs_{1000};
   options::Int nchannels_{32};  // 32 EEG

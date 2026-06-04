@@ -456,7 +456,7 @@ void IAFEstimator::Prepare(GlobalContext &context)
         fft_plan_ = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half, FFTW_WISDOM_ONLY);
         if (fft_plan_ == nullptr)
         {
-            LOG(WARNING) << name() << "No wisdom available for FFT planning, using patient mode.";
+            LOG(WARNING) << name() << " No wisdom available for FFT planning, using patient mode.";
             fft_plan_ = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half, FFTW_PATIENT);
         }
     }
@@ -590,12 +590,7 @@ void IAFEstimator::Process(ProcessingContext &context)
         packet_count_++;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
-        fftwf_destroy_plan(fft_plan_);
-    }
-    fftwf_free(signal_in);
-    fftwf_free(freq_half);
+
 }
 
 void IAFEstimator::Postprocess(ProcessingContext &context)
@@ -606,7 +601,18 @@ void IAFEstimator::Postprocess(ProcessingContext &context)
 void IAFEstimator::Unprepare(GlobalContext &context)
 {
     // Save FFTW wisdom for future runs to speed up plan creation
-    fftwf_export_wisdom_to_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
+    int ret = fftwf_export_wisdom_to_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
+    if (ret == 0)
+    {
+        LOG(WARNING) << name() << " Failed to save FFTW wisdom.";
+    }
+    {
+        std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
+        fftwf_destroy_plan(fft_plan_);
+    }
+    fftwf_free(signal_in);
+    fftwf_free(freq_half);
+
 }
 
 REGISTERPROCESSOR(IAFEstimator);

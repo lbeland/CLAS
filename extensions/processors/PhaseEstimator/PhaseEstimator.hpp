@@ -36,6 +36,7 @@ class PhaseEstimator : public IProcessor {
   void CreatePorts() override;
   void CompleteStreamInfo() override;
   void Prepare(GlobalContext &context) override;
+  void Preprocess(ProcessingContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
   void Unprepare(GlobalContext &context) override;
@@ -52,6 +53,14 @@ class PhaseEstimator : public IProcessor {
     std::string coeff_file_;  // Path to bandpass filter coefficients file
     std::vector<std::complex<double>> coeffs_;  // Filter coefficients of bandpass filter
     std::complex<double> c_gain_;  // Calibration gain for cecHT
+
+    float *signal_in = nullptr;
+    fftwf_complex *freq_half = nullptr;
+    fftwf_complex *freq = nullptr;
+    fftwf_complex *out = nullptr;
+
+    fftwf_plan p_;
+    fftwf_plan p_inv_;
 
     std::vector<double> filter_phase_shift_values;
     double filter_phase_shift_ = 0.0;

@@ -103,7 +103,13 @@ void SourceClient::CompleteStreamInfo()
 
 void SourceClient::Prepare(GlobalContext &context)
 {
+
+}
+
+void SourceClient::Preprocess(ProcessingContext &context)
+{
     send_times.clear();
+    packet_count_ = 0;
 
     sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0)
@@ -117,7 +123,7 @@ void SourceClient::Prepare(GlobalContext &context)
     tv.tv_sec = 1; // 1 second timeout;
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
     {
-        perror("setsockopt");
+        LOG(ERROR) << name() << " Failed to set socket receive timeout:" << strerror(errno);
         close(sock);
         return;
     }
@@ -130,12 +136,12 @@ void SourceClient::Process(ProcessingContext &context)
     MultiChannelType<float>::Data *data_out = nullptr;
     MultiChannelType<float>::Data *aux_out = nullptr;
     uint8_t buffer[2048];
-    uint32_t first_sample_counter;
-    uint32_t sample_counter;
+    uint32_t first_sample_counter = 0;
+    uint32_t sample_counter = 0;
+
     // Measurement phase
     sockaddr_in src{};
     socklen_t srclen = sizeof(src);
-    int packet_count = 0;
     TimePoint first_timestamp;
     TimePoint timestamp;
     uint64_t hardware_time_us = 0;
@@ -147,8 +153,10 @@ void SourceClient::Process(ProcessingContext &context)
 
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
     {
-        perror("bind");
+        LOG(ERROR) << name() << " Failed to bind socket:" << strerror(errno);
+        // perror("bind");
         close(sock);
+        LOG(ERROR) << name() << " Failed to bind socket. Processor will not receive data.";
         return;
     }
 
@@ -157,7 +165,7 @@ void SourceClient::Process(ProcessingContext &context)
 
     while (!context.terminated())
     {
-        if (n_messages_() != -1 && packet_count >= n_messages_())
+        if (n_messages_() != -1 && packet_count_ >= n_messages_())
         {
             break;
         }
@@ -183,7 +191,6 @@ void SourceClient::Process(ProcessingContext &context)
         }
 
         timestamp = Clock::now();
-        hardware_time_us = start_time + (uint64_t)sample_counter * 1000000ULL / fs_();
 
         Packet pkt{};
         if (!parse_packet(buffer, received, pkt))
@@ -192,7 +199,7 @@ void SourceClient::Process(ProcessingContext &context)
             continue;
         }
 
-        if (packet_count == 0)
+        if (packet_count_ == 0)
         {
             first_sample_counter = pkt.sample_counter;
             sample_counter = pkt.sample_counter - first_sample_counter;
@@ -208,6 +215,8 @@ void SourceClient::Process(ProcessingContext &context)
             }
             sample_counter = pkt.sample_counter - first_sample_counter;
         }
+
+        hardware_time_us = start_time + (uint64_t)sample_counter * 1000000ULL / fs_();
         // if (packet_count % 100 == 0) {
         //     LOG(INFO) << name() << ". Received packet " << packet_count + 1 << " with sample " << std::fixed << std::setprecision(2) << pkt.eeg[0] << " with sample counter " << pkt.sample_counter << " (hardware timestamp: " << hw_us << ")";
         // }
@@ -260,15 +269,14 @@ void SourceClient::Process(ProcessingContext &context)
 
         send_times.push_back(timestamp);
 
-        packet_count++;
+        packet_count_++;
     }
-
-    close(sock);
-    LOG(INFO) << name() << " Socket closed. Shutdown complete." << std::endl;
 }
 
 void SourceClient::Postprocess(ProcessingContext &context)
 {
+    close(sock);
+    LOG(INFO) << name() << " Socket closed.";
 
     std::ostringstream statistic_print;
 
@@ -317,6 +325,11 @@ void SourceClient::Postprocess(ProcessingContext &context)
     statistic_print << "\n Std send period (us): " << std_period << "\n";
 
     std::cout << statistic_print.str();
+
+}
+
+void SourceClient::Unprepare(GlobalContext &context)
+{
 
 }
 

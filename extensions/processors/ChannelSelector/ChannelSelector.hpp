@@ -54,6 +54,7 @@ class ChannelSelector : public IProcessor {
     options::Int n_messages_{-1};
     options::Vector<int, false> channel_indices_;
     options::Double rms_window_seconds_{5.0};
+    options::Double rms_threshold_uv_{2.0};
 
     unsigned int current_channel_index_ = 0;
     double ema_mu_ = 1.0;

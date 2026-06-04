@@ -37,6 +37,7 @@ class StimulusController : public IProcessor {
   void CreatePorts() override;
   void CompleteStreamInfo() override;
   void Prepare(GlobalContext &context) override;
+  void Preprocess(ProcessingContext &context) override;
   void Unprepare(GlobalContext &context) override;
   void Process(ProcessingContext &context) override;
   void Postprocess(ProcessingContext &context) override;
@@ -63,7 +64,7 @@ class StimulusController : public IProcessor {
     // Single source of truth: derives stim_dur_rad_ and burst_frames_ from
     // iaf (only used when stim_dur_unit_ == "deg"; ignored for "ms").
     // Returns true if burst_frames_ changed and buffers need rebuilding.
-    bool compute_burst_params_(double iaf);
+    virtual bool compute_burst_params_(double iaf);
 
     void build_audio_buffers_();
     bool start_audio_();

@@ -155,11 +155,13 @@ void StimulusController::Prepare(GlobalContext &context)
     stim_onset_rad_ = stim_onset_deg_() * (1.0 / 180.0 * M_PI);
     LOG(INFO) << name() << " Stimulus onset: " << stim_onset_deg_() << " deg (" << stim_onset_rad_ << " rad)";
     dur_unit_ = (stim_dur_unit_() == "deg") ? DurUnit::kDeg : DurUnit::kMs;
+}
 
+void StimulusController::Preprocess(ProcessingContext &context)
+{
     const double iaf = iaf_state_ ? iaf_state_->get() : std::numeric_limits<double>::quiet_NaN();
     last_iaf_ = iaf;
     compute_burst_params_(iaf); // sets stim_dur_rad_, burst_frames_, period_ms_
-
     build_audio_buffers_(); // uses burst_frames_ and period_ms_ set above
 
     if (!start_audio_())
@@ -522,7 +524,8 @@ void StimulusController::audio_thread_main_()
     }
     if (local_pcm)
     {
-        snd_pcm_drain(local_pcm);
+        // drop all queued sampels immediately
+        snd_pcm_drop(local_pcm);
     }
 }
 

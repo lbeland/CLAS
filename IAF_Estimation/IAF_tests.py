@@ -17,8 +17,6 @@ from multiprocessing import Pool, cpu_count
 
 BASE_FOLDER = Path(__file__).parent
 
-np.random.seed(0)
-
 # ---------------------------------------------------------------------------
 # Signal generation — principled amplitude model
 # ---------------------------------------------------------------------------
@@ -56,7 +54,7 @@ np.random.seed(0)
 def main():
     fixed = {
         "fs":                   10000.0,
-        "signal_length_sec":    20,
+        "signal_length_sec":    30,
         "freq_range":           (1.0, 30.0),
         "alpha_band":           (5, 18),
         "pink_ax_r2":           0.9,
@@ -76,9 +74,6 @@ def main():
         "carrier_freq":         14.0,
         # Peak shape in frequency domain
         "carrier_waveform":     "gaussian",   # "gaussian" | "sine" | "burst"
-        # Frequency modulation
-        "mod_amp":              0.0,
-        "mod_freq":             0.0,
         # Aperiodic component
         "aperiodic_exponent":   2.0,          # β — slope of 1/f^β
         "has_aperiodic":        True,
@@ -92,26 +87,25 @@ def main():
         # Noise PSD relative to power at carrier_freq
         "noise_snr_db":         -20.0,
         # Analysis
-        "window_length_sec":    5,
+        "window_length_sec":    10,
         "fft_method":          "fft",       # "fft" | "welch"
     }
 
+    cf = [value + 0.1*idx for idx, value in enumerate(np.arange(6, 16))]
+
     sweeps = {
-        "window_length_sec":    [2, 5, 7.5, 10],
+        "window_length_sec":    [5, 10, 20],
         "peak_snr_db":          [20, 10, 3, 0, -3],
         "peak_bw":              [0.1, 0.5, 1.0, 2.0],
         "aperiodic_exponent":   [1, 2, 3],
         "has_aperiodic":        [True, False],
-        "carrier_freq":         [5.3, 7.0, 10.0, 12.2, 14.7],
+        "carrier_freq":         cf,
         "noise_type":           ["None", "white"],
         "noise_snr_db":         [0, -5, -10, -20],
         "carrier_waveform":     ["gaussian", "sine", "burst"],
         "n_peaks":              [1, 2, 3],
-        # "fft_method":          ["fft", "welch"]
+        "fft_method":          ["fft", "welch"]
     }
-
-    global RANDOM_SAMPLES
-    RANDOM_SAMPLES = np.random.randn(int(fixed["fs"] * fixed["signal_length_sec"]))
 
     seen = set()
     conditions = []
@@ -122,9 +116,6 @@ def main():
         # Enable noise when sweeping noise level
         if param == "noise_snr_db":
             sweep_default["noise_type"] = "white"
-        # Enable modulation when sweeping mod_amp
-        if param == "mod_amp":
-            sweep_default["mod_freq"] = 0.5
 
         for val in values:
             config = {**fixed, **sweep_default, param: val}
@@ -138,13 +129,19 @@ def main():
 
     print(f"Total conditions: {len(conditions)}")
 
-    args = [(i, cfg) for i, cfg in enumerate(conditions)]
+    N_SEEDS = 5  # start small; increase once runtime is acceptable
 
-    n_workers = 10 # max(1, cpu_count() - 1)
+    conditions_with_seeds = [
+        (i * N_SEEDS + seed, cfg, seed)
+        for i, cfg in enumerate(conditions)
+        for seed in range(N_SEEDS)
+    ]
+
+    n_workers = 5 # max(1, cpu_count() - 1)
     with Pool(n_workers) as pool:
         all_results = list(tqdm(
-            pool.imap(process_condition, args),
-            total=len(conditions),
+            pool.imap(process_condition, conditions_with_seeds),
+            total=len(conditions_with_seeds),
             desc="Processing conditions",
         ))
 
@@ -179,7 +176,7 @@ def main():
 # Signal generation
 # ---------------------------------------------------------------------------
 
-def generate_aperiodic(n_samples, fs, exponent, f_rotation, ref_power):
+def generate_aperiodic(n_samples, fs, exponent, f_rotation, ref_power, rng):
     """
     Generate a 1/f^β aperiodic signal whose PSD at f_rotation equals ref_power.
 
@@ -195,7 +192,7 @@ def generate_aperiodic(n_samples, fs, exponent, f_rotation, ref_power):
     -------
     signal : np.ndarray  (n_samples,)
     """
-    x = RANDOM_SAMPLES
+    x = rng.standard_normal(n_samples)
     X = np.fft.rfft(x)
     freqs = np.fft.rfftfreq(n_samples, d=1/fs)
 
@@ -219,7 +216,7 @@ def generate_aperiodic(n_samples, fs, exponent, f_rotation, ref_power):
     return sig * amplitude_scale
 
 
-def generate_peak(n_samples, fs, center_freq, bw, peak_psd):
+def generate_peak(n_samples, fs, center_freq, bw, peak_psd, rng):
     """
     Generate a narrowband oscillation with a Gaussian spectrum.
     Scaled so that PSD at center_freq equals peak_psd — consistent with
@@ -249,32 +246,18 @@ def generate_peak(n_samples, fs, center_freq, bw, peak_psd):
     target_amp_at_center = np.sqrt(peak_psd * fs * n_samples)
     amp_envelope *= target_amp_at_center   # peak of envelope hits target, shoulders scale with it
  
-    phases = np.random.uniform(0, 2 * np.pi, len(amp_envelope))
+    phases = rng.uniform(0, 2 * np.pi, len(amp_envelope))
     X = amp_envelope * np.exp(1j * phases)
  
     sig = np.fft.irfft(X, n=n_samples)
     return sig
 
 
-def generate_sine_peak(n_samples, fs, center_freq, peak_power, inst_freqs, t,
-                       mod_amp=0.0, mod_freq=0.0):
+def generate_sine_peak(n_samples, fs, center_freq, peak_power, t):
     """
-    Generate a pure (optionally FM-modulated) sine with the given total power.
-    Also fills inst_freqs in-place.
+    Generate a pure sine with the given total power.
     """
-    sig = np.zeros(n_samples)
-    phase = 0.0
-    for i, t_i in enumerate(t):
-        value, _, _, inst_freq = angle_mod(
-            float(t_i),
-            1,
-            center_freq,
-            mod_amp,
-            mod_freq,
-        )
-
-        inst_freqs[i] = inst_freq
-        sig[i] = value
+    sig = np.sin(2 * np.pi * center_freq * t)
 
     # Scale to desired power: power of cos = 0.5, so RMS² = 0.5
     # current_power = np.mean(sig ** 2)
@@ -284,7 +267,7 @@ def generate_sine_peak(n_samples, fs, center_freq, peak_power, inst_freqs, t,
     target_total_power = peak_power * fs / n_samples
     current_power = np.mean(sig ** 2)
     sig *= np.sqrt(target_total_power / (current_power + 1e-30))
-    return sig, inst_freqs
+    return sig
 
 
 def generate_burst_peak(n_samples, fs, center_freq, peak_power,
@@ -299,19 +282,20 @@ def generate_burst_peak(n_samples, fs, center_freq, peak_power,
     return sig
 
 
-def generate_white_noise(n_samples, fs, noise_psd):
+def generate_white_noise(n_samples, fs, noise_psd, rng):
     """
     White noise with flat PSD = noise_psd (linear units per Hz).
     Total power = noise_psd * (fs/2).
     """
-    noise = RANDOM_SAMPLES
+
+    noise = rng.standard_normal(n_samples)
     # White noise variance = noise_psd * (fs/2)
     target_std = np.sqrt(noise_psd * fs / 2)
     noise = noise / (np.std(noise) + 1e-30) * target_std
     return noise
 
 
-def generate_signal(config):
+def generate_signal(config, rng):
     fs       = config["fs"]
     n        = int(config["signal_length_sec"] * fs)
     t        = np.arange(n) / fs
@@ -337,6 +321,7 @@ def generate_signal(config):
             exponent=beta,
             f_rotation=f_rot,
             ref_power=ref_power,
+            rng=rng
         )
         ap_psd_at_ref = ref_power * (f_ref / f_rot) ** (-beta)
     else:
@@ -354,27 +339,23 @@ def generate_signal(config):
     if config["n_peaks"] > 0:
         waveform = config["carrier_waveform"]
         cf       = config["carrier_freq"]
+        inst_freqs[:] = cf
 
         if waveform == "sine":
-            sig_peak, inst_freqs = generate_sine_peak(
-                n, fs, cf, peak_power, inst_freqs, t,
-                mod_amp=config["mod_amp"], mod_freq=config["mod_freq"],
-            )
+            sig_peak = generate_sine_peak(n, fs, cf, peak_power, t)
         elif waveform == "burst":
             sig_peak = generate_burst_peak(n, fs, cf, peak_power)
-            inst_freqs[:] = cf
         else:  # gaussian (default)
-            sig_peak = generate_peak(n, fs, cf, config["peak_bw"], peak_power)
-            inst_freqs[:] = cf
+            sig_peak = generate_peak(n, fs, cf, config["peak_bw"], peak_power, rng)
 
         signal += sig_peak
 
         # Additional peaks at random frequencies within the alpha band
-        for _ in range(config["n_peaks"] - 1):
-            extra_freq = np.random.uniform(*config["alpha_band"])
+        for idx in range(config["n_peaks"] - 1):
+            extra_freq = cf + (-1)**idx * 2  # Alternate above and below the main peak with 2 Hz spacing
             # Extra peaks are half the power of the main peak
             extra_power = peak_power * 0.2
-            signal += generate_peak(n, fs, extra_freq, config["peak_bw"], extra_power)
+            signal += generate_peak(n, fs, extra_freq, config["peak_bw"], extra_power, rng)
 
     # ------------------------------------------------------------------
     # 3. Noise
@@ -384,12 +365,12 @@ def generate_signal(config):
         noise_psd = peak_power * (10 ** (config["noise_snr_db"] / 10))
 
         if config["noise_type"] == "white":
-            signal += generate_white_noise(n, fs, noise_psd)
+            signal += generate_white_noise(n, fs, noise_psd, rng)
         elif config["noise_type"] == "pink":
             # Pink noise: use exponent=1, same pivot, noise_psd sets level
             signal += generate_aperiodic(n, fs, exponent=1.0,
                                          f_rotation=f_rot,
-                                         ref_power=noise_psd)
+                                         ref_power=noise_psd, rng=rng)
 
     return signal, inst_freqs
 
@@ -399,10 +380,11 @@ def generate_signal(config):
 # ---------------------------------------------------------------------------
 
 def process_condition(args):
-    cond_idx, config = args
-    # print(config)
+    cond_idx, config, seed = args
+    # print(config)    
     try:
-        signal, inst_freq = generate_signal(config)
+        rng = np.random.default_rng(seed)
+        signal, inst_freq = generate_signal(config, rng)
         estimates_per_algo, ground_truth, (first_freq_spectrum, first_window) = \
             run_window_analysis(signal, inst_freq, config)
 
@@ -434,7 +416,8 @@ def run_window_analysis(signal, inst_freq, config):
     first_freq_spectrum = None
     first_window = None
 
-    for idx in range(window_length, signal_length, 1000):
+    step = max(window_length // 2, int(config["fs"]))  # at most 1s step
+    for idx in range(window_length, signal_length, step):
         window = signal[idx - window_length:idx]
         if config["fft_method"] == "welch":
             nperseg = int(min(window_length, 2 * config["fs"]))
@@ -444,6 +427,7 @@ def run_window_analysis(signal, inst_freq, config):
             X = np.fft.rfft(window, n=window_length)
             # Periodogram PSD: |X|^2 / (fs * N) — matches Welch units (power per Hz)
             psd = (np.abs(X) ** 2) / (config["fs"] * window_length)
+            psd[1:-1] *= 2  # Correct for dropping negative freqs in one-sided spectrum (except DC and Nyquist)
 
         if first_freq_spectrum is None:
             first_freq_spectrum = (freq_bins, psd)

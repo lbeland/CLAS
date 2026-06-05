@@ -210,7 +210,6 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
     # --- Box plot panel ---
     # x_order = ["stupid_max", "parabolic_max", "fooof","philistine","combine"]
     x_order = ["stupid_max", "fooof","philistine","combine_complex","combine_simple"]
-
     hue_order = sorted(df[hue].unique()) if hue is not None else None
     sns.boxplot(data=df, x=x, y=y, hue=hue, ax=ax_box, gap=0.1,
                 order=x_order, hue_order=hue_order,
@@ -313,9 +312,6 @@ if __name__ == "__main__":
         "carrier_freq":         14.0,
         # Peak shape in frequency domain
         "carrier_waveform":     "gaussian",   # "gaussian" | "sine" | "burst"
-        # Frequency modulation
-        "mod_amp":              0.0,
-        "mod_freq":             0.0,
         # Aperiodic component
         "aperiodic_exponent":   2.0,          # β — slope of 1/f^β
         "has_aperiodic":        True,
@@ -329,7 +325,7 @@ if __name__ == "__main__":
         # Noise PSD relative to power at carrier_freq
         "noise_snr_db":         -20.0,
         # Analysis
-        "window_length_sec":    5,
+        "window_length_sec":    10,
         "fft_method":          "fft",       # "fft" | "welch"
     }
 
@@ -433,13 +429,13 @@ if __name__ == "__main__":
         title="Effect of Aperiodic Exponent\n"
     )
 
-    # plot_box(
-    #     load_samples_for_plot(HDF_PATH, df_metrics,
-    #                           **params_excluding(default_filter, "fft_method")),
-    #     HDF_PATH,
-    #     x="algorithm", y=error_label, hue="fft_method",
-    #     title="Effect of FFT method\n"
-    # )
+    plot_box(
+        load_samples_for_plot(HDF_PATH, df_metrics,
+                              **params_excluding(default_filter, "fft_method")),
+        HDF_PATH,
+        x="algorithm", y=error_label, hue="fft_method",
+        title="Effect of FFT method\n"
+    )
 
     # # Print detection rates for specific conditions
     # print_detection_table(df_metrics, window_length_sec=5, noise_type="None", noise_snr_db=0, mod_freq=0, mod_amp=0.5, carrier_freq=10.0, 
@@ -470,10 +466,10 @@ if __name__ == "__main__":
     print("\n=== MAE Summary (in mHz) ===")
     print(summary.to_string())
 
-    # # Print Conditions where MAE > 4Hz for any algorithm
-    # high_error = df_metrics[df_metrics["mae"] > 4]
-    # print("Conditions with MAE > 4Hz:")
-    # print(high_error[["algorithm", "mae"] + [col for col in df_metrics.columns if col not in ['condition_id', 'algorithm', 'mae',"fs", "signal_length_sec", "freq_range", "alpha_band",
+    # # Print Conditions where " + error_label.upper() + " > 4Hz for any algorithm
+    # high_error = df_metrics[df_metrics[error_label] > 4]
+    # print("Conditions with " + error_label.upper() + " > 4Hz:")
+    # print(high_error[["algorithm", error_label] + [col for col in df_metrics.columns if col not in ['condition_id', 'algorithm', error_label,"fs", "signal_length_sec", "freq_range", "alpha_band",
     #     "SG_window", "SG_poly", "pink_ax_r2"]]])
 
     plt.show()

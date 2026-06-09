@@ -514,13 +514,13 @@ void PhaseEstimator::Process(ProcessingContext &context)
                             p_ = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_WISDOM_ONLY);
                             if (p_ == nullptr)
                             {
-                                LOG(WARNING) << name() << "No wisdom available for FFT planning, using estimate mode.";
+                                LOG(WARNING) << name() << " No wisdom available for FFT planning, using estimate mode.";
                                 p_ = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_ESTIMATE);
                             }
                             p_inv_ = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_WISDOM_ONLY);
                             if (p_inv_ == nullptr)
                             {
-                                LOG(WARNING) << name() << "No wisdom available for IFFT planning, using estimate mode.";
+                                LOG(WARNING) << name() << " No wisdom available for IFFT planning, using estimate mode.";
                                 p_inv_ = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_ESTIMATE);
                             }
                         }

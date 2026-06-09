@@ -45,10 +45,13 @@ graph:
       options:
         n_messages: *n_messages
         calc_interval: 100
-        window_size_sec: 5
-        ema_window_sec: 60
+        window_size_sec: 10
+        max_invalid_sec: 3
+        kalman_estimator_std: 0.96
+        kalman_iaf_std: 0.397857
+        kalman_full: false
         f_min: 5.0
-        f_max: 18.0
+        f_max: 16.0
       advanced:
         buffer_sizes:
           out: 32

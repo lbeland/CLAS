@@ -15,9 +15,7 @@ import os
 import yaml
 import glob
 import numpy as np
-import matplotlib as mpl
 import matplotlib.pyplot as plt
-import matplotlib.patheffects as pe
 from scipy.signal import butter, sosfiltfilt, hilbert, welch
 from scipy.stats import circmean, circstd
 from read_output import get_signal_data
@@ -83,7 +81,6 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
     """Load raw signal data from all processors into a dict keyed by label."""
     samples = {}
 
-    print(results_dir)
     for processor in processors:
         if processor == "Producer":
             # Data
@@ -143,7 +140,7 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
                     samples[f"{processor}"] = {"x": time, "y": signal}
 
     first_timestamps = [samples[key]["x"][0] for key in samples]
-    assert len(set(first_timestamps)) == 1, "Mismatched timestamps across processors"
+    assert len(set(first_timestamps)) == 1 or len(set(first_timestamps)) == 0, "Mismatched timestamps across processors"
 
     return samples
 
@@ -251,7 +248,7 @@ def write_edf(
     fs: float,
     ground_truth: dict,
     samples: dict,
-    hilbert_phase: np.ndarray,
+    hilbert_phase: np.ndarray = None,
     stim_ref: np.ndarray = None,
     filtered: np.ndarray = None,
 ) -> None:
@@ -313,7 +310,7 @@ def write_edf(
 
     # IAF channels
     if ground_truth["true_inst_freq"] is not None:
-        channels.append(("True_inst_freq_Hz", "misc",ground_truth["true_inst_freq"][:n]))
+        channels.append(("IAF_true_Hz", "misc",ground_truth["true_inst_freq"][:n]))
 
     if samples.get("IAFEstimator") is not None:
         iaf = samples["IAFEstimator"]["y"]
@@ -559,7 +556,7 @@ def compute_stimulus_edge_errors(
         times, errs = [], []
         for i in act_idx:
             j   = int(np.argmin(np.abs(ref_idx - i)))
-            err = float(np.angle(np.exp(1j * (phase[i] - phase[j])), deg=True))
+            err = float(np.angle(np.exp(1j * (phase[i] - phase[ref_idx[j]])), deg=True))
             times.append((time_us[i] - start_ts) / 1e6)
             errs.append(err)
 
@@ -614,11 +611,6 @@ def _circ_stats(phi_rad):
     pli = float(np.abs(np.mean(np.sign(np.sin(phi)))))
 
     return mu, sd, plv, pli
-
-def _wrap_phase(phi):
-    """Wrap phase to [-pi, pi]."""
-    return (phi + np.pi) % (2 * np.pi) - np.pi
-
 
 def plot_errors(errors: list[dict], output_path: str = "error_analysis.png", time_range: tuple = None) -> None:
     """Plot error time series and histograms; save to output_path."""
@@ -685,6 +677,7 @@ def plot_errors(errors: list[dict], output_path: str = "error_analysis.png", tim
 
     ax_ts.set_xlabel("Time (s)")
     ax_ts.set_ylabel("Error")
+    ax_ts.legend(frameon=True, fontsize=8, loc="upper right")
     ax_ts.set_title("Error over time")
 
     # ax_hist.set_xlabel("Error value")
@@ -725,6 +718,7 @@ def plot_spectrum(raw, samples: dict, fs: float) -> None:
 
 def plot_time_series(ground_truth, samples: dict, hilbert_phase, stim_ref, fs: float, time_range: tuple = None) -> None:
     time_s = (ground_truth["time"] - ground_truth["time"][0]) / 1e6  # convert to seconds from start
+    n = len(time_s)
 
     def _pick(label: str):
         for signal in samples.keys():
@@ -750,30 +744,30 @@ def plot_time_series(ground_truth, samples: dict, hilbert_phase, stim_ref, fs: f
     ax_raw, ax_phase = axes
 
     if raw_eeg is not None:
-        ax_raw.plot(time_s, raw_eeg, color="0.6", linewidth=0.8, label="Raw EEG")
+        ax_raw.plot(time_s, raw_eeg[:n], color="0.6", linewidth=0.8, label="Raw EEG")
     if filt_online is not None:
-        ax_raw.plot(time_s, filt_online, color="0.3", linewidth=1.5, label="Filtered EEG (online)")
+        ax_raw.plot(time_s, filt_online[:n], color="0.3", linewidth=1.5, label="Filtered EEG (online)")
     if stim_ref is not None:
         # ax_raw.fill_between(time_s, stim_ref, color="tab:red", alpha=0.3, label="Target stim")
-        ax_raw.fill_between(time_s, 0, 1, where=stim_ref,
+        ax_raw.fill_between(time_s, 0, 1, where=stim_ref[:n],
                         color='tab:blue', alpha=0.4, transform=ax_raw.get_xaxis_transform(), label="Target stim")
     if trigger is not None:
-        ax_raw.fill_between(time_s, 0, 1, where=trigger,
+        ax_raw.fill_between(time_s, 0, 1, where=trigger[:n],
                         color='tab:orange', alpha=0.4, transform=ax_raw.get_xaxis_transform(), label="Stim")
     elif stimulus is not None:
-        ax_raw.fill_between(time_s, 0, 1, where=stimulus,
+        ax_raw.fill_between(time_s, 0, 1, where=stimulus[:n],
                         color='tab:orange', alpha=0.4, transform=ax_raw.get_xaxis_transform(), label="Stimulus")
     ax_raw.set_ylabel("Amplitude (µV)")
     ax_raw.set_title("Raw and Filtered EEG with Stimuli")
-    ax_raw.set_ylim(-150,100)
+    # ax_raw.set_ylim(-150,100)
     ax_raw.legend(facecolor="white", frameon=True, fontsize=8, loc="upper right")
 
     if hilbert_phase is not None:
-        ax_phase.plot(time_s, hilbert_phase, color="tab:blue", linewidth=1.5, label="Offline Hilbert phase")
+        ax_phase.plot(time_s, hilbert_phase[:n], color="tab:blue", linewidth=1.5, label="Offline Hilbert phase")
     if online_phase is not None:
-        ax_phase.plot(time_s, online_phase, color="tab:orange", linewidth=1.5, label="Online phase")
+        ax_phase.plot(time_s, online_phase[:n], color="tab:orange", linewidth=1.5, label="Online phase")
     if true_phase is not None:
-        ax_phase.plot(time_s, true_phase, color="tab:brown", linewidth=1.0, label="True phase")
+        ax_phase.plot(time_s, true_phase[:n], color="tab:brown", linewidth=1.0, label="True phase")
     ax_phase.set_ylabel("Phase (rad)")
     ax_phase.set_title("Phase Estimates")
     ax_phase.legend(facecolor="white", frameon=True, fontsize=8, loc="upper right")
@@ -815,7 +809,10 @@ def analyse_results(
 ) -> None:
 
     graph_file = glob.glob(os.path.join(results_dir, "*.yaml"))
-    print(results_dir)
+    if Path(results_dir).is_symlink():
+        edf_path = os.path.join(results_dir, Path(results_dir).readlink().stem + ".edf")
+    else:
+        edf_path = os.path.join(results_dir, Path(results_dir).stem + ".edf")
 
     with open(graph_file[0], "r") as f:
         graph_config = yaml.safe_load(f)
@@ -829,6 +826,11 @@ def analyse_results(
     # 1. Load raw processor outputs
     samples = load_processor_signals(fs, results_dir, processors)
 
+    if os.path.basename(graph_file[0]) == "ERPCLAS.yaml":
+        ground_truth = extract_ground_truth(samples)
+        write_edf(edf_path, fs, ground_truth, samples)
+        return plot_erp_latency(fs, samples, channel=1)
+        
     # 2. Identify ground-truth signals
     ground_truth = extract_ground_truth(samples)
     if ground_truth is None:
@@ -844,10 +846,9 @@ def analyse_results(
     errors, stim_ref = compute_errors(samples, ground_truth, hilbert_phase, start_ts, fs, graph_config)
 
     # # 5. Export to EDF
-    edf_path = os.path.join(results_dir, os.path.basename(results_dir) + ".edf")
     write_edf(edf_path, fs, ground_truth, samples, hilbert_phase, stim_ref, filtered)
 
-    time_range_to_plot = (17,18)  # seconds, relative to start of recording
+    time_range_to_plot = None #(17,18)  # seconds, relative to start of recording
 
     # 6. Plot errors
     plot_errors(errors, output_path=plot_path)
@@ -861,9 +862,7 @@ def analyse_results(
 
     plt.show()
 
-
-
-def get_erp_latency(fs, samples, channel=1):
+def plot_erp_latency(fs, samples, channel=1):
     channel = channel - 1 # zero-based index
     
     if samples.get(f"SourceClient_{channel}") is not None:
@@ -887,15 +886,15 @@ def get_erp_latency(fs, samples, channel=1):
     time_s = (eeg_t - eeg_t[0]) / 1e6  # convert to seconds from start
     
     trigger_binary = (trigger_y > 0.5).astype(float)
-    trigger_onset_idx  = get_edges(trigger_binary, "rising")[0]
+    trigger_onset_idx  = get_edges(trigger_binary, "rising")
 
     # Get windows around each trigger onset (-250ms to +500ms)
     windows = []
     for idx in trigger_onset_idx:
         start_idx = idx - int(0.25 * fs)
         end_idx   = idx + int(0.5 * fs)
-        if start_idx >= 0 and end_idx < len(eeg_y):
-            windows.append({"time_s": time_s[start_idx:end_idx], "eeg_y": eeg_y[start_idx:end_idx]})
+        if start_idx >= 0 and end_idx < len(eeg_filtered):
+            windows.append({"time_s": time_s[start_idx:end_idx], "eeg_y": eeg_filtered[start_idx:end_idx]})
 
     # Average across windows
     if not windows:
@@ -909,40 +908,19 @@ def get_erp_latency(fs, samples, channel=1):
     time = windows[0]["time_s"] - windows[0]["time_s"][int(0.25 * fs)]  # relative time from trigger onset
     plt.figure(figsize=(8, 4))
     for w in windows[:20]:
-        plt.plot(time, w["eeg_y"], color="0.8", linewidth=0.8, alpha=0.7)
+        plt.plot(time, w["eeg_y"], color="0.8", linewidth=0.8, alpha=0.8)
     plt.plot(time, avg_eeg, color="tab:blue", linewidth=2, label="Average ERP")
     plt.fill_between(time, avg_eeg - std_eeg, avg_eeg + std_eeg, color="tab:blue", alpha=0.3, label="±1 SD")
-    plt.axvline(0, color="tab:orange", linestyle="--", label="Trigger onset")
+    plt.axvline(0, color="0.0", linestyle="--", label="Trigger onset")
     plt.xlabel("Peri-stimulus time (s)")
     plt.ylabel("EEG amplitude (µV)")
     plt.legend()
     plt.show()
 
-def get_ERP_latency(results_dir, channel=1):
-    graph_file = glob.glob(os.path.join(results_dir, "*.yaml"))
-    print(results_dir)
-
-    with open(graph_file[0], "r") as f:
-        graph_config = yaml.safe_load(f)
-
-    fs = graph_config.get("graph", {}).get("defaults", {}).get("fs", None)
-
-    processors = graph_config.get("graph", {}).get("processors", [])
-    if processors is None:
-        raise ValueError(f"No processors found in graph config.")
-    
-    # 1. Load SourceClient signals
-    samples = load_processor_signals(fs, results_dir, processors)
-    print(samples.keys())
-
-    get_erp_latency(fs, samples, channel)
-
-
-
 
 if __name__ == "__main__":
 
-    analyse_results(f0=10,results_dir="results/eike_20260529_1600")
+    analyse_results(f0=10,results_dir="results/iaf_5s_window_20260608_150015")
 
     # _last_run
-    # eike_20260529_1600
+    # results/eike_20260529_1600

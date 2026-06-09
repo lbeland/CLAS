@@ -31,16 +31,16 @@ from graphviz import Digraph
 CONNECTION_RE = re.compile(
     r"""
     ^\s*
-    (?P<src_proc>[A-Za-z_]\w*)\.
-    (?P<src_port>out|in)
-    (?:\.(?P<src_idx>\d+))?
+(?P<src_proc>[A-Za-z_]\w*)\.
+(?P<src_port>[A-Za-z_]\w*)
+(?:\.(?P<src_idx>\d+))?
     \s*=\s*
-    (?P<dst_proc>[A-Za-z_]\w*)\.
-    (?P<dst_port>out|in)
-    (?:\.(?P<dst_idx>\d+))?
+(?P<dst_proc>[A-Za-z_]\w*)\.
+(?P<dst_port>[A-Za-z_]\w*)
+(?:\.(?P<dst_idx>\d+))?
     \s*$
     """,
-    re.VERBOSE,
+re.VERBOSE,
 )
 
 STATE_REF_RE = re.compile(r"^\s*(?P<proc>[A-Za-z_]\w*)\.(?P<state>[A-Za-z_]\w*)\s*$")

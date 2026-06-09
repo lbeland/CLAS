@@ -9,15 +9,35 @@ from read_output import get_signal_data
 from scipy.fft import fft, ifft, fftshift, ifftshift, next_fast_len
 from pathlib import Path
 
+RESULTS_DIR = "_last_run"
+
 def wrap_phase_deg(x_deg):
     return (x_deg + 180.0) % 360.0 - 180.0
 
-def get_results_file(processor_name, slot=0):
-    # Look for files matching the serializer naming pattern under the current run folder.
-    root_candidates = [Path("_last_run"), Path("results") / Path("_last_run")]
-    root = next((candidate for candidate in root_candidates if candidate.exists()), root_candidates[0])
+def _resolve_results_root(results_dir=None) -> Path:
+    candidates = []
+    if results_dir is not None:
+        results_path = Path(results_dir)
+        candidates.append(results_path)
+        candidates.append(Path("results") / results_path)
+    else:
+        candidates.append(Path(RESULTS_DIR))
 
-    expected_suffix = f"{processor_name}.out.{slot}.bin"
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    return candidates[0]
+
+def get_results_file(processor_name: str, name: str = ".out", slot: int = 0, results_dir=None) -> str | None:
+    """Return path to the serializer output file for a given processor and slot."""
+    root = _resolve_results_root(results_dir)
+    if not root.exists():
+        return None
+
+    name_token = name.lstrip(".") if name else "out"
+    expected_suffix = f"{processor_name}.{name_token}.{slot}.bin"
+
     matches = [path for path in root.rglob("*.bin") if path.name.endswith(expected_suffix)]
     if not matches:
         return None
@@ -25,7 +45,7 @@ def get_results_file(processor_name, slot=0):
     matches.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     return str(matches[0])
 
-def plot_results(fs, f0, graph_name, timestamps=True):
+def plot_results(fs, f0, graph_name, results_dir=RESULTS_DIR, timestamps=True):
 
     if graph_name == "TurboLinkCLAS.yaml":
         processors = ["SourceClient", "PhaseEstimator", "IAFEstimator","StimulusController"] # "GlobalFilter",
@@ -39,36 +59,45 @@ def plot_results(fs, f0, graph_name, timestamps=True):
     samples = {}
     for processor in processors:
         if processor == "Producer":
-            for slot in range(4):
-                signal,time = get_signal_data(get_results_file(processor, slot),timestamps=timestamps)
-                if signal is not None:
-                    samples[f"{processor}_{slot}"] = {"x": time, "y": signal}
+            file = get_results_file(processor, slot=0, results_dir=results_dir)
+            signal, time = get_signal_data(file, channel=list(range(10)), timestamps=timestamps)
+            if signal is None:
+                continue
+            for idx, channel in enumerate(signal.T):
+                samples[f"{processor}_{idx}"] = {"x": time, "y": channel}
+            # Metadata
+            file = get_results_file(processor, name=".meta_out", slot=0, results_dir=results_dir)
+            signal, time = get_signal_data(file, channel=list(range(3)), timestamps=timestamps)
+            if signal is None:
+                continue
+            for idx, channel in enumerate(signal.T):
+                samples[f"{processor}_meta_{idx}"] = {"x": time, "y": channel}
         elif processor == "SourceClient":
             for slot in range(2):
                 if slot == 0:
-                    signal,time = get_signal_data(get_results_file(processor, slot),channel = 0, timestamps=timestamps)
+                    signal,time = get_signal_data(get_results_file(processor, slot=slot, results_dir=results_dir),channel = 0, timestamps=timestamps)
                     if signal is not None:
                         samples[f"{processor}_{slot}"] = {"x": time, "y": signal}
                 else:
                     channel = 0  # AUX channel
-                    signal,time = get_signal_data(get_results_file(processor, slot),channel = channel, timestamps=timestamps)
+                    signal,time = get_signal_data(get_results_file(processor, slot=slot, results_dir=results_dir),channel = channel, timestamps=timestamps)
                     if signal is not None:
                         samples[f"{processor}_{slot}_AUX"] = {"x": time, "y": signal}
                     channel = 8  # Trigger channel
-                    signal,time = get_signal_data(get_results_file(processor, slot),channel = channel, timestamps=timestamps)
+                    signal,time = get_signal_data(get_results_file(processor, slot=slot, results_dir=results_dir),channel = channel, timestamps=timestamps)
                     if signal is not None:
                         samples[f"{processor}_{slot}_TRIGGER"] = {"x": time, "y": signal}
         elif processor == "PhaseEstimator":
             for slot in range(2):
-                signal, time = get_signal_data(get_results_file(processor, slot), timestamps=timestamps)
+                signal, time = get_signal_data(get_results_file(processor, slot=slot, results_dir=results_dir), timestamps=timestamps)
                 if signal is not None:
                     samples[f"{processor}_{slot}"] = {"x": time, "y": signal}
         elif processor == "StimulusController":
-            signal, time = get_signal_data(get_results_file(processor, 0), timestamps=timestamps)
+            signal, time = get_signal_data(get_results_file(processor, slot=0, results_dir=results_dir), timestamps=timestamps)
             if signal is not None:
                 samples[f"{processor}_0"] = {"x": time, "y": signal}
         else:
-            signal, time = get_signal_data(get_results_file(processor, 0), timestamps=timestamps)
+            signal, time = get_signal_data(get_results_file(processor, slot=0, results_dir=results_dir), timestamps=timestamps)
             if signal is not None:
                 samples[f"{processor}_0"] = {"x": time, "y": signal}
 
@@ -92,9 +121,9 @@ def plot_results(fs, f0, graph_name, timestamps=True):
     else:
         samples_orig = samples["Producer_0"]["y"]
         time_orig = samples["Producer_0"]["x"]
-        true_amplitude = samples["Producer_1"]["y"]
-        true_phase = np.angle(np.exp(1j * samples["Producer_2"]["y"]))   # wrap to [-pi, +pi]
-        true_inst_freq = samples["Producer_3"]["y"]
+        true_amplitude = samples["Producer_meta_0"]["y"]
+        true_phase = np.angle(np.exp(1j * samples["Producer_meta_1"]["y"]))   # wrap to [-pi, +pi]
+        true_inst_freq = samples["Producer_meta_2"]["y"]
 
     # filt_BW = f0 / 2
     # l_freq = f0 - filt_BW / 2
@@ -251,4 +280,4 @@ def plot_results(fs, f0, graph_name, timestamps=True):
 
 
 if __name__ == "__main__":
-    plot_results(10000, 9.5, "TurboLinkCLAS.yaml")
+    plot_results(10000, 10.0, results_dir="ematest_10s_20260608_151537",graph_name="SimulateCLAS.yaml")

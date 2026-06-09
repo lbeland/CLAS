@@ -25,7 +25,7 @@ def get_char():
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
-        tty.setraw(fd)
+        tty.setcbreak(fd)
         ch = sys.stdin.read(1)  # returns immediately on any keypress
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)  # restore terminal

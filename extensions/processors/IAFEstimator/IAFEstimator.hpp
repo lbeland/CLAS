@@ -54,8 +54,11 @@ class IAFEstimator : public IProcessor {
     double current_iaf_ = std::numeric_limits<double>::quiet_NaN();
     double last_valid_iaf_ = std::numeric_limits<double>::quiet_NaN();
     double current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
-    double ema_mu_;
-    double ema_;
+    // Kalman filter state (also used in EMA-equivalent mode)
+    double kf_x_;   // state estimate (smoothed IAF)
+    double kf_P_;   // state uncertainty
+    double kf_Q_;   // process noise variance (per update step)
+    double kf_R_;   // measurement noise variance
     int invalid_count_ = 0;
     int invalid_threshold_;
     int max_analyze_bin;
@@ -80,6 +83,8 @@ class IAFEstimator : public IProcessor {
     options::Double f_min_{5.0};
     options::Double f_max_{18.0};
     options::Value<unsigned int, false> calc_interval_{100};
-    options::Double ema_window_sec_{5.0};
+    options::Double max_invalid_sec{3.0};
+    options::Double kalman_estimator_std_{0.96};       // estimator noise std [Hz]
+    options::Double kalman_iaf_std_{0.397857};        // IAF drift std [Hz]
+    options::Bool   kalman_full_{true};               // true = full KF (adaptive gain), false = EMA-equivalent (fixed gain)
 };
-    

@@ -35,7 +35,6 @@
 
 namespace
 {
-
     struct PeakSeed
     {
         int bin = -1;
@@ -361,7 +360,10 @@ IAFEstimator::IAFEstimator() : IProcessor(PRIORITY_HIGH)
     add_option("f_min", f_min_, "Left bound of alpha search range.");
     add_option("f_max", f_max_, "Right bound of alpha search range.");
     add_option("calc_interval", calc_interval_, "Number of packets between IAF calculations.");
-    add_option("ema_window_sec", ema_window_sec_, "Window size in seconds for RMS calculation used in IAF estimation.");
+    add_option("max_invalid_sec", max_invalid_sec, "Maximum duration of invalid data in seconds before reset of estimation.");
+    add_option("kalman_estimator_std", kalman_estimator_std_, "Expected std of the IAF estimator output [Hz]. Sets Kalman R.");
+    add_option("kalman_iaf_std", kalman_iaf_std_, "Std of the IAF drift [Hz/s]. Sets Kalman Q.");
+    add_option("kalman_full", kalman_full_, "If true, use full Kalman filter with adaptive gain and cold-start. If false, use EMA-equivalent fixed gain.");
 
     iaf_state_ = create_broadcaster_state<double>(
         "iaf", current_iaf_, Permission::NONE,
@@ -403,13 +405,36 @@ void IAFEstimator::Prepare(GlobalContext &context)
 
     iaf_state_->set(current_iaf_);
 
-    const double tau_seconds = ema_window_sec_();
-    ema_mu_ = std::exp(-static_cast<double>(calc_interval_()) / (p.sample_rate * tau_seconds));
+    const double update_interval_s = static_cast<double>(calc_interval_()) / p.sample_rate;
 
-    invalid_threshold_ = static_cast<int>(std::ceil(tau_seconds * fs_ / calc_interval_()));
+    // R: measurement noise variance from estimator std
+    kf_R_ = kalman_estimator_std_() * kalman_estimator_std_();
 
-    LOG(INFO) << name() << " EMA tau: " << p.sample_rate * ema_window_sec_()
-              << " s, mu: " << ema_mu_ << ", invalid_threshold: " << invalid_threshold_ << " estimates";
+    // Q: process noise variance per update step
+    const double drift_var_per_s = kalman_iaf_std_() * kalman_iaf_std_();
+
+    kf_Q_ = drift_var_per_s * update_interval_s;
+
+    // P initial value:
+    //   full KF  → start uncertain (P = R) for fast cold-start acquisition
+    //   EMA mode → start at steady-state (P = sqrt(Q*R)) so gain is fixed from sample 0
+    kf_P_ = kalman_full_() ? kf_R_ : std::sqrt(kf_Q_ * kf_R_);
+
+    const double K_steady = (-kf_Q_ + std::sqrt(kf_Q_ * kf_Q_ + 4.0 * kf_Q_ * kf_R_)) / (2.0 * kf_R_);
+
+    const double alpha_equivalent = 1.0 - K_steady;
+    const double tau_equivalent   = -update_interval_s / std::log(alpha_equivalent);
+
+    invalid_threshold_ = static_cast<int>(std::ceil(tau_equivalent * p.sample_rate / calc_interval_()));
+
+    LOG(INFO) << name() << " Kalman filter configured:"
+              << " Q=" << kf_Q_ << " R=" << kf_R_
+              << " P0=" << kf_P_
+              << " K_steady=" << K_steady
+              << " alpha_equivalent=" << alpha_equivalent
+              << " tau_equivalent=" << tau_equivalent << "s"
+              << " mode=" << (kalman_full_() ? "full KF" : "EMA-equivalent")
+              << " invalid_threshold=" << invalid_threshold_ << " estimates";
 
     // Load FFTW wisdom if available to speed up plan creation
     fftwf_import_wisdom_from_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
@@ -468,7 +493,8 @@ void IAFEstimator::Preprocess(ProcessingContext &context)
     iaf_state_->set(current_iaf_);
     last_valid_iaf_ = std::numeric_limits<double>::quiet_NaN();
     current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
-    ema_ = std::numeric_limits<double>::quiet_NaN();
+    kf_x_ = std::numeric_limits<double>::quiet_NaN();
+    kf_P_ = kalman_full_() ? kf_R_ : std::sqrt(kf_Q_ * kf_R_);
     packet_count_ = 0;
 }
 
@@ -476,6 +502,16 @@ void IAFEstimator::Process(ProcessingContext &context)
 {
     MultiChannelType<float>::Data *data_in;
     ScalarType<double>::Data *data_out;
+
+    // Helper lambda: one Kalman update step
+    auto kalman_update = [&](double measurement) {
+        // Predict: uncertainty grows
+        kf_P_ = kf_P_ + kf_Q_;
+        // Update: compute gain, correct estimate, shrink uncertainty
+        const double K = kf_P_ / (kf_P_ + kf_R_);
+        kf_x_ = kf_x_ + K * (measurement - kf_x_);
+        kf_P_ = (1.0 - K) * kf_P_;
+    };
 
     // Measurement phase
     while (!context.terminated())
@@ -536,15 +572,14 @@ void IAFEstimator::Process(ProcessingContext &context)
 
             if (peak.valid)
             {
-                if (std::isnan(ema_))
+                if (std::isnan(kf_x_))
                 {
-                    // first valid estimate
-                    ema_ = 10; // peak.iaf_hz;
-                    // LOG(INFO) << name() << " First valid IAF estimate: " << peak.iaf_hz << " Hz";
+                    // First valid estimate — initialize state directly (no smoothing yet)
+                    kf_x_ = peak.iaf_hz;
                 }
                 else
                 {
-                    ema_ = ema_mu_ * ema_ + (1 - ema_mu_) * peak.iaf_hz;
+                    kalman_update(peak.iaf_hz);
                 }
                 invalid_count_ = std::max(0, invalid_count_ - 1);
                 current_iaf_ = peak.iaf_hz;
@@ -554,36 +589,30 @@ void IAFEstimator::Process(ProcessingContext &context)
             else
             {
                 invalid_count_ = std::min(invalid_count_ + 1, invalid_threshold_);
-                if ((!std::isnan(last_valid_iaf_)) && (!std::isnan(ema_)))
+                if ((!std::isnan(last_valid_iaf_)) && (!std::isnan(kf_x_)))
                 {
-                    // Use previous interpolation
-                    ema_ = ema_mu_ * ema_ + (1 - ema_mu_) * last_valid_iaf_;
+                    // No valid peak — fall back to last known IAF as measurement
+                    kalman_update(last_valid_iaf_);
                 }
                 current_iaf_ = std::numeric_limits<double>::quiet_NaN();
                 current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
             }
-            if (invalid_count_ >= (fs_ * ema_window_sec_()) / calc_interval_())
+            if (invalid_count_ >= (fs_ * max_invalid_sec()) / calc_interval_())
             {
-                ema_ = std::numeric_limits<double>::quiet_NaN(); // Reset EMA if too many invalid estimates in the last window
-                // LOG(WARNING) << name() << " Too many invalid IAF estimates, resetting EMA.";
+                kf_x_ = std::numeric_limits<double>::quiet_NaN(); // Reset if too many invalid estimates
+                kf_P_ = kalman_full_() ? kf_R_ : std::sqrt(kf_Q_ * kf_R_);
             }
 
-            iaf_state_->set(ema_);
-            // if (std::abs(iaf - current_iaf_) > 1e-3f)
-            // {
-            //     printf("\n Packet %d: Estimated IAF = %.2f Hz (max bin: %d)", packet_count_, current_iaf_, res.first);
-            //     } else {
-            //       printf("\n IAF Estimation did not change: %.2fHz", current_iaf_);
-            // }
+            iaf_state_->set(kf_x_);
             TimePoint end_time = Clock::now();
             if (packet_count_ % int(fs_) == 0)
             {
-                LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated IAF = " << current_iaf_ << "Hz (sigma: " << current_gauss_width_ << "), EMA: " << ema_ << "Hz, took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
+                LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated IAF = " << current_iaf_ << "Hz (sigma: " << current_gauss_width_ << "), KF estimate: " << kf_x_ << "Hz (P=" << kf_P_ << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
             }
             // double processing_time_us = std::chrono::duration<double, std::micro>(end_time - start_time).count();
             // LOG(INFO) << name() << " Processed packet "<< packet_count_ << " in " << std::fixed << std::setprecision(2) << processing_time_us << " us";
         }
-        data_out->set_data(ema_);
+        data_out->set_data(kf_x_);
         data_out->set_source_timestamp(Clock::now());
         data_out_port_->slot(0)->PublishData();
 

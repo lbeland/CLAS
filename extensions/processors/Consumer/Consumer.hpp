@@ -43,8 +43,12 @@ class Consumer : public IProcessor {
   
   unsigned int packet_count_ = 0;
   inline static std::vector<std::array<float, 3>> samples;
-  inline static std::vector<TimePoint> recv_times;
-  inline static std::vector<TimePoint> source_times;
+  // inline static std::vector<TimePoint> recv_times;
+  // inline static std::vector<TimePoint> source_times;
+
+  double max_latency_ = 0.0;
+  unsigned int max_latency_index_ = 0;
+  double mean_latency_ = 0.0;
 
   const uint32_t MAX_NCHANNELS=384; 
 };

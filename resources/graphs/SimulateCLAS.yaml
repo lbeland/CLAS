@@ -9,19 +9,19 @@ graph:
       class: Producer
       options:
         fs: *fs
-        nchannels: 10
+        nchannels: 40
         nsamples: 1
         n_messages: *n_messages
         carrier_amplitude: 3
-        carrier_frequency: 10.1
-        modulation_type: "none"
-        modulation_amplitude: 0
-        modulation_frequency: 0.05
+        carrier_frequency: 8.34
+        modulation_type: "phase"
+        modulation_amplitude: 0.397857
+        modulation_frequency: 0.033
       advanced:
         buffer_sizes:
           out: 32
         thread_core: 0
-    GlobalFilter:
+    SelectionFilter:
       class: MultiChannelFilter
       options:
         filter:
@@ -29,7 +29,8 @@ graph:
           N: [1, 1]
           low_cutoff: [2.5, 48]
           high_cutoff: [35, 52]
-          btype: ["bandpass", "bandstop"]
+          btype: [bandpass, bandstop]
+          name: selection
         n_messages: *n_messages
       advanced:
         buffer_sizes:
@@ -42,21 +43,33 @@ graph:
         channel_indices: [1,2]   # 1-based indices of channels to select
       advanced:
         buffer_sizes:
-          out: 32
+          ch_idx_out: 32
         thread_core: 2
+    ChannelReductor:
+      class: ChannelReductor
+      options:
+        n_messages: *n_messages
+        default_channel_index: 1  # 1-based
+      advanced:
+        buffer_sizes:
+          out: 32
+        thread_core: 3
     IAFEstimator:
       class: IAFEstimator
       options:
         n_messages: *n_messages
         calc_interval: 100
         window_size_sec: 10
-        ema_window_sec: 10
+        max_invalid_sec: 3
+        kalman_estimator_std: 0.96
+        kalman_iaf_std: 0.397857
+        kalman_full: false
         f_min: 5.0
         f_max: 16.0
       advanced:
         buffer_sizes:
           out: 32
-        thread_core: 3
+        thread_core: 4
     PhaseEstimator:
       class: PhaseEstimator
       options:
@@ -70,22 +83,22 @@ graph:
       advanced:
         buffer_sizes:
           out: 32
-        thread_core: 4
-    StimulusController:
-      class: StimulusController
-      options:
-        n_messages: *n_messages
-        stim_onset_deg: 0
-        stim_dur_unit: "deg"
-        stim_dur_deg: 90
-        audio_latency_s: 0.0 #0.04
-        erp_latency_s: 0
-        stim_dur_ms: 25
-        stim_amplitude: 0.5
-      advanced:
-        buffer_sizes:
-          out: 32
         thread_core: 5
+    # StimulusController:
+    #   class: StimulusController
+    #   options:
+    #     n_messages: *n_messages
+    #     stim_onset_deg: 0
+    #     stim_dur_unit: "deg"
+    #     stim_dur_deg: 90
+    #     audio_latency_s: 0.0 #0.04
+    #     erp_latency_s: 0
+    #     stim_dur_ms: 25
+    #     stim_amplitude: 0.5
+    #   advanced:
+    #     buffer_sizes:
+    #       out: 32
+    #     thread_core: 5
     Consumer:   # Only for measurement of latency/throughput
       class: Consumer
       options:
@@ -93,7 +106,7 @@ graph:
         window_size: *window_size
       advanced:
         thread_core: 6
-    Serializer(1-5):    # one serializers per output stream
+    Serializer(1-4):    # one serializers per output stream
       class: FileSerializer
       options:
         encoding: binary
@@ -102,23 +115,26 @@ graph:
         format: full
         n_messages: *n_messages
   connections:
-  - Producer.out.0 = GlobalFilter.in
-  - GlobalFilter.out.0 = ChannelSelector.in
-  - ChannelSelector.out.0 = IAFEstimator.in
-  - ChannelSelector.out.0 = PhaseEstimator.in
-  - PhaseEstimator.out.0 = StimulusController.in
-  - StimulusController.out.0 = Consumer.in
+  - Producer.out.0 = SelectionFilter.in
+  - Producer.out.0 = ChannelReductor.in
+  - SelectionFilter.out.0 = ChannelSelector.in
+  - ChannelReductor.out.0 = PhaseEstimator.in
+  - ChannelReductor.out.0 = IAFEstimator.in
+  - PhaseEstimator.out.0 = Consumer.in
+  # - PhaseEstimator.out.0 = StimulusController.in
+  # - StimulusController.out.0 = Consumer.in
 
 
   - Producer.out = Serializer1.in
   - Producer.meta_out = Serializer1.in
-  - GlobalFilter.out.0 = Serializer2.in
+  - SelectionFilter.out.0 = Serializer2.in
   - PhaseEstimator.out.0 = Serializer3.in
   - PhaseEstimator.out.1 = Serializer3.in
   - IAFEstimator.out.0 = Serializer4.in
   - ChannelSelector.ch_idx_out.0 = Serializer4.in
-  - StimulusController.out.0 = Serializer5.in
+  # - StimulusController.out.0 = Serializer5.in
 
   states:
-  - IAF: [IAFEstimator.iaf, PhaseEstimator.iaf, StimulusController.iaf]
+  - IAF: [IAFEstimator.iaf, PhaseEstimator.iaf] #, StimulusController.iaf]
+  - CH_IDX: [ChannelSelector.ch_idx, ChannelReductor.ch_idx]
 

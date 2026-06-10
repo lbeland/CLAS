@@ -15,17 +15,18 @@ graph:
         store_aux: true
       advanced:
         buffer_sizes:
-          out: 32
+          out: 2048
         thread_core: 0
-    GlobalFilter:
+    SelectionFilter:
       class: MultiChannelFilter
       options:
         filter:
           # file: filters://2_2.0_20.0_10000.txt
           N: [1, 1]
-          low_cutoff: [2.5, 48]
-          high_cutoff: [35, 52]
-          btype: ["bandpass", "bandstop"]
+          low_cutoff: [5, 48]
+          high_cutoff: [15, 52]
+          btype: [bandpass, bandstop]
+          name: selection
         n_messages: *n_messages
       advanced:
         buffer_sizes:
@@ -38,8 +39,17 @@ graph:
         channel_indices: [1]   # 1-based indices of channels to select
       advanced:
         buffer_sizes:
-          out: 32
+          ch_idx_out: 32
         thread_core: 2
+    ChannelReductor:
+      class: ChannelReductor
+      options:
+        n_messages: *n_messages
+        default_channel_index: 1  # 1-based
+      advanced:
+        buffer_sizes:
+          out: 32
+        thread_core: 3
     IAFEstimator:
       class: IAFEstimator
       options:
@@ -49,13 +59,13 @@ graph:
         max_invalid_sec: 3
         kalman_estimator_std: 0.96
         kalman_iaf_std: 0.397857
-        kalman_full: false
+        kalman_full: true
         f_min: 5.0
         f_max: 16.0
       advanced:
         buffer_sizes:
           out: 32
-        thread_core: 3
+        thread_core: 4
     PhaseEstimator:
       class: PhaseEstimator
       options:
@@ -69,7 +79,7 @@ graph:
       advanced:
         buffer_sizes:
           out: 32
-        thread_core: 4
+        thread_core: 5
     StimulusController:
       class: StimulusController
       options:
@@ -80,19 +90,19 @@ graph:
         audio_latency_s: 0.003
         erp_latency_s: 0
         stim_dur_ms: 45
-        stim_amplitude: 0.5
+        stim_amplitude: 0.1
         stim_period_ms: 0.1
       advanced:
         buffer_sizes:
           out: 32
-        thread_core: 5
+        thread_core: 6
     Consumer:   # Only for measurement of latency/throughput
       class: Consumer
       options:
         n_messages: *n_messages
         window_size: *window_size
       advanced:
-        thread_core: 6
+        thread_core: 7
     Serializer(1-5):    # one serializers per output stream
       class: FileSerializer
       options:
@@ -101,21 +111,20 @@ graph:
         overwrite: false 
         format: full
         n_messages: *n_messages
-      advanced:
-        thread_core: 7
     
   connections:
   # - Producer.out.0 = GlobalFilter.in
-  - SourceClient.out.0 = GlobalFilter.in
-  - GlobalFilter.out.0 = ChannelSelector.in
-  - ChannelSelector.out.0 = IAFEstimator.in
-  - ChannelSelector.out.0 = PhaseEstimator.in
+  - SourceClient.out.0 = SelectionFilter.in
+  - SourceClient.out.0 = ChannelReductor.in
+  - SelectionFilter.out.0 = ChannelSelector.in
+  - ChannelReductor.out.0 = PhaseEstimator.in
+  - ChannelReductor.out.0 = IAFEstimator.in
   - PhaseEstimator.out.0 = StimulusController.in
   - StimulusController.out.0 = Consumer.in
 
   - SourceClient.out.0 = Serializer1.in
   - SourceClient.out.1 = Serializer1.in
-  - GlobalFilter.out.0 = Serializer2.in
+  - SelectionFilter.out.0 = Serializer2.in
   - PhaseEstimator.out.0 = Serializer3.in
   - PhaseEstimator.out.1 = Serializer3.in
   - IAFEstimator.out.0 = Serializer4.in
@@ -124,5 +133,6 @@ graph:
 
   states:
   - IAF: [IAFEstimator.iaf, PhaseEstimator.iaf, StimulusController.iaf]
+  - CH_IDX: [ChannelSelector.ch_idx, ChannelReductor.ch_idx]
 
 

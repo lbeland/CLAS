@@ -9,23 +9,25 @@ graph:
       class: ReplaySourceClient
       options:
         fs: *fs
-        path: eike_20260529_1600/  # replay from this run in _last_run_group or results
+        path: eike_stim_kalman_20260609_121408/  # replay from this run in _last_run_group or results
         nchannels: 32
         nsamples: 1
         n_messages: *n_messages
+        speed_factor: 1
       advanced:
         buffer_sizes:
           out: 32
         thread_core: 0
-    GlobalFilter:
+    SelectionFilter:
       class: MultiChannelFilter
       options:
         filter:
           # file: filters://2_2.0_20.0_10000.txt
           N: [1, 1]
-          low_cutoff: [2.5, 48]
-          high_cutoff: [35, 52]
-          btype: ["bandpass", "bandstop"]
+          low_cutoff: [5, 48]
+          high_cutoff: [15, 52]
+          btype: [bandpass, bandstop]
+          name: selection
         n_messages: *n_messages
       advanced:
         buffer_sizes:
@@ -38,17 +40,29 @@ graph:
         channel_indices: [1]   # 1-based indices of channels to select
       advanced:
         buffer_sizes:
-          out: 32
+          ch_idx_out: 32
         thread_core: 2
+    ChannelReductor:
+      class: ChannelReductor
+      options:
+        n_messages: *n_messages
+        default_channel_index: 1  # 1-based
+      advanced:
+        buffer_sizes:
+          out: 32
+        thread_core: 3
     IAFEstimator:
       class: IAFEstimator
       options:
         n_messages: *n_messages
         calc_interval: 100
-        window_size_sec: 5
-        ema_window_sec: 60
+        window_size_sec: 10
+        max_invalid_sec: 3
+        kalman_estimator_std: 0.96
+        kalman_iaf_std: 0.397857
+        kalman_full: true
         f_min: 5.0
-        f_max: 18.0
+        f_max: 16.0
       advanced:
         buffer_sizes:
           out: 32
@@ -73,11 +87,11 @@ graph:
         n_messages: *n_messages
         stim_onset_deg: 0
         stim_dur_unit: "deg"
-        stim_dur_deg: 45
-        audio_latency_s: 0.0 #0.003
+        stim_dur_deg: 90
+        audio_latency_s: 0.003
         erp_latency_s: 0
         stim_dur_ms: 45
-        stim_amplitude: 0.5
+        stim_amplitude: 0.1
         stim_period_ms: 0.1
       advanced:
         buffer_sizes:
@@ -98,17 +112,20 @@ graph:
         overwrite: false 
         format: full
         n_messages: *n_messages
+    
   connections:
-  - SourceClient.out.0 = GlobalFilter.in
-  - GlobalFilter.out.0 = ChannelSelector.in
-  - ChannelSelector.out.0 = IAFEstimator.in
-  - ChannelSelector.out.0 = PhaseEstimator.in
+  # - Producer.out.0 = SelectionFilter.in
+  - SourceClient.out.0 = SelectionFilter.in
+  - SourceClient.out.0 = ChannelReductor.in
+  - SelectionFilter.out.0 = ChannelSelector.in
+  - ChannelReductor.out.0 = PhaseEstimator.in
+  - ChannelReductor.out.0 = IAFEstimator.in
   - PhaseEstimator.out.0 = StimulusController.in
   - StimulusController.out.0 = Consumer.in
 
-
   - SourceClient.out.0 = Serializer1.in
-  - GlobalFilter.out.0 = Serializer2.in
+  - SourceClient.out.1 = Serializer1.in
+  - SelectionFilter.out.0 = Serializer2.in
   - PhaseEstimator.out.0 = Serializer3.in
   - PhaseEstimator.out.1 = Serializer3.in
   - IAFEstimator.out.0 = Serializer4.in
@@ -117,4 +134,4 @@ graph:
 
   states:
   - IAF: [IAFEstimator.iaf, PhaseEstimator.iaf, StimulusController.iaf]
-
+  - CH_IDX: [ChannelSelector.ch_idx, ChannelReductor.ch_idx]

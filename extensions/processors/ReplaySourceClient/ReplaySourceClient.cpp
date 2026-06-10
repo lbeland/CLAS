@@ -365,6 +365,7 @@ void ReplaySourceClient::Preprocess(ProcessingContext &context)
               << " fs=" << fs_()
               << " real_time=" << real_time_()
               << " speed_factor=" << speed_factor_()
+              << " inter_packet_gap=" << inter_packet_ns_ / 1e6 << " ms"
               << " loop=" << loop_()
               << " n_records=" << n_records_;
 }
@@ -481,6 +482,7 @@ void ReplaySourceClient::Process(ProcessingContext &context)
 
         TimePoint src_time_point;
         src_time_point = Clock::now();
+        last_emit_time_ = src_time_point;
         data_out->set_source_timestamp(src_time_point);
 
         // ----------------------------------------------------------------

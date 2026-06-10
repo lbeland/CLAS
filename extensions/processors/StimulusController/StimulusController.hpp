@@ -45,6 +45,7 @@ class StimulusController : public IProcessor {
   // VARIABLES
   protected:
     unsigned int packet_count_ = 0;
+    int stimuli_count_ = 0;
     bool output_      = false;
     bool last_output_ = false;
     double stim_onset_rad_ = 0;
@@ -103,6 +104,8 @@ class StimulusController : public IProcessor {
     options::Double stim_onset_deg_{0};
     options::Double audio_latency_s_{0};
     options::Double erp_latency_s_{0};  //auditory evoked response potential latency in seconds
+    options::Bool correct_latencies_{true};
+
     options::Double stim_period_ms_{1};
     options::Double stim_amplitude_{0.7};
     options::Int stim_num_octaves_{6};
@@ -119,5 +122,10 @@ class StimulusController : public IProcessor {
 
     // Audio sample format: "float" (FLOAT_LE) or "s16" (S16_LE)
     options::String audio_format_{"float"};
+
+    // Options for random stimulation with silent/skipped intervals
+    options::Bool randomize_stim_onset_{false};
+    options::Double min_stim_dist_sec_{0};
+    options::Double max_stim_dist_sec_{-1};
 
 };

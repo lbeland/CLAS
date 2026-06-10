@@ -46,9 +46,10 @@ static inline int16_t double_to_s16_(double x)
 StimulusController::StimulusController() : IProcessor(PRIORITY_HIGH)
 {
     add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
-    add_option("stim_onset_deg", stim_onset_deg_, "Stimulus onset phase in degrees.");
+    add_option("stim_onset_deg", stim_onset_deg_, "Stimulus onset phase in degrees. (<0 -> random)");
     add_option("audio_latency_s", audio_latency_s_, "Estimated audio latency in seconds (for phase correction).");
     add_option("erp_latency_s", erp_latency_s_, "Estimated auditory evoked response potential latency in seconds (for phase correction).");
+    add_option("correct_latencies", correct_latencies_, "Whether to apply latency corrections to stimulus timing (default: true).");
 
     add_option("audio_device", audio_device_, "ALSA device string for playback (e.g. hw:1,0 or default).");
     add_option("audio_sample_rate", audio_sample_rate_, "Audio sample rate (Hz).");
@@ -61,6 +62,10 @@ StimulusController::StimulusController() : IProcessor(PRIORITY_HIGH)
     add_option("stim_dur_deg", stim_dur_deg_, "Stimulus duration in degrees.");
     add_option("stim_dur_ms", stim_dur_ms_, "Fallback burst duration in ms (used only when IAF is unavailable).");
     add_option("stim_dur_unit", stim_dur_unit_, "Burst duration unit: 'deg' or 'ms' (default: 'deg').");
+
+    add_option("randomize_stim_onset", randomize_stim_onset_, "Whether to randomize stimulus onset phase on each presentation (default: false).");
+    add_option("min_stim_dist_sec", min_stim_dist_sec_, "Minimum distance between stimuli in seconds.");
+    add_option("max_stim_dist_sec", max_stim_dist_sec_, "Maximum distance between stimuli in seconds.");
 
     iaf_state_ = create_follower_state<double>(
         "iaf", 10.0, Permission::NONE,
@@ -152,8 +157,15 @@ void StimulusController::Prepare(GlobalContext &context)
 
     fs_ = p.sample_rate;
 
-    stim_onset_rad_ = stim_onset_deg_() * (1.0 / 180.0 * M_PI);
-    LOG(INFO) << name() << " Stimulus onset: " << stim_onset_deg_() << " deg (" << stim_onset_rad_ << " rad)";
+    if (stim_onset_deg_() < 0)
+    {
+        LOG(INFO) << name() << " Stimulus onset: random";
+    }
+    else
+    {
+        stim_onset_rad_ = stim_onset_deg_() * (1.0 / 180.0 * M_PI);
+        LOG(INFO) << name() << " Stimulus onset: " << stim_onset_deg_() << " deg (" << stim_onset_rad_ << " rad)";
+    }
     dur_unit_ = (stim_dur_unit_() == "deg") ? DurUnit::kDeg : DurUnit::kMs;
 }
 
@@ -171,6 +183,7 @@ void StimulusController::Preprocess(ProcessingContext &context)
     }
 
     packet_count_ = 0;
+    stimuli_count_ = 0;
 }
 
 void StimulusController::build_audio_buffers_()
@@ -536,6 +549,31 @@ void StimulusController::Process(ProcessingContext &context)
     MultiChannelType<double>::Data *data_in;
     MultiChannelType<double>::Data *data_out;
 
+    // Randomization setup for stimulus timing (if randomize_stim_onset_() is enabled)
+    TimePoint last_stim_time_ = Clock::now();
+    double time_since_last_stim = 0.0;
+    std::random_device rd;   // non-deterministic generator
+    std::mt19937 gen(rd());  // to seed mersenne twister.
+                        // replace the call to rd() with a
+                        // constant value to get repeatable
+                        // results.
+    std::uniform_real_distribution<double> distrib_interval;
+    if (max_stim_dist_sec_() < min_stim_dist_sec_())
+    {
+        distrib_interval = std::uniform_real_distribution<double>(min_stim_dist_sec_(), min_stim_dist_sec_());
+    }
+    else
+    {
+        distrib_interval = std::uniform_real_distribution<double>(min_stim_dist_sec_(), max_stim_dist_sec_());
+    }
+    
+    std::uniform_real_distribution<double> distrib_onset(0.0, 2.0 * M_PI);
+    double stim_dist_sec_ = distrib_interval(gen);
+    if (randomize_stim_onset_()) {
+        stim_onset_rad_ = distrib_onset(gen);
+    }
+    LOG(INFO) << name() << " Initial stimulus distance: " << stim_dist_sec_ << " s, onset: " << stim_onset_rad_ << " rad";
+
     // Measurement phase
     while (!context.terminated())
     {
@@ -552,9 +590,11 @@ void StimulusController::Process(ProcessingContext &context)
         }
 
         data_out = data_out_port_->slot(0)->ClaimData(false);
+
         // data_out->CloneTimestamps(*data_in);
         data_out->set_hardware_timestamp(data_in->hardware_timestamp());
         data_out->set_source_timestamp(data_in->source_timestamp());
+
         double phase = data_in->data_sample(0, 0);
         const double iaf_ = iaf_state_->get();
 
@@ -574,31 +614,50 @@ void StimulusController::Process(ProcessingContext &context)
         }
 
         TimePoint now = Clock::now();
+
         TimePoint sample_ts = data_in->source_timestamp();
         // data_out->set_source_timestamp(now);
         data_in_port_->slot(0)->ReleaseData();
 
-        double delay_sec = std::chrono::duration<double>(now - sample_ts).count();
-        delay_sec += audio_latency_s_() + erp_latency_s_();
+        time_since_last_stim = std::chrono::duration<double>(now - last_stim_time_).count();
 
-        double phase_advance = 2.0 * M_PI * iaf_ * delay_sec;
-        double corrected_phase = std::fmod(phase + phase_advance, 2.0 * M_PI);
-        double diff = corrected_phase - stim_onset_rad_;
-
-        // Wrap diff to [-pi, pi] once
-        const double wrapped_diff = std::atan2(std::sin(diff), std::cos(diff));
-
-        output_ = std::abs(wrapped_diff) < (stim_dur_rad_ / 2);
-
-        // Trigger a single burst on the rising edge (false -> true)
-        if (output_ && !last_output_)
+        if (time_since_last_stim >= stim_dist_sec_)
         {
-            audio_trigger_pending_.store(true);
-            // LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated phase = " << phase << " , delay = " << delay_sec << " s, corr_phase = " << corrected_phase;
-        }
-        else if (!output_ && last_output_)
-        {
-            // LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated phase = " << phase << " , delay = " << delay_sec << " s, corr_phase = " << corrected_phase;
+            double delay_sec = 0;
+            if (correct_latencies_())
+            {
+                // System latency
+                delay_sec += std::chrono::duration<double>(now - sample_ts).count();
+                // Brain latency
+                delay_sec += audio_latency_s_() + erp_latency_s_();
+            }
+
+            double phase_advance = 2.0 * M_PI * iaf_ * delay_sec;
+            double corrected_phase = std::fmod(phase + phase_advance, 2.0 * M_PI);
+            double diff = corrected_phase - stim_onset_rad_;
+
+            // Wrap diff to [-pi, pi] once
+            const double wrapped_diff = std::atan2(std::sin(diff), std::cos(diff));
+
+            output_ = std::abs(wrapped_diff) < (stim_dur_rad_ / 2);
+
+            // Trigger a single burst on the rising edge (false -> true)
+            if (output_ && !last_output_)
+            {
+                LOG(INFO) << name() << "Deliver stimulus after: " << time_since_last_stim << " s since last stimulus";
+                audio_trigger_pending_.store(true);
+                // LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated phase = " << phase << " , delay = " << delay_sec << " s, corr_phase = " << corrected_phase;
+            }
+            else if (!output_ && last_output_)
+            {
+                last_stim_time_ = now;
+                stimuli_count_++;
+                stim_dist_sec_ = distrib_interval(gen);
+                if (randomize_stim_onset_()) {
+                    stim_onset_rad_ = distrib_onset(gen);
+                }
+                // LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated phase = " << phase << " , delay = " << delay_sec << " s, corr_phase = " << corrected_phase;
+            }
         }
         last_output_ = output_;
 
@@ -612,7 +671,7 @@ void StimulusController::Process(ProcessingContext &context)
 void StimulusController::Postprocess(ProcessingContext &context)
 {
     stop_audio_();
-    LOG(INFO) << name() << " Total messages processed: " << packet_count_;
+    LOG(INFO) << name() << " Total messages processed: " << packet_count_ << ", stimuli presented: " << stimuli_count_;
 }
 
 void StimulusController::Unprepare(GlobalContext &context)

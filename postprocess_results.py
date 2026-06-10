@@ -22,13 +22,6 @@ from read_output import get_signal_data
 from pathlib import Path
 import mne
 
-mne.viz.set_browser_backend("matplotlib")
-mne.viz.use_browser_backend("matplotlib")
-
-# mpl.rcParams.update({
-#     "text.usetex": True,
-# })
-
 
 # Automatic link to the last run results
 RESULTS_DIR = "_last_run"
@@ -141,6 +134,11 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
 
     first_timestamps = [samples[key]["x"][0] for key in samples]
     assert len(set(first_timestamps)) == 1 or len(set(first_timestamps)) == 0, "Mismatched timestamps across processors"
+
+    min_lengths = [len(samples[key]["x"]) for key in samples]
+    for key in samples:
+        samples[key]["x"] = samples[key]["x"][:min(min_lengths)]
+        samples[key]["y"] = samples[key]["y"][:min(min_lengths)]
 
     return samples
 
@@ -301,9 +299,9 @@ def write_edf(
 
     eeg_channels = [channel for channel in samples.keys() if channel.startswith("SourceClient_") and channel.split("_")[1].isdigit()]
     for ch in eeg_channels:
-        ch_idx = ch.split("_")[1]
+        ch_idx = int(ch.split("_")[1])
         y_ch = samples[ch]["y"]
-        channels.append((f"EEG_{ch_idx}", "eeg", y_ch[:n]))
+        channels.append((f"EEG_{ch_idx+1}", "eeg", y_ch[:n]))   # store channels 1-indexed
 
     # if ground_truth["true_amplitude"] is not None:
     #     channels.append(("True_amplitude", ground_truth["true_amplitude"][:n]))
@@ -317,8 +315,9 @@ def write_edf(
         iaf = np.nan_to_num(iaf)   # replace any NaN with zero for EDF export
         channels.append(("IAF_est_Hz", "misc", iaf[:n]))
 
+    min_len = min([len(ch[2]) for ch in channels])
     info = mne.create_info([ch[0] for ch in channels], sfreq=fs, ch_types=[ch[1] for ch in channels], verbose=False)
-    raw = mne.io.RawArray([ch[2] for ch in channels], info, verbose=False)
+    raw = mne.io.RawArray([ch[2][:min_len] for ch in channels], info, verbose=False)
     # Scale to volts
     raw.apply_function(lambda x: x * 1e-6, picks="eeg")  # EEG channels in microvolts → volts
     start_dt = datetime.datetime.fromtimestamp(time[0] / 1e6, tz=pytz.timezone("Europe/Berlin")).replace(tzinfo=datetime.timezone.utc)
@@ -402,6 +401,7 @@ def compute_errors(
         stim_ref, _, _ = compute_reference_stimulus(
             phase=ref_phase,
             iaf=iaf_y,
+            fs=fs,
             stim_onset_deg=stim_config.get("stim_onset_deg", 0.0),   # match TurboLinkCLAS.yaml
             stim_dur_deg=stim_config.get("stim_dur_deg", 90.0),      # match TurboLinkCLAS.yaml
             stim_dur_unit=stim_config.get("stim_dur_unit", "deg"),    # match TurboLinkCLAS.yaml
@@ -445,6 +445,7 @@ def compute_errors(
  
 def compute_reference_stimulus(
     phase: np.ndarray,
+    fs: float,
     iaf: np.ndarray,
     stim_onset_deg: float = 0.0,
     stim_dur_deg: float = 90.0,
@@ -506,6 +507,13 @@ def compute_reference_stimulus(
     stim_ref[iaf_safe] = (np.abs(wrapped_diff[iaf_safe]) < (stim_dur_rad[iaf_safe] / 2.0)).astype(float)
  
     rising  = np.where((stim_ref[1:] == 1) & (stim_ref[:-1] == 0))[0] + 1
+
+    stim_ref = np.zeros_like(phase, dtype=float)  # reset
+    # Stimuli duration is fixed based on stim_dur_rad and not based on when phase actually leaves target window (mirrows real time pipeline)
+    for r in rising:
+        dur_samples = int(round(stim_dur_rad[r] / (2 * np.pi * iaf[r]) * fs))
+        stim_ref[r : r + dur_samples] = 1
+
     falling = np.where((stim_ref[1:] == 0) & (stim_ref[:-1] == 1))[0] + 1
  
     onset_phases  = phase[rising]  if len(rising)  else np.array([])
@@ -700,6 +708,7 @@ def plot_spectrum(raw, samples: dict, fs: float) -> None:
     if samples.get("GlobalFilter") is not None:
         filt = samples["GlobalFilter"]["y"]
         filt_spectrum = np.fft.rfft(filt)
+        freqs_filt = np.fft.rfftfreq(len(filt), d=1/fs)
         # freqs, filt_spectrum = welch(samples["GlobalFilter"]["y"], fs=fs, nperseg=fs*5)
     else:
         filt_spectrum = None
@@ -708,7 +717,7 @@ def plot_spectrum(raw, samples: dict, fs: float) -> None:
     # plt.hist(freqs, bins=2*fs, weights=np.abs(raw_spectrum), alpha=0.7, label="Raw", color="blue")
     plt.plot(freqs, np.abs(raw_spectrum), label="Raw", alpha=0.7, color="blue")
     # plt.hist(freqs, bins=2*fs, weights=np.abs(filt_spectrum), alpha=0.7, label="Filtered", color="orange") if filt_spectrum is not None else None
-    plt.plot(freqs, np.abs(filt_spectrum), label="Filtered", alpha=0.7, color="orange") if filt_spectrum is not None else None
+    plt.plot(freqs_filt, np.abs(filt_spectrum), label="Filtered", alpha=0.7, color="orange") if filt_spectrum is not None else None
 
     plt.xlim(0, 100)
     plt.xlabel("Frequency (Hz)")
@@ -763,11 +772,11 @@ def plot_time_series(ground_truth, samples: dict, hilbert_phase, stim_ref, fs: f
     ax_raw.legend(facecolor="white", frameon=True, fontsize=8, loc="upper right")
 
     if hilbert_phase is not None:
-        ax_phase.plot(time_s, hilbert_phase[:n], color="tab:blue", linewidth=1.5, label="Offline Hilbert phase")
+        ax_phase.plot(time_s[:len(hilbert_phase)], hilbert_phase[:n], color="tab:blue", linewidth=1.5, label="Offline Hilbert phase")
     if online_phase is not None:
-        ax_phase.plot(time_s, online_phase[:n], color="tab:orange", linewidth=1.5, label="Online phase")
+        ax_phase.plot(time_s[:len(online_phase)], online_phase[:n], color="tab:orange", linewidth=1.5, label="Online phase")
     if true_phase is not None:
-        ax_phase.plot(time_s, true_phase[:n], color="tab:brown", linewidth=1.0, label="True phase")
+        ax_phase.plot(time_s[:len(true_phase)], true_phase[:n], color="tab:brown", linewidth=1.0, label="True phase")
     ax_phase.set_ylabel("Phase (rad)")
     ax_phase.set_title("Phase Estimates")
     ax_phase.legend(facecolor="white", frameon=True, fontsize=8, loc="upper right")
@@ -828,8 +837,9 @@ def analyse_results(
 
     if os.path.basename(graph_file[0]) == "ERPCLAS.yaml":
         ground_truth = extract_ground_truth(samples)
-        write_edf(edf_path, fs, ground_truth, samples)
-        return plot_erp_latency(fs, samples, channel=1)
+        # write_edf(edf_path, fs, ground_truth, samples)
+        windows = get_erp_windows(fs, samples, channel=1)
+        plot_erp_latency(windows, fs)
         
     # 2. Identify ground-truth signals
     ground_truth = extract_ground_truth(samples)
@@ -854,7 +864,7 @@ def analyse_results(
     plot_errors(errors, output_path=plot_path)
 
     # 7. Plot example spectrum of filtered data
-    # plot_spectrum(raw, samples, fs)
+    plot_spectrum(raw, samples, fs)
 
     # 8. Plot time series from EDF
     plot_time_series(ground_truth, samples, hilbert_phase, stim_ref, fs, time_range=time_range_to_plot)
@@ -862,12 +872,16 @@ def analyse_results(
 
     plt.show()
 
-def plot_erp_latency(fs, samples, channel=1):
+def get_erp_windows(fs, samples, channel=1):
+    windows=[]
     channel = channel - 1 # zero-based index
     
     if samples.get(f"SourceClient_{channel}") is not None:
         eeg_y = samples[f"SourceClient_{channel}"]["y"]
         eeg_t = samples[f"SourceClient_{channel}"]["x"]
+    elif samples.get(f"Producer_{channel}") is not None:
+        eeg_y = samples[f"Producer_{channel}"]["y"]
+        eeg_t = samples[f"Producer_{channel}"]["x"]
     else:
         print(f"Error: SourceClient_{channel} not found in samples.")
         return
@@ -875,6 +889,9 @@ def plot_erp_latency(fs, samples, channel=1):
     if samples.get("SourceClient_TRIGGER") is not None:
         trigger_y = samples["SourceClient_TRIGGER"]["y"]
         trigger_t = samples["SourceClient_TRIGGER"]["x"]
+    elif samples.get("StimulusController") is not None:
+        trigger_y = samples["StimulusController"]["y"]
+        trigger_t = samples["StimulusController"]["x"]
     else:
         print("Error: SourceClient_TRIGGER not found in samples.")
         return
@@ -896,10 +913,15 @@ def plot_erp_latency(fs, samples, channel=1):
         if start_idx >= 0 and end_idx < len(eeg_filtered):
             windows.append({"time_s": time_s[start_idx:end_idx], "eeg_y": eeg_filtered[start_idx:end_idx]})
 
+    return windows
+
+def plot_erp_latency(windows, fs):
     # Average across windows
     if not windows:
         print("No valid trigger windows found.")
         return
+    
+    print(f"Found {len(windows)} valid trigger windows")
     
     avg_eeg = np.mean([w["eeg_y"] for w in windows], axis=0)
     std_eeg = np.std([w["eeg_y"] for w in windows], axis=0)
@@ -920,7 +942,7 @@ def plot_erp_latency(fs, samples, channel=1):
 
 if __name__ == "__main__":
 
-    analyse_results(f0=10,results_dir="results/iaf_5s_window_20260608_150015")
+    analyse_results(f0=10,results_dir="_last_run")
 
     # _last_run
     # results/eike_20260529_1600

@@ -33,8 +33,8 @@ ChannelSelector::ChannelSelector() : IProcessor(PRIORITY_HIGH)
     add_option("rms_window_seconds", rms_window_seconds_, "Length of the weighted RMS window in seconds (recent samples get higher weights).");
 
     channel_state_ = create_broadcaster_state<unsigned int>(
-        "channel_idx", current_channel_index_, Permission::NONE,
-        "Current selected channel index shared with downstream processors.");
+        "ch_idx", current_channel_index_, Permission::NONE,
+        "Current selected channel index (zero-based) shared with downstream processors.");
 }
 
 void ChannelSelector::CreatePorts()
@@ -44,10 +44,10 @@ void ChannelSelector::CreatePorts()
         MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
         PortInPolicy(SlotRange(0, MAX_NCHANNELS)));
 
-    data_out_port_ = create_output_port<MultiChannelType<float>>(
-        "out",
-        MultiChannelType<float>::Parameters(1, 1, 1), // Placeholder, will be set in CompleteStreamInfo
-        PortOutPolicy(SlotRange(0, MAX_NCHANNELS), 200, WaitStrategy::kBlockingStrategy));
+    // data_out_port_ = create_output_port<MultiChannelType<float>>(
+    //     "out",
+    //     MultiChannelType<float>::Parameters(1, 1, 1), // Placeholder, will be set in CompleteStreamInfo
+    //     PortOutPolicy(SlotRange(0, MAX_NCHANNELS), 200, WaitStrategy::kBlockingStrategy));
 
     idx_out_port = create_output_port<ScalarType<unsigned int>>(
         "ch_idx_out",
@@ -59,9 +59,9 @@ void ChannelSelector::CompleteStreamInfo()
 {
     const auto &input_params = data_in_port_->slot(0)->streaminfo().parameters<MultiChannelType<float>::Parameters>();
 
-    // only pass through the selected channel, so set output nchannels to 1 but keep nsamples and sample_rate the same as input
-    data_out_port_->streaminfo(0).set_parameters(MultiChannelType<float>::Parameters(1, input_params.nsamples, input_params.sample_rate));
-    data_out_port_->streaminfo(0).set_stream_rate(data_in_port_->streaminfo(0));
+    // // only pass through the selected channel, so set output nchannels to 1 but keep nsamples and sample_rate the same as input
+    // data_out_port_->streaminfo(0).set_parameters(MultiChannelType<float>::Parameters(1, input_params.nsamples, input_params.sample_rate));
+    // data_out_port_->streaminfo(0).set_stream_rate(data_in_port_->streaminfo(0));
 
     // Set the parameters for the channel index output port
     idx_out_port->streaminfo(0).set_parameters(ScalarType<unsigned int>::Parameters(1));
@@ -122,7 +122,7 @@ void ChannelSelector::Preprocess(ProcessingContext &context)
 void ChannelSelector::Process(ProcessingContext &context)
 {
     MultiChannelType<float>::Data *data_in = nullptr;
-    MultiChannelType<float>::Data *data_out = nullptr;
+    // MultiChannelType<float>::Data *data_out = nullptr;
     ScalarType<unsigned int>::Data *idx_out = nullptr;
 
     double rms_thresh_uv = rms_threshold_uv_();
@@ -179,20 +179,19 @@ void ChannelSelector::Process(ProcessingContext &context)
         }
 
         // Claim output buffer
-        data_out = data_out_port_->slot(0)->ClaimData(false);
+        // data_out = data_out_port_->slot(0)->ClaimData(false);
         idx_out = idx_out_port->slot(0)->ClaimData(false);
 
-        data_out->set_data_sample(0, 0, data_in->data_sample(0, current_channel_index_));
-        data_out->set_sample_timestamps(data_in->sample_timestamps());
-
-        data_out->CloneTimestamps(*data_in);
+        // data_out->set_data_sample(0, 0, data_in->data_sample(0, current_channel_index_));
+        // data_out->set_sample_timestamps(data_in->sample_timestamps());
+        // data_out->CloneTimestamps(*data_in);
 
         idx_out->set_data(current_channel_index_ + 1); // convert back to 1-based index
         idx_out->set_hardware_timestamp(data_in->hardware_timestamp());
         idx_out->set_source_timestamp(Clock::now());
 
         data_in_port_->slot(0)->ReleaseData();
-        data_out_port_->slot(0)->PublishData();
+        // data_out_port_->slot(0)->PublishData();
         idx_out_port->slot(0)->PublishData();
 
         packet_count_++;

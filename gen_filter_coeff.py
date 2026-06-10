@@ -45,11 +45,11 @@ def gen_filter_ecHT(filter_params, output_folder):
             for i in range(len(filt_freq)):
                 f.write(f"{H[i].real:.18g} {H[i].imag:.18g}\n")
 
-def gen_filter(filter_params, fs, output_folder):
+def gen_filter(filter_params, fs, filter_name, output_folder):
 
     sos_outputs = []
 
-    filename = f"global_filter_{fs}.txt"
+    filename = f"{filter_name}_{fs}.txt"
     output_path = f"{output_folder}/{filename}"
 
     print(f"Generating coefficients for global filter")
@@ -147,6 +147,7 @@ if __name__ == "__main__":
     )
     
     plot_filter_response(np.vstack([sos1, sos2]), fs)
+    plot_filter_response(np.vstack([sos2, sos1]), fs)
 
     # # Bandstop
     # N = 1

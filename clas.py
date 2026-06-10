@@ -50,8 +50,6 @@ def main():
     graph_path = os.path.join(resources_folder, "graphs", args.graph)
     print(f"Using graph file: {graph_path}")
 
-    filter_params = []
-
     with open(graph_path, "r") as f:
         graph_config = yaml.safe_load(f)
         fs = graph_config.get("graph", {}).get("defaults", {}).get("fs", None)
@@ -68,6 +66,8 @@ def main():
                     high_cutoff = filter_config.get("high_cutoff")
                     btype = filter_config.get("btype", "bandpass")
                     filter_params = list(zip(N, low_cutoff, high_cutoff, btype))
+                    filter_name = filter_config.get("name")
+                    gen_filter(filter_params, fs, filter_name, output_folder=os.path.join(resources_folder, "filters"))
                     # gen_filter(N, low_cutoff, high_cutoff, fs, length=None, output_folder=os.path.join(resources_folder, "filters"), btype=btype)
             elif processor_config.get("class") == "PhaseEstimator":
                 # Check if processor PhaseEstimator is configured to use a non-file-based filter
@@ -78,11 +78,7 @@ def main():
                         filter_length = int(2.0 * fs/iaf)    # 2 cycles of iaf frequency
                         params = [(1, iaf-bandwidth/2, iaf+bandwidth/2, fs, filter_length, "bandpass")]
                         gen_filter_ecHT(params, output_folder=os.path.join(resources_folder, "filters"))
-
-    if filter_params:
-        gen_filter(filter_params, fs, output_folder=os.path.join(resources_folder, "filters"))
-
-
+     
 
     graph_process = subprocess.Popen(["./build/release/falcon/falcon",args.graph, "--config", WORKSPACE_FALCON_CONFIG],stdin=subprocess.PIPE)
 

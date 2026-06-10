@@ -77,7 +77,8 @@ void MultiChannelFilter::Prepare(GlobalContext &context) {
     // double high_cutoff = filter_def_()["high_cutoff"].as<double>();
     // std::string btype = filter_def_()["btype"].as<std::string>("bandpass");
     std::string filename;
-    filename =  "global_filter_" + std::to_string(fs_) + ".txt";      
+    std::string filter_name = filter_def_()["name"].as<std::string>();
+    filename =  filter_name + "_" +std::to_string(fs_) + ".txt";      
 
     std::string f = context.resolve_path(filename, "filters");
     LOG(INFO) << name() << " Read filter coefficients from file path: " << f;

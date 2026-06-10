@@ -51,6 +51,7 @@ class SourceClient : public IProcessor {
   int sock = -1;
   bool audio_aux_ = false;
   int packet_count_ = 0;
+  Packet last_packet_;
 
   options::Double fs_{1000};
   options::Int nchannels_{32};  // 32 EEG

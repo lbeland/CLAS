@@ -133,11 +133,16 @@ void SourceClient::Preprocess(ProcessingContext &context)
 
 void SourceClient::Process(ProcessingContext &context)
 {
+    SlotOut<MultiChannelType<float>>* data_slot = data_out_port_->slot(0);
+    SlotOut<MultiChannelType<float>>* aux_slot = data_out_port_->slot(1);
     MultiChannelType<float>::Data *data_out = nullptr;
     MultiChannelType<float>::Data *aux_out = nullptr;
     uint8_t buffer[2048];
     uint32_t first_sample_counter = 0;
     uint32_t sample_counter = 0;
+
+    std::vector<float> eeg_vec(nchannels_());
+    std::vector<float> aux_vec(9); // 8 aux channels + 1
 
     // Measurement phase
     sockaddr_in src{};
@@ -162,7 +167,11 @@ void SourceClient::Process(ProcessingContext &context)
 
     // Use wall clock time as reference for hardware timestamps
     uint64_t start_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    ssize_t received;
 
+    bool store_aux = store_aux_();
+
+    Packet pkt{};
     while (!context.terminated())
     {
         if (n_messages_() != -1 && packet_count_ >= n_messages_())
@@ -170,7 +179,7 @@ void SourceClient::Process(ProcessingContext &context)
             break;
         }
 
-        ssize_t received = recvfrom(sock, buffer, sizeof(buffer), 0,
+        received = recvfrom(sock, buffer, sizeof(buffer), 0,
                                     (struct sockaddr *)&src, &srclen);
 
         if (received < 0)
@@ -191,8 +200,7 @@ void SourceClient::Process(ProcessingContext &context)
         }
 
         timestamp = Clock::now();
-
-        Packet pkt{};
+        
         if (!parse_packet(buffer, received, pkt))
         {
             std::cerr << "Invalid packet size: " << received << std::endl;
@@ -210,66 +218,120 @@ void SourceClient::Process(ProcessingContext &context)
         {
             if (((pkt.sample_counter - first_sample_counter) > sample_counter + 1))
             {
-                LOG(WARNING) << name() << " Missed packet(s). Last sample counter: " << sample_counter << ", current: " << pkt.sample_counter;
-                return;
+                int missed = (pkt.sample_counter - first_sample_counter) - sample_counter;
+                LOG(ERROR) << name() << " Missed packet(s). Last sample counter: " << sample_counter << ", current: " << pkt.sample_counter - first_sample_counter << ". Missed " << missed << " packets.";
+                
+                int virt_sample_counter = sample_counter;
+                std::vector<MultiChannelType<float>::Data *> data_out_vec = data_slot->ClaimDataN(missed, false);
+                for (auto &data_out : data_out_vec)
+                {
+                    virt_sample_counter++;
+                    hardware_time_us = start_time + (uint64_t)virt_sample_counter * 1000000ULL / fs_();
+                    // Linear interpolation (set last stored packet)
+                    std::copy(last_packet_.eeg.begin(), last_packet_.eeg.begin() + nchannels_(), eeg_vec.begin());
+                    data_out->set_data_sample(0, eeg_vec);
+
+                    data_out->set_sample_timestamp(0, hardware_time_us);
+                    data_out->set_source_timestamp(timestamp);
+                    data_out->set_hardware_timestamp(hardware_time_us);
+                }
+                // data_slot->PublishData();
+
+                virt_sample_counter = sample_counter;
+                if (store_aux)
+                {
+                    std::vector<MultiChannelType<float>::Data *> aux_out_vec = aux_slot->ClaimDataN(missed, false);
+                    for (auto &aux_out : aux_out_vec)              
+                    {
+                        virt_sample_counter++;
+                        hardware_time_us = start_time + (uint64_t)virt_sample_counter * 1000000ULL / fs_();
+                        std::copy(last_packet_.aux.begin(), last_packet_.aux.end(), aux_vec.begin());
+                        aux_vec[8] = (last_packet_.input_trigger >> 7) & 1 ? 1.0f : 0.0f; // Add trigger data in ninth channel
+                        aux_out->set_data_sample(0, aux_vec);
+
+                        // LOG(INFO) << name() << " Packet count: " << packet_count << " Received trigger: " << std::bitset<8>(pkt.input_trigger) << ", " << (pkt.input_trigger >> 7);
+                        aux_out->set_sample_timestamp(0, hardware_time_us);
+                        aux_out->set_source_timestamp(timestamp);
+                        aux_out->set_hardware_timestamp(hardware_time_us);
+                    }
+                    // aux_slot->PublishData();
+                }
+                sample_counter += missed;
             }
-            sample_counter = pkt.sample_counter - first_sample_counter;
+            else
+            {
+                sample_counter += 1;
+            }
         }
+
+        TimePoint after_parsing = Clock::now();
 
         hardware_time_us = start_time + (uint64_t)sample_counter * 1000000ULL / fs_();
         // if (packet_count % 100 == 0) {
         //     LOG(INFO) << name() << ". Received packet " << packet_count + 1 << " with sample " << std::fixed << std::setprecision(2) << pkt.eeg[0] << " with sample counter " << pkt.sample_counter << " (hardware timestamp: " << hw_us << ")";
         // }
 
-        data_out = data_out_port_->slot(0)->ClaimData(false);
+        data_out = data_slot->ClaimData(false);
+
+        TimePoint after_claim = Clock::now();
 
         // Send only as many channels as defined
-        for (int i = 0; i < nchannels_(); i++)
-        {
-            float sample = pkt.eeg[i];
-            data_out->set_data_sample(0, i, sample);
-            data_out->set_sample_timestamp(0, hardware_time_us);
-        }
+        std::copy(pkt.eeg.begin(), pkt.eeg.begin() + nchannels_(), eeg_vec.begin());
+        data_out->set_data_sample(0, eeg_vec);        
 
+        data_out->set_sample_timestamp(0, hardware_time_us);
         data_out->set_source_timestamp(timestamp);
         data_out->set_hardware_timestamp(hardware_time_us);
 
         // LOG(INFO) << name() << ". Sent message " << packet_count + 1 << " with sample " << pkt.eeg[0] << ".";
 
+        TimePoint after_set_eeg = Clock::now();
+
         // Publish data
-        data_out_port_->slot(0)->PublishData();
+        data_slot->PublishData();
+
+        TimePoint after_publish_eeg = Clock::now();
 
         // Handle AUX and Trigger data if defined
-        if (store_aux_())
+        if (store_aux)
         {
-            aux_out = data_out_port_->slot(1)->ClaimData(false);
-            for (int i = 0; i < 8; i++)
-            {
-                aux_out->set_data_sample(0, i, pkt.aux[i]);
-            }
-            if ((pkt.input_trigger >> 7) & 1)
-            {
-                aux_out->set_data_sample(0, 8, 1.0); // Set trigger data in ninth channel
-            }
-            else
-            {
-                aux_out->set_data_sample(0, 8, 0.0);
-            }
+            aux_out = aux_slot->ClaimData(false);
+            std::copy(pkt.aux.begin(), pkt.aux.end(), aux_vec.begin());
+            aux_vec[8] = (pkt.input_trigger >> 7) & 1 ? 1.0f : 0.0f; // Add trigger data in ninth channel
+            aux_out->set_data_sample(0, aux_vec);
+
+            aux_out->set_sample_timestamp(0, hardware_time_us);
             // LOG(INFO) << name() << " Packet count: " << packet_count << " Received trigger: " << std::bitset<8>(pkt.input_trigger) << ", " << (pkt.input_trigger >> 7);
             aux_out->set_sample_timestamp(0, hardware_time_us);
             aux_out->set_source_timestamp(timestamp);
             aux_out->set_hardware_timestamp(hardware_time_us);
-            data_out_port_->slot(1)->PublishData();
+            aux_slot->PublishData();
         }
+
+        TimePoint after_publish_aux = Clock::now();
 
         // if ((pkt.input_trigger << 7) & 1)
         // {
         //     LOG(INFO) << name() << " Packet count: " << packet_count << " Received input trigger: " << std::bitset<8>(pkt.input_trigger);
         // }
 
-        send_times.push_back(timestamp);
+        // send_times.push_back(timestamp);
 
         packet_count_++;
+        last_packet_ = pkt;
+
+        TimePoint finished = Clock::now();
+        if (std::chrono::duration<double, std::micro>(finished - timestamp).count() > 100)
+        {
+            LOG(INFO) << name() << " Processed packet " << packet_count_ << " - timings (us):" 
+                      << " parse_packet=" << std::chrono::duration<double, std::micro>(after_parsing - timestamp).count()
+                      << ", after_claim=" << std::chrono::duration<double, std::micro>(after_claim - after_parsing).count()
+                      << ", after_set_eeg=" << std::chrono::duration<double, std::micro>(after_set_eeg - after_claim).count()
+                      << ", after_publish_eeg=" << std::chrono::duration<double, std::micro>(after_publish_eeg - after_set_eeg).count()
+                      << ", after_publish_aux=" << std::chrono::duration<double, std::micro>(after_publish_aux - after_publish_eeg).count()
+                      << ", total=" << std::chrono::duration<double, std::micro>(finished - timestamp).count();
+            // LOG(INFO) << name() << "Processed packet in " << std::chrono::duration<double, std::micro>(finished - timestamp).count() << " us.";
+        }
     }
 }
 

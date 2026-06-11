@@ -130,6 +130,8 @@ def main():
         print(f"Error during benchmark: {e}")
         terminate(graph_process)
 
+    socket.close()
+
     # Postprocessing results
     analyse_results(10, "_last_run/")
     # plot_results(fs, 7.5, GRAPH_CONFIG)

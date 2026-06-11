@@ -55,7 +55,7 @@ def main():
     fixed = {
         "fs":                   10000.0,
         "signal_length_sec":    30,
-        "freq_range":           (1.0, 30.0),
+        "freq_range":           (0.01, 30.0),
         "alpha_band":           (5, 18),
         "pink_ax_r2":           0.9,
         # Aperiodic anchor power at f_rotation (arbitrary units, ~1 µV²/Hz)

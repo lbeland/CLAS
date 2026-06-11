@@ -16,6 +16,7 @@ import yaml
 import glob
 import numpy as np
 import matplotlib.pyplot as plt
+from fooof import FOOOF
 from scipy.signal import butter, sosfiltfilt, hilbert, welch
 from scipy.stats import circmean, circstd
 from read_output import get_signal_data
@@ -158,6 +159,8 @@ def extract_ground_truth(samples: dict) -> dict:
             raw = []
             for sample_idx, select_idx in enumerate(channel_selected):
                 raw.append(samples[f"SourceClient_{select_idx}"]["y"][sample_idx])
+            
+            raw = np.array(raw)
 
             time  = samples["ChannelSelector"]["x"]
         else:
@@ -205,6 +208,23 @@ def extract_ground_truth(samples: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Offline Hilbert reference
 # ---------------------------------------------------------------------------
+def estimate_iaf(raw: np.ndarray, fs: float) -> np.ndarray:
+    freqs, psd = welch(raw, fs=fs, nperseg=fs*10)
+
+    fm = FOOOF(peak_width_limits=[0.1, 7.0], min_peak_height=0.001,
+               peak_threshold=2., max_n_peaks=10, aperiodic_mode="fixed", verbose=False)
+    try:
+        fm.fit(freqs, psd)
+    except Exception as e:
+        print(f"FOOOF fitting error: {e}")
+        return np.nan
+
+    if fm.n_peaks_ == 0:
+        return np.nan
+
+    alpha_peaks = [p for p in fm.peak_params_
+                   if 5 <= p[0] <= 18]
+    return max(alpha_peaks, key=lambda p: p[1])[0] if alpha_peaks else None
 
 def compute_hilbert_reference(raw: np.ndarray, fs: float, f_low: float = 4.0, f_high: float = 8.0):
     """Bandpass + Hilbert to produce an offline phase reference."""
@@ -799,7 +819,7 @@ def plot_time_series(ground_truth, samples: dict, hilbert_phase, stim_ref, fs: f
     ax_raw.set_xlim(time_range) if time_range is not None else None
 
     for ax in axes:
-        ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.5)
+        ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
     plt.savefig("time_series.svg", dpi=300, bbox_inches="tight")
 
@@ -847,6 +867,14 @@ def analyse_results(
         print("Error: no source signal found (SourceClient or Producer). Aborting.")
         return
 
+    # 4. Estimate IAF offline on whole recording
+    iaf = estimate_iaf(ground_truth["raw"], fs)
+    if iaf is not None:
+        f0 = iaf
+        print(f"Estimated IAF: {f0:.2f} Hz")
+    else:
+        print("Could not estimate IAF from ground truth; using default f0 =", f0)
+
     # 3. Offline Hilbert reference
     raw = ground_truth["raw"]
     filtered, hilbert_phase = compute_hilbert_reference(raw, fs, f_low=f0-2.0, f_high=f0+2.0)
@@ -876,7 +904,10 @@ def get_erp_windows(fs, samples, channel=1):
     windows=[]
     channel = channel - 1 # zero-based index
     
-    if samples.get(f"SourceClient_{channel}") is not None:
+    if samples.get("GlobalFilter") is not None:
+        eeg_y = samples["GlobalFilter"]["y"]
+        eeg_t = samples["GlobalFilter"]["x"]
+    elif samples.get(f"SourceClient_{channel}") is not None:
         eeg_y = samples[f"SourceClient_{channel}"]["y"]
         eeg_t = samples[f"SourceClient_{channel}"]["x"]
     elif samples.get(f"Producer_{channel}") is not None:
@@ -898,7 +929,7 @@ def get_erp_windows(fs, samples, channel=1):
     
     # Prepare EEG
     sos = butter(1, [2, 30], btype="band", fs=fs, output="sos")
-    eeg_filtered = sosfiltfilt(sos, eeg_y)
+    eeg_filtered = eeg_y # sosfiltfilt(sos, eeg_y)
     
     time_s = (eeg_t - eeg_t[0]) / 1e6  # convert to seconds from start
     
@@ -937,7 +968,6 @@ def plot_erp_latency(windows, fs):
     plt.xlabel("Peri-stimulus time (s)")
     plt.ylabel("EEG amplitude (µV)")
     plt.legend()
-    plt.show()
 
 
 if __name__ == "__main__":

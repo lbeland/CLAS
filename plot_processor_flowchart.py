@@ -283,19 +283,6 @@ def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
         if dst_proc not in processors:
             raise SystemExit(f"Connection references unknown destination processor: {dst_proc}")
 
-        # In the provided format, semantic direction is source = destination
-        # Example: Producer.out.0 = Consumer.in.0
-        if src_port != "out":
-            print(
-                f"Warning: source side is not '.out': {raw}",
-                file=sys.stderr,
-            )
-        if dst_port != "in":
-            print(
-                f"Warning: destination side is not '.in': {raw}",
-                file=sys.stderr,
-            )
-
         edge_label = f"out.{src_idx} → in.{dst_idx}"
         dot.edge(src_proc, dst_proc, label=edge_label)
 

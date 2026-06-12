@@ -49,7 +49,7 @@ class PhaseEstimator : public IProcessor {
     double f0_ = 10.0; // default IAF value, will be updated from state
     size_t n_fft_ = 0;
     size_t window_size_ = 1;
-    inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Preprocess
+    boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Preprocess
     std::string coeff_file_;  // Path to bandpass filter coefficients file
     std::vector<std::complex<double>> coeffs_;  // Filter coefficients of bandpass filter
     std::complex<double> c_gain_;  // Calibration gain for cecHT

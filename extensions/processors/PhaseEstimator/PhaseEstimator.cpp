@@ -341,7 +341,7 @@ void PhaseEstimator::load_phase_shift(const StorageContext &context, double iaf)
 {
     std::string filename;
 
-    filename =  "global_filter_" + std::to_string(fs_) + "_phase.txt";
+    filename =  "ecHTfilter_" + std::to_string(fs_) + "_phase.txt";
 
     std::string phase_shift_file_ = context.resolve_path(filename, "filters");
 
@@ -403,11 +403,11 @@ void PhaseEstimator::Preprocess(ProcessingContext &context)
     freq = fftwf_alloc_complex(n_fft_);
     out = fftwf_alloc_complex(n_fft_);
 
-    // Import FFTW wisdom for optimal FFT planning
-    fftwf_import_wisdom_from_filename((context.resolve_path("fftw_wisdom.txt", "fft_wisdom")).c_str());
-
     {
         std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
+        // Import FFTW wisdom for optimal FFT planning
+        fftwf_import_wisdom_from_filename((context.resolve_path("fftw_wisdom.txt", "fft_wisdom")).c_str());
+
         p_ = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_WISDOM_ONLY);
         if (p_ == nullptr)
         {
@@ -481,7 +481,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
                     // Only update if IAF has changed by more than 0.1 Hz to avoid unnecessary recalibration
                     f0_ = new_f0;
                     int old_n_fft = n_fft_; // Store old FFT size to check if we need to reallocate FFTW arrays
-                    window_size_ = static_cast<int>(2.0 * fs_ / f0_);
+                    window_size_ = static_cast<int>(2.0 * fs_ / f0_);   // 2 cycles of new IAF frequency
                     if (window_size_ > sample_window.capacity())
                     {
                         LOG(WARNING) << name() << " New window size " << window_size_ << " exceeds circular buffer capacity " << sample_window.capacity() << ". Resizing circular buffer to new window size.";
@@ -500,10 +500,10 @@ void PhaseEstimator::Process(ProcessingContext &context)
                             fftwf_destroy_plan(p_);
                             fftwf_destroy_plan(p_inv_);
                         }
-                        fftwf_free(signal_in);
-                        fftwf_free(freq_half);
-                        fftwf_free(freq);
-                        fftwf_free(out);
+                        fftwf_free(signal_in);  signal_in = nullptr;
+                        fftwf_free(freq_half);  freq_half = nullptr;
+                        fftwf_free(freq);       freq      = nullptr;
+                        fftwf_free(out);        out       = nullptr;
                         
                         signal_in = fftwf_alloc_real(n_fft_);
                         freq_half = fftwf_alloc_complex(n_fft_ / 2 + 1);
@@ -514,13 +514,13 @@ void PhaseEstimator::Process(ProcessingContext &context)
                             p_ = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_WISDOM_ONLY);
                             if (p_ == nullptr)
                             {
-                                LOG(WARNING) << name() << " No wisdom available for FFT planning, using estimate mode.";
+                                LOG(WARNING) << name() << " No wisdom available for FFT planning (" << n_fft_ << "), using estimate mode.";
                                 p_ = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half,  FFTW_ESTIMATE);
                             }
                             p_inv_ = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_WISDOM_ONLY);
                             if (p_inv_ == nullptr)
                             {
-                                LOG(WARNING) << name() << " No wisdom available for IFFT planning, using estimate mode.";
+                                LOG(WARNING) << name() << " No wisdom available for IFFT planning (" << n_fft_ << "), using estimate mode.";
                                 p_inv_ = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD,  FFTW_ESTIMATE);
                             }
                         }
@@ -603,7 +603,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
             phase = std::atan2(out[window_size_-1][1], out[window_size_-1][0]);
 
             // Compensate for phase distortion of the preceding bandpass filter if enabled
-            phase -= filter_phase_shift_;
+            phase = std::atan2(std::sin(phase - filter_phase_shift_), std::cos(phase - filter_phase_shift_));
 
             // LOG(INFO) << "estimated phase: " << phase << " radians, " << (phase * 180.0f / M_PI) << " degrees";
             real_part = out[window_size_-1][0];
@@ -619,7 +619,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
 
             TimePoint end_time = Clock::now();
 
-            // LOG(INFO) << name() << " Processed packet " << packet_count_ << " - timings (us): 
+            // LOG(INFO) << name() << " Processed packet " << packet_count_ << " - timings (us):" 
             //           << " claim_output=" << std::chrono::duration<double, std::micro>(claim_output_time - start_time).count()
             //           << ", copy_buffer=" << std::chrono::duration<double, std::micro>(copy_buffer_time - claim_output_time).count()
             //           << ", fft=" << std::chrono::duration<double, std::micro>(fft_time - copy_buffer_time).count()
@@ -658,20 +658,21 @@ void PhaseEstimator::Postprocess(ProcessingContext &context)
 void PhaseEstimator::Unprepare(GlobalContext &context)
 { 
     // Save FFTW wisdom for future runs to speed up plan creation
-    int ret = fftwf_export_wisdom_to_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
-    if (ret == 0)
-    {
-        LOG(WARNING) << name() << " Failed to save FFTW wisdom to file.";
-    }
     {
         std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
-        fftwf_destroy_plan(p_);
-        fftwf_destroy_plan(p_inv_);
+        int ret = fftwf_export_wisdom_to_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
+        if (ret == 0)
+        {
+            LOG(WARNING) << name() << " Failed to save FFTW wisdom to file.";
+        }
+
+            fftwf_destroy_plan(p_);
+            fftwf_destroy_plan(p_inv_);
     }
-    fftwf_free(signal_in);
-    fftwf_free(freq_half);
-    fftwf_free(freq);
-    fftwf_free(out);
+    if (signal_in) { fftwf_free(signal_in); signal_in = nullptr; }
+    if (freq_half) { fftwf_free(freq_half); freq_half = nullptr; }
+    if (freq) { fftwf_free(freq); freq = nullptr; }
+    if (out) { fftwf_free(out); out = nullptr; }
 }
 
 REGISTERPROCESSOR(PhaseEstimator);

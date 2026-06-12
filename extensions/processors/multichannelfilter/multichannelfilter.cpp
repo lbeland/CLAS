@@ -143,6 +143,8 @@ void MultiChannelFilter::Process(ProcessingContext &context) {
     }
     packet_count_++;
   }
+  LOG(INFO) << name() << " stopped working";
+
 }
 
 void MultiChannelFilter::Postprocess(ProcessingContext &context) {

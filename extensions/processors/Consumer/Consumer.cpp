@@ -150,6 +150,8 @@ void Consumer::Process(ProcessingContext &context)
         // source_times.push_back(source_timestamp);
         packet_count_++;
     }
+    LOG(INFO) << name() << " stopped working";
+
 }
 
 void Consumer::Postprocess(ProcessingContext &context)

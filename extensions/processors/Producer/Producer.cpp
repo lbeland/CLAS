@@ -209,6 +209,8 @@ void Producer::Process(ProcessingContext &context)
         carrier_phase = WrapPhase(carrier_phase + carrier_step);
         modulation_phase = WrapPhase(modulation_phase + modulation_step);
     }
+    LOG(INFO) << name() << " stopped working";
+
 }
 
 void Producer::Postprocess(ProcessingContext &context)

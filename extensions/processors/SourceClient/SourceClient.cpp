@@ -333,6 +333,8 @@ void SourceClient::Process(ProcessingContext &context)
             // LOG(INFO) << name() << "Processed packet in " << std::chrono::duration<double, std::micro>(finished - timestamp).count() << " us.";
         }
     }
+    LOG(INFO) << name() << " stopped working";
+
 }
 
 void SourceClient::Postprocess(ProcessingContext &context)

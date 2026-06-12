@@ -495,6 +495,8 @@ void ReplaySourceClient::Process(ProcessingContext &context)
         ++current_record_;
         ++emitted;
     }
+    LOG(INFO) << name() << " stopped working";
+
 }
 
 void ReplaySourceClient::Postprocess(ProcessingContext &context)

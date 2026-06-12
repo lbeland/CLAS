@@ -108,6 +108,7 @@ void ChannelReductor::Process(ProcessingContext &context)
 
         packet_count_++;
     }
+    LOG(INFO) << name() << " stopped working";
 }
 
 void ChannelReductor::Postprocess(ProcessingContext &context)

@@ -196,6 +196,8 @@ void ChannelSelector::Process(ProcessingContext &context)
 
         packet_count_++;
     }
+    LOG(INFO) << name() << " stopped working";
+
 }
 
 void ChannelSelector::Postprocess(ProcessingContext &context)

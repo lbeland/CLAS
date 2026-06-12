@@ -88,6 +88,8 @@ void Consumer::Prepare(GlobalContext &context)
 void Consumer::Preprocess(ProcessingContext &context)
 {
     packet_count_ = 0;
+    // recv_times.clear();
+    // source_times.clear();
 }
 
 
@@ -158,7 +160,7 @@ void Consumer::Postprocess(ProcessingContext &context)
 {
 
     std::ostringstream statistic_print;
-    statistic_print << "\n ---------------- \n Consumer: Total messages processed: " << packet_count_;
+    statistic_print << "\n ---------------- \n " << name() << ": Total messages processed: " << packet_count_;
 
     if (packet_count_ == 0)
     {

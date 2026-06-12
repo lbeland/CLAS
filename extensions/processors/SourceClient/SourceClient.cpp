@@ -108,7 +108,7 @@ void SourceClient::Prepare(GlobalContext &context)
 
 void SourceClient::Preprocess(ProcessingContext &context)
 {
-    send_times.clear();
+    // send_times.clear();
     packet_count_ = 0;
 
     sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -342,53 +342,53 @@ void SourceClient::Postprocess(ProcessingContext &context)
     close(sock);
     LOG(INFO) << name() << " Socket closed.";
 
-    std::ostringstream statistic_print;
+    // std::ostringstream statistic_print;
 
-    // Calculate Statistics
-    statistic_print << "\n ---------------- \n Total messages sent: " << send_times.size();
+    // // Calculate Statistics
+    // statistic_print << "\n ---------------- \n Total messages sent: " << send_times.size();
 
-    if (send_times.empty())
-    {
-        return;
-    }
+    // if (send_times.empty())
+    // {
+    //     return;
+    // }
 
-    // Calculate statistics
-    double sum_diff_us = 0.0;
-    double max_diff_us = 0.0;
-    std::size_t max_idx = 0;
-    double sum_sq_diff = 0.0;
-    std::vector<double> send_times_diff;
-    send_times_diff.resize(send_times.size() - 1);
+    // // Calculate statistics
+    // double sum_diff_us = 0.0;
+    // double max_diff_us = 0.0;
+    // std::size_t max_idx = 0;
+    // double sum_sq_diff = 0.0;
+    // std::vector<double> send_times_diff;
+    // send_times_diff.resize(send_times.size() - 1);
 
-    for (std::size_t i = 0; i + 1 < send_times.size(); i++)
-    {
-        const double diff_us = std::chrono::duration<double, std::micro>(send_times[i + 1] - send_times[i]).count();
+    // for (std::size_t i = 0; i + 1 < send_times.size(); i++)
+    // {
+    //     const double diff_us = std::chrono::duration<double, std::micro>(send_times[i + 1] - send_times[i]).count();
 
-        send_times_diff[i] = diff_us;
-        sum_diff_us += diff_us;
-        sum_sq_diff += diff_us * diff_us;
-        if (diff_us > max_diff_us)
-        {
-            max_diff_us = diff_us;
-            max_idx = i;
-        }
-    }
+    //     send_times_diff[i] = diff_us;
+    //     sum_diff_us += diff_us;
+    //     sum_sq_diff += diff_us * diff_us;
+    //     if (diff_us > max_diff_us)
+    //     {
+    //         max_diff_us = diff_us;
+    //         max_idx = i;
+    //     }
+    // }
 
-    const std::size_t n_periods = send_times_diff.size();
-    double avg_period = 0.0;
-    double std_period = 0.0;
-    if (n_periods > 0)
-    {
-        avg_period = sum_diff_us / static_cast<double>(n_periods);
-        const double variance = (sum_sq_diff / static_cast<double>(n_periods)) - (avg_period * avg_period);
-        std_period = sqrt(fmax(0.0, variance));
-    }
+    // const std::size_t n_periods = send_times_diff.size();
+    // double avg_period = 0.0;
+    // double std_period = 0.0;
+    // if (n_periods > 0)
+    // {
+    //     avg_period = sum_diff_us / static_cast<double>(n_periods);
+    //     const double variance = (sum_sq_diff / static_cast<double>(n_periods)) - (avg_period * avg_period);
+    //     std_period = sqrt(fmax(0.0, variance));
+    // }
 
-    statistic_print << "\n Average send period (us): " << avg_period;
-    statistic_print << "\n Max send period (us): " << max_diff_us << ", idx: " << max_idx;
-    statistic_print << "\n Std send period (us): " << std_period << "\n";
+    // statistic_print << "\n Average send period (us): " << avg_period;
+    // statistic_print << "\n Max send period (us): " << max_diff_us << ", idx: " << max_idx;
+    // statistic_print << "\n Std send period (us): " << std_period << "\n";
 
-    std::cout << statistic_print.str();
+    // std::cout << statistic_print.str();
 
 }
 

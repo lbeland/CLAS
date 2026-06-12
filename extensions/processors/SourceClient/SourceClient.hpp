@@ -59,5 +59,5 @@ class SourceClient : public IProcessor {
   options::Int n_messages_{-1};
   options::Bool store_aux_{true};
   
-  std::vector<std::chrono::steady_clock::time_point> send_times;
+//   std::vector<std::chrono::steady_clock::time_point> send_times;
 };

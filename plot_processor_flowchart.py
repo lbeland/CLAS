@@ -184,7 +184,11 @@ def make_processor_label(name: str, spec: Dict[str, Any]) -> str:
 
     option_lines = []
     for key, value in options.items():
-        option_lines.append(f"{key}: {value}")
+        if isinstance(value, dict):
+            for subkey, subvalue in value.items():
+                option_lines.append(f"{key}.{subkey}: {subvalue}")
+        else:
+            option_lines.append(f"{key}: {value}")
 
     advanced_lines = []
     for key, value in advanced.items():
@@ -206,14 +210,14 @@ def make_processor_label(name: str, spec: Dict[str, Any]) -> str:
     if option_lines:
         rows.append(
             f'<TR><TD ALIGN="LEFT"><B>options</B><BR ALIGN="LEFT"/>'
-            + "<BR ALIGN=\"LEFT\"/>".join(escape_html(line) for line in option_lines)
+            + "<BR ALIGN=\"LEFT\"/>".join(escape_html(line) for line in option_lines) + '<BR ALIGN="LEFT"/>'
             + "</TD></TR>"
         )
 
     if advanced_lines:
         rows.append(
             f'<TR><TD ALIGN="LEFT"><B>advanced</B><BR ALIGN="LEFT"/>'
-            + "<BR ALIGN=\"LEFT\"/>".join(escape_html(line) for line in advanced_lines)
+            + "<BR ALIGN=\"LEFT\"/>".join(escape_html(line) for line in advanced_lines) + '<BR ALIGN="LEFT"/>'
             + "</TD></TR>"
         )
 

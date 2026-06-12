@@ -82,13 +82,16 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
             signal, time = get_signal_data(file, channel=list(range(10)), timestamps=timestamps)
             if signal is None:
                 continue
+            source_time = time["source_ts"]
+            time = time["hardware_ts"]
             for idx, channel in enumerate(signal.T):
-                samples[f"{processor}_{idx}"] = {"x": time, "y": channel}
+                samples[f"{processor}_{idx}"] = {"x": time, "y": channel, "source_ts": source_time}
             # Metadata
             file = get_results_file(processor, name=".meta_out", slot=0, results_dir=results_dir)
             signal, time = get_signal_data(file, channel=list(range(3)), timestamps=timestamps)
             if signal is None:
                 continue
+            time = time["hardware_ts"]
             for idx, channel in enumerate(signal.T):
                 samples[f"{processor}_meta_{idx}"] = {"x": time, "y": channel}
 
@@ -98,17 +101,21 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
             signal, time = get_signal_data(file, channel=list(range(32)), timestamps=timestamps)
             if signal is None:
                 continue
+            source_time = time["source_ts"]
+            time = time["hardware_ts"]
             for idx, channel in enumerate(signal.T):
-                samples[f"SourceClient_{idx}"] = {"x": time, "y": channel}
+                samples[f"SourceClient_{idx}"] = {"x": time, "y": channel, "source_ts": source_time}
             # Slot 1: AUX and trigger channels
             file = get_results_file(processor, slot=1, results_dir=results_dir)
             signal, time = get_signal_data(file, channel=list(range(8)), timestamps=timestamps)
             if signal is not None:
+                time = time["hardware_ts"]
                 samples["SourceClient_AUX"] = {"x": time, "y": signal[:, 0] if signal.ndim > 1 else signal}
 
             file = get_results_file(processor, slot=1, results_dir=results_dir)
             signal, time = get_signal_data(file, channel=8, timestamps=timestamps)
             if signal is not None:
+                time = time["hardware_ts"]
                 binary = (signal > 0.5).astype(float)
                 signal = _trim_falling_edges(binary, fs, 11.0)
                 samples["SourceClient_TRIGGER"] = {"x": time, "y": signal}
@@ -118,19 +125,29 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
             file = get_results_file(processor, slot=0, results_dir=results_dir)
             signal, time = get_signal_data(file, channel=0, timestamps=timestamps)
             if signal is not None:
+                time = time["hardware_ts"]
                 samples[f"{processor}_phase"] = {"x": time, "y": signal}
             # Slot 1: Real-part of analytic signal
             file = get_results_file(processor, slot=1, results_dir=results_dir)
             signal, time = get_signal_data(file, channel=0, timestamps=timestamps)
             if signal is not None:
+                time = time["hardware_ts"]
                 samples[f"{processor}_real"] = {"x": time, "y": signal}
-
+        elif processor == "StimulusController":
+            file = get_results_file(processor, slot=0, results_dir=results_dir)
+            if file is not None:
+                signal, time = get_signal_data(file, channel=0, timestamps=timestamps)
+                if signal is not None:
+                    source_time = time["source_ts"]
+                    time = time["hardware_ts"]
+                    samples[f"{processor}"] = {"x": time, "y": signal, "source_ts": source_time}           
         else:
             result_name = "ch_idx_out" if processor == "ChannelSelector" else ".out"
             file = get_results_file(processor, name=result_name, slot=0, results_dir=results_dir)
             if file is not None:
                 signal, time = get_signal_data(file, channel=0, timestamps=timestamps)
                 if signal is not None:
+                    time = time["hardware_ts"]
                     samples[f"{processor}"] = {"x": time, "y": signal}
 
     first_timestamps = [samples[key]["x"][0] for key in samples]
@@ -143,6 +160,18 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
 
     return samples
 
+def print_latencies(samples: dict, ground_truth: dict) -> None:
+    if samples.get("StimulusController") is not None:
+        start_times = ground_truth["source_ts"]
+        end_times = samples["StimulusController"]["source_ts"]
+
+        latencies = (end_times - start_times) / 1e3
+        print(f"System latencies: \n \
+            Mean latency: {np.mean(latencies):.3f} ms \n \
+            Median latency: {np.median(latencies):.3f} ms \n \
+            Min latency: {np.min(latencies):.3f} ms \n \
+            Max latency: {np.max(latencies):.3f} ms \n \
+            Std latency: {np.std(latencies):.3f} ms")
 
 def extract_ground_truth(samples: dict) -> dict:
     """
@@ -166,6 +195,7 @@ def extract_ground_truth(samples: dict) -> dict:
         else:
             raw = samples["SourceClient_0"]["y"]
             time = samples["SourceClient_0"]["x"]
+            source_time = samples["SourceClient_0"]["source_ts"]
             
         if os.path.exists("simulated_signal.npy"):
             loaded = np.load("simulated_signal.npy")
@@ -177,7 +207,7 @@ def extract_ground_truth(samples: dict) -> dict:
                 "true_phase":     np.angle(np.exp(1j * loaded["phase"])),
                 "true_inst_freq": loaded["inst_freq"],
             }
-        return {"raw": raw, "time": time,
+        return {"raw": raw, "time": time, "source_ts": source_time,
                 "true_amplitude": None, "true_phase": None, "true_inst_freq": None}
 
     elif "Producer_0" in samples:
@@ -189,14 +219,17 @@ def extract_ground_truth(samples: dict) -> dict:
                 raw.append(samples[f"Producer_{select_idx-1}"]["y"][sample_idx])    # zero based
 
             raw = np.array(raw)
-            time  = samples["ChannelSelector"]["x"]
+            time  = samples[f"Producer_{select_idx-1}"]["x"]    # just take all timestamps from last selected channel 
+            source_time = samples[f"Producer_{select_idx-1}"]["source_ts"]
         else:
             raw = samples["Producer_0"]["y"]
             time = samples["Producer_0"]["x"]
+            source_time = samples["Producer_0"]["source_ts"]
 
         return {
             "raw":            raw,
             "time":           time,
+            "source_ts":      source_time,
             "true_amplitude": samples.get("Producer_meta_0", {}).get("y"),
             "true_phase":     np.angle(np.exp(1j * samples["Producer_meta_1"]["y"])),
             "true_inst_freq": samples.get("Producer_meta_2", {}).get("y"),
@@ -866,6 +899,9 @@ def analyse_results(
     if ground_truth is None:
         print("Error: no source signal found (SourceClient or Producer). Aborting.")
         return
+    
+    # 3. Calculate system latency
+    print_latencies(samples, ground_truth)
 
     # 4. Estimate IAF offline on whole recording
     iaf = estimate_iaf(ground_truth["raw"], fs)

@@ -1,21 +1,26 @@
 {
     "version": "0.2.0",
     "configurations": [
+        
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
         {
             "name": "Debug Falcon (gdb)",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/debug/falcon",
+            "program": "${workspaceFolder}/build/debug/falcon/falcon",
             "args": [
-                // Replace with your graph.
-                // While debugging, graphs are located under build/resources/
-                // In the case below, falcon will try to load build/resources/my_graph.yaml
                 "SimulateCLAS.yaml",
-                "--autostart",
                 "--config",
                 "${workspaceFolder}/.falcon/config.yaml"
             ],
-            "cwd": "${workspaceFolder}/build/debug",
+            "cwd": "${workspaceFolder}/build/debug/falcon",
             "MIMode": "gdb",
             "miDebuggerPath": "/usr/bin/gdb",
             "preLaunchTask": "make",

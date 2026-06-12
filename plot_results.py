@@ -63,6 +63,7 @@ def plot_results(fs, f0, graph_name, results_dir=RESULTS_DIR, timestamps=True):
             signal, time = get_signal_data(file, channel=list(range(10)), timestamps=timestamps)
             if signal is None:
                 continue
+            time = time["hardware_ts"]
             for idx, channel in enumerate(signal.T):
                 samples[f"{processor}_{idx}"] = {"x": time, "y": channel}
             # Metadata
@@ -70,6 +71,7 @@ def plot_results(fs, f0, graph_name, results_dir=RESULTS_DIR, timestamps=True):
             signal, time = get_signal_data(file, channel=list(range(3)), timestamps=timestamps)
             if signal is None:
                 continue
+            time = time["hardware_ts"]
             for idx, channel in enumerate(signal.T):
                 samples[f"{processor}_meta_{idx}"] = {"x": time, "y": channel}
         elif processor == "SourceClient":
@@ -77,28 +79,34 @@ def plot_results(fs, f0, graph_name, results_dir=RESULTS_DIR, timestamps=True):
                 if slot == 0:
                     signal,time = get_signal_data(get_results_file(processor, slot=slot, results_dir=results_dir),channel = 0, timestamps=timestamps)
                     if signal is not None:
+                        time = time["hardware_ts"]
                         samples[f"{processor}_{slot}"] = {"x": time, "y": signal}
                 else:
                     channel = 0  # AUX channel
                     signal,time = get_signal_data(get_results_file(processor, slot=slot, results_dir=results_dir),channel = channel, timestamps=timestamps)
                     if signal is not None:
+                        time = time["hardware_ts"]
                         samples[f"{processor}_{slot}_AUX"] = {"x": time, "y": signal}
                     channel = 8  # Trigger channel
                     signal,time = get_signal_data(get_results_file(processor, slot=slot, results_dir=results_dir),channel = channel, timestamps=timestamps)
                     if signal is not None:
+                        time = time["hardware_ts"]
                         samples[f"{processor}_{slot}_TRIGGER"] = {"x": time, "y": signal}
         elif processor == "PhaseEstimator":
             for slot in range(2):
                 signal, time = get_signal_data(get_results_file(processor, slot=slot, results_dir=results_dir), timestamps=timestamps)
                 if signal is not None:
+                    time = time["hardware_ts"]
                     samples[f"{processor}_{slot}"] = {"x": time, "y": signal}
         elif processor == "StimulusController":
             signal, time = get_signal_data(get_results_file(processor, slot=0, results_dir=results_dir), timestamps=timestamps)
             if signal is not None:
+                time = time["hardware_ts"]
                 samples[f"{processor}_0"] = {"x": time, "y": signal}
         else:
             signal, time = get_signal_data(get_results_file(processor, slot=0, results_dir=results_dir), timestamps=timestamps)
             if signal is not None:
+                time = time["hardware_ts"]
                 samples[f"{processor}_0"] = {"x": time, "y": signal}
 
     if not "SourceClient_0" in samples and "Producer_0" not in samples:
@@ -280,4 +288,4 @@ def plot_results(fs, f0, graph_name, results_dir=RESULTS_DIR, timestamps=True):
 
 
 if __name__ == "__main__":
-    plot_results(10000, 10.0, results_dir="ematest_10s_20260608_151537",graph_name="SimulateCLAS.yaml")
+    plot_results(10000, 10.0, results_dir="_last_run",graph_name="TurboLinkCLAS.yaml")

@@ -47,7 +47,7 @@ class IAFEstimator : public IProcessor {
     double fs_ = 0.0;
     size_t n_fft_ = 0;
     size_t window_size_ = 1;
-    inline static boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Prepare
+    boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Prepare
     gram_sg::SavitzkyGolayFilter savgol_;
     
     BroadcasterState<double>* iaf_state_ = nullptr;

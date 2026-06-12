@@ -42,9 +42,9 @@ class Consumer : public IProcessor {
   options::String path_{"run://"};
   
   unsigned int packet_count_ = 0;
-  inline static std::vector<std::array<float, 3>> samples;
-  // inline static std::vector<TimePoint> recv_times;
-  // inline static std::vector<TimePoint> source_times;
+  std::vector<std::array<float, 3>> samples;
+//   std::vector<TimePoint> recv_times;
+//   std::vector<TimePoint> source_times;
 
   double max_latency_ = 0.0;
   unsigned int max_latency_index_ = 0;

@@ -73,7 +73,7 @@ class ReplaySourceClient : public IProcessor {
   options::Value<unsigned int, false> nsamples_{1};
   options::Double fs_{1000.0};
 
-  inline static std::vector<TimePoint> send_times;
+  std::vector<TimePoint> send_times;
 
  private:
   // ---- helpers ------------------------------------------------------------

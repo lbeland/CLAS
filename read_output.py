@@ -117,6 +117,9 @@ def _extract_field(payload: bytes, layout: list, record_size: int, n_records: in
     return flat.reshape((n_records, *dims))
 
 def get_signal_data(path, channel=0, timestamps=False):
+    if path is None:
+        print("No path provided for signal data")
+        return None, None
     if not os.path.exists(path):
         print(f"File not found: {path}")
         return None, None
@@ -162,10 +165,10 @@ def get_signal_data(path, channel=0, timestamps=False):
         source_ts = _extract_field(payload, layout, record_size, n_records, "source_ts")
         hardware_ts = _extract_field(payload, layout, record_size, n_records, "hardware_ts")
         # Keep the return value extensible: callers can pull what they need.
-        # ts = {
-        #     "source_ts": source_ts,
-        #     "hardware_ts": hardware_ts,
-        # }
-        return samples.squeeze(), hardware_ts
+        ts = {
+            "source_ts": source_ts,
+            "hardware_ts": hardware_ts,
+        }
+        return samples.squeeze(), ts
     else:
         return samples, None

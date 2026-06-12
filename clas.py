@@ -123,14 +123,16 @@ def main():
         # print(f"Falcon process exited with code {return_code}")
     except subprocess.TimeoutExpired:
         print("Timeout: Falcon did not complete within Timeout. Terminating...")
-        terminate(graph_process)
     except KeyboardInterrupt:
         print("Interrupted by user")
     except Exception as e:
         print(f"Error during benchmark: {e}")
-        terminate(graph_process)
-
+    
+    graph_process.stdin.close()
+    terminate(graph_process)
+    
     socket.close()
+    context.term()
 
     # Postprocessing results
     analyse_results(10, "_last_run/")

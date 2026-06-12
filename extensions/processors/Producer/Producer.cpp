@@ -145,6 +145,8 @@ void Producer::Process(ProcessingContext &context)
     MultiChannelType<float>::Data *data_out = nullptr;
     MultiChannelType<double>::Data *meta_out = nullptr;
     
+    std::vector<float> sample_vec(nchannels_()); 
+    
     double carrier_phase = 0.0;
     double modulation_phase = 0.0;
     TimePoint timestamp;
@@ -189,7 +191,7 @@ void Producer::Process(ProcessingContext &context)
         timestamp = Clock::now();
         hardware_time_us = start_time + (uint64_t)packet_count_ * 1000000ULL / fs_();
 
-        std::vector<float> sample_vec(nchannels_(), static_cast<float>(state.value));
+        std::fill(sample_vec.begin(), sample_vec.end(), static_cast<float>(state.value));
         data_out->set_data_sample(0, sample_vec);
         data_out->set_sample_timestamp(0, hardware_time_us);
         data_out->set_source_timestamp(timestamp);

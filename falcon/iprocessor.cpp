@@ -33,6 +33,12 @@ void convert_name(std::string& s) {
     }
 }
 
+std::ostream& operator<<(std::ostream& os, const std::vector<ThreadCore>& v) {
+    os << "[";
+    for (size_t i = 0; i < v.size(); ++i) os << v[i] << (i+1<v.size() ? "," : "");
+    return os << "]";
+}
+
 const std::set<std::string> IProcessor::input_port_names() const {
     std::set<std::string> names;
     for (auto& it : input_ports_) {
@@ -364,15 +370,32 @@ void IProcessor::internal_Start(RunContext& runcontext) {
                       << thread_priority() << "%.";
         }
     }
-    bool is_core_set = thread_core() >= 0;
+    bool is_core_set = true;
+    if (std::holds_alternative<ThreadCore>(thread_core()))
+    {
+        ThreadCore core = std::get<ThreadCore>(thread_core());
+        is_core_set = core > CORE_NOT_PINNED;
+    }
+    
     if (is_core_set) {
-        auto set_core = set_thread_core(thread_.native_handle(), thread_core());
+        int set_core = set_thread_core(thread_.native_handle(), thread_core());
 
         if (set_core < 0) {
-            LOG(WARNING) << "Unable to pin thread for " << name_ << " to core " << thread_core();
+            if (std::holds_alternative<ThreadCore>(thread_core())) {
+                LOG(WARNING) << "Unable to pin thread for " << name() << " to core "
+                             << std::get<ThreadCore>(thread_core());
+            } else {
+                LOG(WARNING) << "Unable to pin thread for " << name() << " to cores "
+                             << std::get<std::vector<ThreadCore>>(thread_core());
+            }
         } else {
-            LOG(INFO) << "Successfully pinned thread for " << name_ << " to core " << set_core
-                      << ".";
+            if (std::holds_alternative<ThreadCore>(thread_core())) {
+                LOG(INFO) << "Successfully pinned thread for " << name() << " to core "
+                          << std::get<ThreadCore>(thread_core()) << ".";
+            } else {
+                LOG(INFO) << "Successfully pinned thread for " << name() << " to cores "
+                          << std::get<std::vector<ThreadCore>>(thread_core()) << ".";
+            }
         }
     }
 }

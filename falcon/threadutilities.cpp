@@ -59,16 +59,33 @@ bool set_realtime_priority(pthread_t thread, ThreadPriority priority) {
     return true;
 }
 
-ThreadCore set_thread_core(pthread_t thread, ThreadCore core) {
+int set_thread_core(pthread_t thread, std::variant<ThreadCore, std::vector<ThreadCore>> core) {
     int num_cores = (int) sysconf(_SC_NPROCESSORS_ONLN);
 
-    if (core < 0 || core >= num_cores) {
-        return -1;
+    if (std::holds_alternative<ThreadCore>(core)) {
+        ThreadCore single_core = std::get<ThreadCore>(core);
+        if (single_core < 0 || single_core >= num_cores) {
+            return -1;
+        }
+    } else {
+        const std::vector<ThreadCore>& cores = std::get<std::vector<ThreadCore>>(core);
+        for (ThreadCore c : cores) {
+            if (c < 0 || c >= num_cores) {
+                return -1;
+            }
+        }
     }
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET(core, &cpuset);
+    if (std::holds_alternative<ThreadCore>(core)) {
+        CPU_SET(std::get<ThreadCore>(core), &cpuset);
+    } else {
+        const std::vector<ThreadCore>& cores = std::get<std::vector<ThreadCore>>(core);
+        for (ThreadCore c : cores) {
+            CPU_SET(c, &cpuset);
+        }
+    }
 
     int result = pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
 
@@ -76,5 +93,5 @@ ThreadCore set_thread_core(pthread_t thread, ThreadCore core) {
         return -1;
     }
 
-    return core;
+    return 0;
 }

@@ -71,4 +71,22 @@ struct convert<Serialization::Encoding> {
         return true;
     }
 };
+
+template<>
+struct convert<std::variant<int, std::vector<int>>> {
+    static Node encode(const std::variant<int, std::vector<int>>& rhs) {
+        Node node;
+        std::visit([&node](const auto& v) { node = v; }, rhs);
+        return node;
+    }
+
+    static bool decode(const Node& node, std::variant<int, std::vector<int>>& rhs) {
+        if (node.IsSequence()) {
+            rhs = node.as<std::vector<int>>();
+        } else {
+            rhs = node.as<int>();
+        }
+        return true;
+    }
+};
 }  // namespace YAML

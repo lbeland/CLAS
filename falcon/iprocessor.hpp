@@ -170,7 +170,7 @@ class IProcessor {
     virtual bool isautonomous() const { return (issource() && issink()); }
 
     ThreadPriority thread_priority() const { return thread_priority_(); }
-    ThreadCore thread_core() const { return thread_core_(); }
+    std::variant<ThreadCore, std::vector<ThreadCore>> thread_core() const { return thread_core_(); }
     bool running() const { return running_.load(); }
 
     YAML::Node ExportYAML();
@@ -670,9 +670,13 @@ class IProcessor {
     options::Value<ThreadPriority, false> thread_priority_{
         PRIORITY_NONE, options::inrange<ThreadPriority>(PRIORITY_NONE, PRIORITY_HIGH)};
 
-    options::Value<ThreadCore, false> thread_core_{
-        CORE_NOT_PINNED, options::inrange<ThreadCore>(
-                             CORE_NOT_PINNED, (ThreadCore) sysconf(_SC_NPROCESSORS_ONLN) - 1)};
+    // options::Value<ThreadCore, false> thread_core_{
+    //     CORE_NOT_PINNED, options::inrange<ThreadCore>(
+    //                          CORE_NOT_PINNED, (ThreadCore) sysconf(_SC_NPROCESSORS_ONLN) - 1)};
+
+    options::Value<std::variant<ThreadCore, std::vector<ThreadCore>>, false> thread_core_{
+        CORE_NOT_PINNED, /* validator that checks either case */};
+
 
     options::NullableBool new_test_flag_;
     options::Value<std::map<std::string, int>> requested_buffer_sizes_{};

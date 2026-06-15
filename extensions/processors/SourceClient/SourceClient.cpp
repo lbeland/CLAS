@@ -156,6 +156,10 @@ void SourceClient::Process(ProcessingContext &context)
     addr.sin_port = htons(PORT);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
+    ssize_t received;
+    bool store_aux = store_aux_();
+    Packet pkt{};
+
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
     {
         LOG(ERROR) << name() << " Failed to bind socket:" << strerror(errno);
@@ -167,11 +171,7 @@ void SourceClient::Process(ProcessingContext &context)
 
     // Use wall clock time as reference for hardware timestamps
     uint64_t start_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    ssize_t received;
 
-    bool store_aux = store_aux_();
-
-    Packet pkt{};
     while (!context.terminated())
     {
         if (n_messages_() != -1 && packet_count_ >= n_messages_())
@@ -181,6 +181,7 @@ void SourceClient::Process(ProcessingContext &context)
 
         received = recvfrom(sock, buffer, sizeof(buffer), 0,
                                     (struct sockaddr *)&src, &srclen);
+        timestamp = Clock::now();
 
         if (received < 0)
         {
@@ -199,8 +200,6 @@ void SourceClient::Process(ProcessingContext &context)
             break;
         }
 
-        timestamp = Clock::now();
-        
         if (!parse_packet(buffer, received, pkt))
         {
             std::cerr << "Invalid packet size: " << received << std::endl;

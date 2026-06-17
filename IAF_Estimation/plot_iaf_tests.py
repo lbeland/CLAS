@@ -166,22 +166,22 @@ def plot_line(df, x, y="mae", hue="algorithm",
 
 def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
              title=None, freq_max=30):
-
+ 
     if hue is not None:
         fig = plt.figure(figsize=(15, 6))
         # Split figure into left (1/3) and right (2/3)
         gs = gridspec.GridSpec(1, 2, figure=fig,
                                width_ratios=[1, 2.5], wspace=0.2, hspace=0.1)
-
+ 
         # Split left column into top (timeseries) and bottom (spectrum)
         gs_left = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs[0],
                                                    hspace=0.4)
         ax_ts   = fig.add_subplot(gs_left[0])
         ax_spec = fig.add_subplot(gs_left[1])
         ax_box  = fig.add_subplot(gs[1])
-
+ 
         palette = sns.color_palette(n_colors=df[hue].nunique(), palette=PALETTE)
-
+ 
         # --- Timeseries panel ---
         timeseries = load_timeseries_by_hue(hdf_path, df, hue)
         for (hue_val, ts), color in zip(timeseries.items(), palette):
@@ -192,7 +192,7 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
         ax_ts.set_xlabel("Time (s)")
         ax_ts.set_ylabel("Amplitude")
         ax_ts.set_title("Example Window")
-
+ 
         # --- Spectrum panel ---
         spectra = load_spectra_by_hue(hdf_path, df, hue)
         for (hue_val, (freq_bins, mean_psd)), color in zip(spectra.items(), palette):
@@ -202,11 +202,11 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
         ax_spec.set_xlabel("Frequency (Hz)")
         ax_spec.set_ylabel("log(Power)")
         ax_spec.set_title("Example Spectrum")
-
+ 
     else:
         fig, ax_box = plt.subplots(figsize=(10, 5))
         palette = PALETTE
-
+ 
     # --- Box plot panel ---
     # x_order = ["stupid_max", "parabolic_max", "fooof","philistine","combine"]
     x_order = ["stupid_max", "fooof","philistine","combine_complex","combine_simple"]
@@ -218,7 +218,7 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
                 medianprops={"color": "black", "linewidth": 1.3},
                 meanprops={"marker": "+", "markeredgecolor": "black",
                            "markersize": "7"})
-
+ 
     ax_box.minorticks_on()
     ax_box.grid(axis="y", alpha=0.9)
     
@@ -231,48 +231,80 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
     y_range = y_max - y_min
     ax_box.set_ylim(y_min, y_max + y_range * 0.15)
     y_offset = y_max + y_range * 0.02
-
-    patches = [p for p in ax_box.patches if isinstance(p, PathPatch)]
-    x_pos = [np.mean(patch.get_path().vertices[:, 0]) for patch in patches]
-    x_pos.sort()
-
+ 
+    # x_order categories always map to integer tick positions 0, 1, 2, ...
+    # regardless of which boxes actually got drawn.
+    xtick_pos = {x_val: i for i, x_val in enumerate(x_order)}
+ 
     if hue is not None:
-        grouped = df.groupby([x, hue])["fail_rate"].mean()*100
-
-        i = 0
+        # fp/fn/n are stored once per (condition_id, algorithm) and broadcast onto
+        # every sample row of that condition. Multiple condition_ids (noise
+        # realizations) share the same (x, hue) combo, so the true fail rate for
+        # a box must pool fp/fn/n across all of those condition_ids first
+        # (drop duplicate condition_id rows so each contributes once), THEN
+        # divide -- not average the per-condition fail_rates.
+        per_condition = df.drop_duplicates(subset=[x, hue, "condition_id"])
+        pooled = per_condition.groupby([x, hue])[["fp", "fn", "n"]].sum()
+        grouped = (pooled["fp"] + pooled["fn"]) / pooled["n"] * 100
+ 
+        # seaborn skips drawing a box entirely for any (x, hue) combo with zero
+        # non-NaN y-values (e.g. a true fail_rate of 0%, all true negatives).
+        # That means len(patches) can be less than len(x_order)*len(hue_order),
+        # and the missing box's position can't be recovered just by counting
+        # patches in order. Instead, ax.containers gives one BoxPlotContainer
+        # per hue level (in hue_order); each box within it sits at a constant
+        # x-offset from its category's integer tick. We read that offset off
+        # whichever boxes DO exist for each hue level, then apply it to every
+        # x_val -- including ones with a missing box -- so every label lands
+        # at the position its box *would* occupy.
+        hue_offset = {}
+        for hue_val, container in zip(hue_order, ax_box.containers):
+            offsets = []
+            for box in getattr(container, "boxes", []):
+                xc = np.mean(box.get_path().vertices[:, 0])
+                offsets.append(xc - round(xc))
+            if offsets:
+                hue_offset[hue_val] = np.mean(offsets)
+ 
         for x_val in x_order:
             for hue_val in hue_order:
-                if i >= len(patches):
-                    continue                
-
-                fail_rate = grouped.loc[(x_val, hue_val)]
+                if hue_val not in hue_offset:
+                    continue  # this hue level has no boxes anywhere; skip
+ 
+                try:
+                    fail_rate = grouped.loc[(x_val, hue_val)]
+                except KeyError:
+                    fail_rate = np.nan
+ 
                 if pd.notna(fail_rate):
+                    label_x = xtick_pos[x_val] + hue_offset[hue_val]
                     ax_box.text(
-                        x_pos[i], y_offset,
+                        label_x, y_offset,
                         f"{int(fail_rate)}%",
                         ha="center", va="bottom",
                         fontsize=7, fontweight="bold",
                         color="red" if fail_rate == 100 else "black"
                     )
-                i += 1
-        
+ 
         fig.legend(handles, labels, loc="lower center", ncol=len(hue_order),
                    bbox_to_anchor=(0.5, 0.0), frameon=True, title=hue.replace("_", " "))
-
+ 
     else:
-        grouped = df.groupby(x)["fail_rate"].mean()*100
-        # Seaborn lays patches out in order: all hues for x[0], all hues for x[1], ...
-        # so patch order matches (x_labels × hue_values) in seaborn's own ordering
-        for i, x_val in enumerate(x_order):
-            if i >= len(patches):
-                continue
-
-            fail_rate = grouped.loc[x_val]
+        per_condition = df.drop_duplicates(subset=[x, "condition_id"])
+        pooled = per_condition.groupby(x)[["fp", "fn", "n"]].sum()
+        grouped = (pooled["fp"] + pooled["fn"]) / pooled["n"] * 100
+        # With no hue, each x category sits at its own integer tick position
+        # (0, 1, 2, ...) -- no need to index into ax_box.patches, which may be
+        # missing an entry for any category with zero non-NaN y-values.
+        for x_val in x_order:
+            try:
+                fail_rate = grouped.loc[x_val]
+            except KeyError:
+                fail_rate = np.nan
+ 
             if pd.notna(fail_rate):
-                x_pos = np.mean(patches[i].get_path().vertices[:, 0])
-
                 ax_box.text(
-                    x_pos, y_offset,
+                    xtick_pos[x_val], y_offset,
                     f"{int(fail_rate)}%",
                     ha="center", va="bottom",
                     fontsize=7, fontweight="bold"
@@ -284,8 +316,11 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
     
     # Adjust layout to make room for bottom legend (only when hue is present)
     if hue is not None:
-        fig.subplots_adjust(bottom=0.25)
-    plt.savefig(f"{BASE_FOLDER}/plots/{hue}.png", dpi=300, bbox_inches="tight")
+        fig.subplots_adjust(left=0.05, right=0.98, bottom=0.25)
+    else:
+        fig.subplots_adjust(left=0.06, right=0.98)
+
+    plt.savefig(f"{BASE_FOLDER}/plots/{hue}.svg", dpi=300, bbox_inches="tight")
 
 def plot_bar(df, x="algorithm", y="mae", agg="mean", hue=None, title=None):
     plt.figure(figsize=(8, 5))
@@ -326,7 +361,6 @@ if __name__ == "__main__":
         "noise_snr_db":         -20.0,
         # Analysis
         "window_length_sec":    10,
-        "fft_method":          "fft",       # "fft" | "welch"
     }
 
     error_label = "error"
@@ -340,21 +374,6 @@ if __name__ == "__main__":
         title="Effect of Window Length\n"
     )
 
-    plot_box(
-        load_samples_for_plot(HDF_PATH, df_metrics,
-                              **params_excluding(default_filter, "noise_type")),
-        HDF_PATH,
-        x="algorithm", y=error_label, hue="noise_type",
-        title="Effect of Noise Type\n"
-    )
-
-    plot_box(
-        load_samples_for_plot(HDF_PATH, df_metrics,
-                              **params_excluding({**default_filter.copy(),"noise_type": "white"}, "noise_snr_db")),
-        HDF_PATH,
-        x="algorithm", y=error_label, hue="noise_snr_db",
-        title="Effect of Noise Level\n"
-    )
 
     plot_box(
         load_samples_for_plot(HDF_PATH, df_metrics,
@@ -429,14 +448,6 @@ if __name__ == "__main__":
         title="Effect of Aperiodic Exponent\n"
     )
 
-    plot_box(
-        load_samples_for_plot(HDF_PATH, df_metrics,
-                              **params_excluding(default_filter, "fft_method")),
-        HDF_PATH,
-        x="algorithm", y=error_label, hue="fft_method",
-        title="Effect of FFT method\n"
-    )
-
     # # Print detection rates for specific conditions
     # print_detection_table(df_metrics, window_length_sec=5, noise_type="None", noise_snr_db=0, mod_freq=0, mod_amp=0.5, carrier_freq=10.0, 
     #                       n_peaks=0,has_aperiodic=True, carrier_waveform="delta")
@@ -456,7 +467,7 @@ if __name__ == "__main__":
     # plot_box(df_metrics, x="algorithm", y="mae", hue="carrier_freq",
     #     title="MAE distribution across IAF Frequencies")
     
-    plot_box(load_samples_for_plot(HDF_PATH, df_metrics), HDF_PATH, x="algorithm", y=error_label, title="MAE distribution across all conditions"),
+    plot_box(load_samples_for_plot(HDF_PATH, df_metrics), HDF_PATH, x="algorithm", y=error_label, title="Error distribution across all conditions"),
 
     # Print mean and std of MAE for each algorithm
     summary = (df_metrics.groupby("algorithm")["mae"]

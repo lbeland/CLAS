@@ -2,18 +2,15 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from fooof import FOOOF
-from simulate_client import angle_mod
 from scipy import stats
 from scipy.optimize import curve_fit
-from scipy.signal import savgol_filter, argrelmin
-from scipy.ndimage import center_of_mass
+from scipy.signal import savgol_filter
 from neurodsp.sim import sim_bursty_oscillation
-from itertools import product
 from pathlib import Path
 from tqdm import tqdm
 import h5py
 from scipy.signal import welch
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool
 
 BASE_FOLDER = Path(__file__).parent
 
@@ -110,15 +107,8 @@ def main():
     for param, values in sweeps.items():
         sweep_default = {**default}
 
-        # Enable noise when sweeping noise level
-        if param == "noise_snr_db":
-            sweep_default["noise_type"] = "white"
-
         for val in values:
             config = {**fixed, **sweep_default, param: val}
-            # Resolve aperiodic_ref_freq
-            if config.get("aperiodic_ref_freq") is None:
-                config["aperiodic_ref_freq"] = config["carrier_freq"]
             key = tuple(sorted(config.items(), key=lambda x: str(x)))
             if key not in seen:
                 seen.add(key)
@@ -255,8 +245,8 @@ def generate_sine_peak(n_samples, fs, center_freq, peak_power, t):
     Generate a pure sine with the given total power.
     """
     sig = np.sin(2 * np.pi * center_freq * t)
-    # Scale to desired power: power of cos = 0.5, so RMS² = 0.5
 
+    # Scale to desired power: power of cos = 0.5, so RMS² = 0.5
     target_total_power = peak_power * fs / n_samples
     current_power = np.mean(sig ** 2)
     sig *= np.sqrt(target_total_power / max(current_power,np.nextafter(0, 1)))
@@ -558,8 +548,8 @@ def _bic_peak_test_simple(freqs, residual, gaussian, fmin, fmax):
     if n < 4:
         return False, 0.0
 
-    ss_h0 = np.sum((fit_resid - 1) ** 2)
-    ss_h1 = np.sum((fit_resid - 1 - gaussian[fit_mask]) ** 2)
+    ss_h0 = np.sum((fit_resid) ** 2)
+    ss_h1 = np.sum((fit_resid - gaussian[fit_mask]) ** 2)
     bic_h0 = n * np.log(max(ss_h0, np.nextafter(0, 1)) / n)
     bic_h1 = n * np.log(max(ss_h1, np.nextafter(0, 1)) / n) + 3 * np.log(n)
     return (bic_h0 - bic_h1) > 0, bic_h0 - bic_h1
@@ -653,6 +643,16 @@ def combine_algo(psd, freq_bins, config):
         
     return paf
 
+
+def approve_peak(freqs, psd_safe, psd_flat, psd_smooth, popt, gaussian, aperiodic_simple, alpha_band):
+    fmin, fmax = alpha_band[0], alpha_band[1]
+    peak_sig, delta_bic = _bic_peak_test_simple(freqs, psd_smooth, gaussian, fmin, fmax)
+
+    if not peak_sig:
+        return False
+    else:
+        return True
+
 def combine_simple(psd, freq_bins, config):
     band = (freq_bins >= config["freq_range"][0]) & (freq_bins <= config["freq_range"][1])
     psd_band = psd[band]
@@ -702,10 +702,10 @@ def combine_simple(psd, freq_bins, config):
             delta = 0.5 * (y1 - y3) / denom
             paf += delta * resolution
 
-    amp_guess = psd_smooth[alpha_band][max_bin]
+    amp_guess = psd_smooth[alpha_band][max_bin] - 1
     center_guess = fit_freqs[max_bin]
 
-    half_max = amp_guess / 2
+    half_max = amp_guess / 2 + 1
     global_max_bin = max_bin + np.where(alpha_band)[0][0]
     left_idx = np.where(psd_smooth[:global_max_bin] < half_max)[0]
     if len(left_idx) > 0:
@@ -721,21 +721,13 @@ def combine_simple(psd, freq_bins, config):
     std_gauss = fwhm / (2 * np.sqrt(2 * np.log(2)))
     if std_gauss > 2:
         return np.nan
-    popt = [amp_guess - 1, center_guess, std_gauss]
+    popt = [amp_guess, center_guess, std_gauss]
 
-    # width_guess = (fmax - fmin) / 4
-    # popt, _ = curve_fit(
-    #     _gaussian_peak, fit_freqs, psd_smooth[alpha_band],
-    #     p0=[amp_guess, center_guess, width_guess],
-    #     bounds=([0.0, fmin, 0.25], [np.inf, fmax, fmax - fmin]),
-    #     maxfev=10_000,
-    # )
-
-    gaussian = _gaussian_peak(freqs, *popt)
+    gaussian = _gaussian_peak(freqs, *popt) + 1
     
-    peak_sig, delta_bic = _bic_peak_test_simple(freqs, psd_smooth, gaussian, fmin, fmax)
+    peak_approved = approve_peak(freqs, psd_safe, psd_flat, psd_smooth, popt, gaussian, aperiodic_simple, config["alpha_band"])
 
-    if not peak_sig:
+    if not peak_approved:
         return np.nan
 
     return paf

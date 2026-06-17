@@ -88,7 +88,6 @@ def main():
         "noise_snr_db":         -20.0,
         # Analysis
         "window_length_sec":    10,
-        "fft_method":          "fft",       # "fft" | "welch"
     }
 
     cf = [value + 0.1*idx for idx, value in enumerate(np.arange(6, 16))]
@@ -100,11 +99,9 @@ def main():
         "aperiodic_exponent":   [1, 2, 3],
         "has_aperiodic":        [True, False],
         "carrier_freq":         cf,
-        "noise_type":           ["None", "white"],
-        "noise_snr_db":         [0, -5, -10, -20],
+        # "noise_type":           ["None", "white"],
         "carrier_waveform":     ["gaussian", "sine", "burst"],
         "n_peaks":              [1, 2, 3],
-        "fft_method":          ["fft", "welch"]
     }
 
     seen = set()
@@ -168,7 +165,7 @@ def main():
                 algo_grp = grp.create_group(algo)
                 algo_grp.create_dataset("estimates", data=data["estimates"], compression="gzip")
                 algo_grp.create_dataset("errors",    data=data["errors"],    compression="gzip")
-                for metric in ("mae", "rmse", "std", "fail_rate", "false_pos_rate", "true_neg_rate"):
+                for metric in ("mae", "rmse", "std", "fn", "fp", "n", "fail_rate", "accuracy", "f1_score"):
                     algo_grp.attrs[metric] = data[metric]
 
 
@@ -212,7 +209,7 @@ def generate_aperiodic(n_samples, fs, exponent, f_rotation, ref_power, rng):
     # PSD bin at f_rotation = |X[k]|² / (fs * n_samples)
     f_rot_bin = np.argmin(np.abs(freqs_ndc - f_rotation))
     current_psd_at_rot = (np.abs(X_ndc[f_rot_bin]) ** 2) / (fs * n_samples)
-    amplitude_scale = np.sqrt(ref_power / (current_psd_at_rot + 1e-30))
+    amplitude_scale = np.sqrt(ref_power / max(current_psd_at_rot, np.nextafter(0, 1)))
     return sig * amplitude_scale
 
 
@@ -258,15 +255,11 @@ def generate_sine_peak(n_samples, fs, center_freq, peak_power, t):
     Generate a pure sine with the given total power.
     """
     sig = np.sin(2 * np.pi * center_freq * t)
-
     # Scale to desired power: power of cos = 0.5, so RMS² = 0.5
-    # current_power = np.mean(sig ** 2)
-    # sig *= np.sqrt(peak_power / (current_power + 1e-30))
-    # return sig, inst_freqs
 
     target_total_power = peak_power * fs / n_samples
     current_power = np.mean(sig ** 2)
-    sig *= np.sqrt(target_total_power / (current_power + 1e-30))
+    sig *= np.sqrt(target_total_power / max(current_power,np.nextafter(0, 1)))
     return sig
 
 
@@ -278,7 +271,7 @@ def generate_burst_peak(n_samples, fs, center_freq, peak_power,
                                 burst_params={"n_cycles_burst": n_cycles_on, "n_cycles_off": n_cycles_off})
 
     current_power = np.mean(sig ** 2)
-    sig *= np.sqrt(peak_power / (current_power + 1e-30))
+    sig *= np.sqrt(peak_power / max(current_power, np.nextafter(0, 1)))
     return sig
 
 
@@ -291,7 +284,7 @@ def generate_white_noise(n_samples, fs, noise_psd, rng):
     noise = rng.standard_normal(n_samples)
     # White noise variance = noise_psd * (fs/2)
     target_std = np.sqrt(noise_psd * fs / 2)
-    noise = noise / (np.std(noise) + 1e-30) * target_std
+    noise = noise / max(np.std(noise), np.nextafter(0, 1)) * target_std
     return noise
 
 
@@ -393,8 +386,8 @@ def process_condition(args):
             estimates = np.asarray(estimates, dtype=float)
             errors = []
             for est, gt in zip(estimates, ground_truth):
-                if np.isnan(est) and np.isnan(gt):
-                    errors.append(0.0)
+                if ~np.isnan(est) and np.isnan(gt):
+                    errors.append(est)
                 elif ~np.isnan(est) and ~np.isnan(gt):
                     errors.append(est - gt)
             algo_results[algo] = {
@@ -416,18 +409,18 @@ def run_window_analysis(signal, inst_freq, config):
     first_freq_spectrum = None
     first_window = None
 
-    step = max(window_length // 2, int(config["fs"]))  # at most 1s step
+    step = max(window_length // 5, int(config["fs"]))  # at most 1s step
     for idx in range(window_length, signal_length, step):
         window = signal[idx - window_length:idx]
-        if config["fft_method"] == "welch":
-            nperseg = int(min(window_length, 2 * config["fs"]))
-            freq_bins, psd = welch(window, fs=config["fs"], nperseg=nperseg)
-        else:
-            freq_bins = np.fft.rfftfreq(window_length, 1 / config["fs"])
-            X = np.fft.rfft(window, n=window_length)
-            # Periodogram PSD: |X|^2 / (fs * N) — matches Welch units (power per Hz)
-            psd = (np.abs(X) ** 2) / (config["fs"] * window_length)
-            psd[1:-1] *= 2  # Correct for dropping negative freqs in one-sided spectrum (except DC and Nyquist)
+
+        nperseg = int(min(window_length, 7 * config["fs"]))
+        freq_bins_welch, psd_welch = welch(window, fs=config["fs"], nperseg=nperseg, noverlap=nperseg//1.5)
+
+        freq_bins = np.fft.rfftfreq(window_length, 1 / config["fs"])
+        X = np.fft.rfft(window, n=window_length)
+        # Periodogram PSD: |X|^2 / (fs * N) — matches Welch units (power per Hz)
+        psd = (np.abs(X) ** 2) / (config["fs"] * window_length)
+        psd[1:-1] *= 2  # Correct for dropping negative freqs in one-sided spectrum (except DC and Nyquist)
 
         if first_freq_spectrum is None:
             first_freq_spectrum = (freq_bins, psd)
@@ -435,7 +428,7 @@ def run_window_analysis(signal, inst_freq, config):
 
         ground_true_freqs.append(inst_freq[idx - 1])
 
-        for algo, estimate in run_algorithms(psd, freq_bins, config).items():
+        for algo, estimate in run_algorithms(psd, psd_welch, freq_bins, freq_bins_welch, config).items():
             if algo not in results_all:
                 results_all[algo] = []
             results_all[algo].append(estimate)
@@ -457,22 +450,30 @@ def compute_metrics(estimates, ground_truth):
 
         if gt_none and est_none:
             tn += 1
-            abs_errors.append(0.0)
         elif gt_none and not est_none:
             fp += 1
+            abs_errors.append(est)
         elif not gt_none and est_none:
             fn += 1
         else:
             tp += 1
             abs_errors.append(abs(est - gt))
+    
+    precision = tp / (tp + fp) if (tp + fp) > 0 else np.nan
+    recall = tp / (tp + fn) if (tp + fn) > 0 else np.nan
+    accuracy = (tp + tn) / n if n > 0 else np.nan
+    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else np.nan
 
     return {
         "mae":            np.mean(abs_errors) if abs_errors else np.nan,
         "rmse":           np.sqrt(np.mean(np.array(abs_errors) ** 2)) if abs_errors else np.nan,
         "std":            np.std(abs_errors) if abs_errors else np.nan,
-        "fail_rate":      fn / n,
-        "false_pos_rate": fp / n,
-        "true_neg_rate":  tn / n,
+        "fn":             fn,
+        "fp":             fp,
+        "n":              n,
+        "fail_rate":      (fn+fp) / n,
+        "accuracy":       accuracy,
+        "f1_score":       f1_score,
     }
 
 
@@ -480,10 +481,10 @@ def compute_metrics(estimates, ground_truth):
 # Algorithms (unchanged)
 # ---------------------------------------------------------------------------
 
-def run_algorithms(psd, freq_bins, config):
+def run_algorithms(psd, psd_welch, freq_bins, freq_bins_welch, config):
     return {
         "stupid_max":   stupid_max(psd, freq_bins, config),
-        "fooof":        fooof(psd, freq_bins, config),
+        "fooof":        fooof(psd_welch, freq_bins_welch, config),
         "philistine":   philistine_iaf(psd, freq_bins, config),
         "combine_complex":      combine_algo(psd, freq_bins, config),
         "combine_simple":       combine_simple(psd, freq_bins, config),
@@ -530,8 +531,8 @@ def parabolic_max(psd, freq_bins, config):
 
 
 def fooof(psd, freq_bins, config):
-    fm = FOOOF(peak_width_limits=[0.1, 7.0], min_peak_height=0.001,
-               peak_threshold=2., max_n_peaks=10, aperiodic_mode="fixed", verbose=False)
+    fm = FOOOF(peak_width_limits=[0.1, 4.0], min_peak_height=0.0,
+               peak_threshold=2., max_n_peaks=3, aperiodic_mode="fixed", verbose=False)
     try:
         fm.fit(freq_bins, psd, config["freq_range"])
     except Exception as e:
@@ -557,10 +558,10 @@ def _bic_peak_test_simple(freqs, residual, gaussian, fmin, fmax):
     if n < 4:
         return False, 0.0
 
-    ss_h0 = np.sum((fit_resid) ** 2)
-    ss_h1 = np.sum((fit_resid - gaussian[fit_mask]) ** 2)
-    bic_h0 = n * np.log(max(ss_h0, 1e-30) / n)
-    bic_h1 = n * np.log(max(ss_h1, 1e-30) / n) + 3 * np.log(n)
+    ss_h0 = np.sum((fit_resid - 1) ** 2)
+    ss_h1 = np.sum((fit_resid - 1 - gaussian[fit_mask]) ** 2)
+    bic_h0 = n * np.log(max(ss_h0, np.nextafter(0, 1)) / n)
+    bic_h1 = n * np.log(max(ss_h1, np.nextafter(0, 1)) / n) + 3 * np.log(n)
     return (bic_h0 - bic_h1) > 0, bic_h0 - bic_h1
 
 def _bic_peak_test(residual, freqs, fmin, fmax):
@@ -587,7 +588,7 @@ def _bic_peak_test(residual, freqs, fmin, fmax):
 
     ss_h1 = np.sum((fit_resid - _gaussian_peak(fit_freqs, *popt)) ** 2)
     bic_h0 = n * np.log(ss_h0 / n)
-    bic_h1 = n * np.log(max(ss_h1, 1e-30) / n) + 3 * np.log(n)
+    bic_h1 = n * np.log(max(ss_h1, np.nextafter(0, 1)) / n) + 3 * np.log(n)
     return (bic_h0 - bic_h1) > 0, bic_h0 - bic_h1
 
 
@@ -605,8 +606,8 @@ def combine_algo(psd, freq_bins, config):
     if sav_gol_polyorder >= sav_gol_window_length:
         sav_gol_window_length = sav_gol_polyorder + 2
 
-    fm = FOOOF(peak_width_limits=(1.0, 8.0), max_n_peaks=6, min_peak_height=0.001,
-               peak_threshold=4.0, aperiodic_mode="fixed", verbose=False)
+    fm = FOOOF(peak_width_limits=(0.1, 4.0), max_n_peaks=3, min_peak_height=0.0,
+               peak_threshold=2.0, aperiodic_mode="fixed", verbose=False)
     try:
         fm.fit(freqs, psd_band, config["freq_range"])
     except Exception as e:
@@ -616,16 +617,16 @@ def combine_algo(psd, freq_bins, config):
     offset, exponent = fm.aperiodic_params_
     aperiodic = offset - exponent * np.log10(freqs)
 
-    psd_safe = np.maximum(psd_band, 1e-30)
+    psd_safe = np.maximum(psd_band, np.nextafter(0, 1))
     residual = np.log10(psd_safe) - aperiodic
     psd_flat = np.power(10, residual)
-    psd_flat = np.clip(psd_flat, 1e-30, None)
+    psd_flat = np.clip(psd_flat, np.nextafter(0, 1), None)
 
     if not np.all(np.isfinite(psd_flat)):
         return np.nan
 
     psd_smooth = savgol_filter(psd_flat, window_length=sav_gol_window_length, polyorder=sav_gol_polyorder)
-    eps = 1e-12
+    eps = np.nextafter(0, 1)  # Smallest positive float
     _, _, r, _, _ = stats.linregress(np.log(freqs), np.log(np.maximum(psd_smooth, eps)))
 
     fmin, fmax = config["alpha_band"][0], config["alpha_band"][1]
@@ -642,8 +643,6 @@ def combine_algo(psd, freq_bins, config):
            if np.any(alpha_weights > 0) else None)
     if cog is None:
         return np.nan
-    
-        paf = freqs[alpha_band][max_bin]
 
     if 0 < max_bin < (psd_smooth[alpha_band].size - 1):
         y1, y2, y3 = psd_smooth[alpha_band][max_bin - 1], psd_smooth[alpha_band][max_bin], psd_smooth[alpha_band][max_bin + 1]
@@ -668,7 +667,7 @@ def combine_simple(psd, freq_bins, config):
     if sav_gol_polyorder >= sav_gol_window_length:
         sav_gol_window_length = sav_gol_polyorder + 2
 
-    eps = 1e-12
+    eps = np.nextafter(0, 1)  # Smallest positive float
     psd_safe = np.maximum(psd_band, eps)
     slope, intercept, _, _, _ = stats.linregress(np.log10(freqs), np.log10(psd_safe))
     aperiodic_simple = np.log10(freqs) * slope + intercept  # log10-scale
@@ -683,7 +682,6 @@ def combine_simple(psd, freq_bins, config):
     slope, intercept, _, _, _ = stats.linregress(np.log10(freqs_refit), np.log10(psd_refit))
     aperiodic_simple = np.log10(freqs) * slope + intercept  # log10-scale
     psd_flat = psd_safe / np.power(10, aperiodic_simple)
-
 
     psd_smooth = savgol_filter(psd_flat, window_length=sav_gol_window_length, polyorder=sav_gol_polyorder)
 
@@ -702,7 +700,7 @@ def combine_simple(psd, freq_bins, config):
         denom = (y1 - 2 * y2 + y3)
         if denom != 0:
             delta = 0.5 * (y1 - y3) / denom
-            return paf + delta * resolution
+            paf += delta * resolution
 
     amp_guess = psd_smooth[alpha_band][max_bin]
     center_guess = fit_freqs[max_bin]
@@ -721,6 +719,8 @@ def combine_simple(psd, freq_bins, config):
         right_idx = global_max_bin
     fwhm = max((right_idx-left_idx) * resolution, resolution)
     std_gauss = fwhm / (2 * np.sqrt(2 * np.log(2)))
+    if std_gauss > 2:
+        return np.nan
     popt = [amp_guess - 1, center_guess, std_gauss]
 
     # width_guess = (fmax - fmin) / 4
@@ -761,7 +761,7 @@ def philistine_iaf(psd, freq_bins, config):
     psd_smooth = savgol_filter(psd, window_length=sav_gol_window_length, polyorder=sav_gol_polyorder)
     alpha_band = (freqs >= fmin) & (freqs <= fmax)
 
-    eps = 1e-12
+    eps = np.nextafter(0, 1)  # Smallest positive float
     _, _, r, _, _ = stats.linregress(np.log(freqs), np.log(np.maximum(psd_smooth, eps)))
 
     if r ** 2 > config["pink_ax_r2"]:

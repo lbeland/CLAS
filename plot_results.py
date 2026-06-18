@@ -3,6 +3,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import glob
 from meegkit.phase import ECHT
 from scipy.signal import hilbert, butter, sosfiltfilt, sosfreqz
 from read_output import get_signal_data
@@ -45,12 +46,20 @@ def get_results_file(processor_name: str, name: str = ".out", slot: int = 0, res
     matches.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     return str(matches[0])
 
-def plot_results(fs, f0, graph_name, results_dir=RESULTS_DIR, timestamps=True):
+def plot_results(fs, f0, results_dir=RESULTS_DIR, timestamps=True):
 
-    if graph_name == "TurboLinkCLAS.yaml":
-        processors = ["SourceClient", "PhaseEstimator", "IAFEstimator","StimulusController"] # "GlobalFilter",
+    graph_file = glob.glob(os.path.join(results_dir, "*.yaml"))
+
+    if len(graph_file) == 0:
+        print(f"Error: no graph config (.yaml) found in {results_dir}")
+        return
+
+    graph_name = os.path.basename(graph_file[0])
+
+    if graph_name == "TurboLinkCLAS.yaml" or graph_name == "ReplayCLAS.yaml":
+        processors = ["SourceClient", "ecHTFilter", "PhaseEstimator", "IAFEstimator","StimulusController"] # "GlobalFilter",
     elif graph_name == "SimulateCLAS.yaml":
-        processors = ["Producer", "GlobalFilter", "PhaseEstimator", "IAFEstimator", "StimulusController"]
+        processors = ["Producer", "ecHTFilter", "PhaseEstimator", "IAFEstimator", "StimulusController"]
     elif graph_name == "IAFtests.yaml":
         processors = ["Producer", "IAFEstimator"]
     elif graph_name == "ecHTtests.yaml":
@@ -288,4 +297,4 @@ def plot_results(fs, f0, graph_name, results_dir=RESULTS_DIR, timestamps=True):
 
 
 if __name__ == "__main__":
-    plot_results(10000, 10.0, results_dir="_last_run",graph_name="TurboLinkCLAS.yaml")
+    plot_results(10000, 10.0, results_dir="_last_run")

@@ -153,10 +153,12 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
     first_timestamps = [samples[key]["x"][0] for key in samples]
     assert len(set(first_timestamps)) == 1 or len(set(first_timestamps)) == 0, "Mismatched timestamps across processors"
 
-    min_lengths = [len(samples[key]["x"]) for key in samples]
+    min_lengths = min([len(samples[key]["x"]) for key in samples])
     for key in samples:
-        samples[key]["x"] = samples[key]["x"][:min(min_lengths)]
-        samples[key]["y"] = samples[key]["y"][:min(min_lengths)]
+        samples[key]["x"] = samples[key]["x"][:min_lengths]
+        samples[key]["y"] = samples[key]["y"][:min_lengths]
+        if samples[key].get("source_ts") is not None:
+            samples[key]["source_ts"] = samples[key]["source_ts"][:min_lengths]
 
     return samples
 
@@ -190,8 +192,8 @@ def extract_ground_truth(samples: dict) -> dict:
                 raw.append(samples[f"SourceClient_{select_idx}"]["y"][sample_idx])
             
             raw = np.array(raw)
-
-            time  = samples["ChannelSelector"]["x"]
+            time  = samples[f"SourceClient_{select_idx}"]["x"]
+            source_time = samples[f"SourceClient_{select_idx}"]["source_ts"]
         else:
             raw = samples["SourceClient_0"]["y"]
             time = samples["SourceClient_0"]["x"]
@@ -206,6 +208,7 @@ def extract_ground_truth(samples: dict) -> dict:
                 "true_amplitude": loaded["amplitude"],
                 "true_phase":     np.angle(np.exp(1j * loaded["phase"])),
                 "true_inst_freq": loaded["inst_freq"],
+                "source_ts": loaded["source_ts"],
             }
         return {"raw": raw, "time": time, "source_ts": source_time,
                 "true_amplitude": None, "true_phase": None, "true_inst_freq": None}
@@ -316,10 +319,19 @@ def write_edf(
     if filtered is not None:
         channels.append(("Filt_off", "misc", filtered[:n]))
 
-    if samples.get("GlobalFilter") is not None:
-        bp = samples["GlobalFilter"]["y"]
-        t_bp = samples["GlobalFilter"]["x"]
+    if samples.get("ecHTFilter") is not None:
+        bp = samples["ecHTFilter"]["y"]
+        t_bp = samples["ecHTFilter"]["x"]
         channels.append(("Filt_on", "misc", bp[:n]))
+
+    # IAF channels
+    if ground_truth["true_inst_freq"] is not None:
+        channels.append(("IAF_true_Hz", "misc",ground_truth["true_inst_freq"][:n]))
+
+    if samples.get("IAFEstimator") is not None:
+        iaf = samples["IAFEstimator"]["y"]
+        iaf = np.nan_to_num(iaf)   # replace any NaN with zero for EDF export
+        channels.append(("IAF_est_Hz", "misc", iaf[:n]))
 
     # Phase channels
     if hilbert_phase is not None:
@@ -330,7 +342,7 @@ def write_edf(
 
     if samples.get("PhaseEstimator_phase") is not None:
         phase_est = samples["PhaseEstimator_phase"]["y"]
-        phase_est = np.nan_to_num(phase_est)   # replace any NaN with zero for EDF export
+        phase_est = np.nan_to_num(phase_est, nan=-2*np.pi)   # replace any NaN with -2pi for EDF export
         channels.append(("Online_phi", "misc", phase_est[:n]))
 
     # Stimuli channels
@@ -358,15 +370,6 @@ def write_edf(
 
     # if ground_truth["true_amplitude"] is not None:
     #     channels.append(("True_amplitude", ground_truth["true_amplitude"][:n]))
-
-    # IAF channels
-    if ground_truth["true_inst_freq"] is not None:
-        channels.append(("IAF_true_Hz", "misc",ground_truth["true_inst_freq"][:n]))
-
-    if samples.get("IAFEstimator") is not None:
-        iaf = samples["IAFEstimator"]["y"]
-        iaf = np.nan_to_num(iaf)   # replace any NaN with zero for EDF export
-        channels.append(("IAF_est_Hz", "misc", iaf[:n]))
 
     min_len = min([len(ch[2]) for ch in channels])
     info = mne.create_info([ch[0] for ch in channels], sfreq=fs, ch_types=[ch[1] for ch in channels], verbose=False)
@@ -758,11 +761,11 @@ def plot_spectrum(raw, samples: dict, fs: float) -> None:
 
     # freqs, raw_spectrum = welch(raw, fs=fs, nperseg=fs*5)  # Welch PSD estimate for smoother spectrum
 
-    if samples.get("GlobalFilter") is not None:
-        filt = samples["GlobalFilter"]["y"]
+    if samples.get("ecHTFilter") is not None:
+        filt = samples["ecHTFilter"]["y"]
         filt_spectrum = np.fft.rfft(filt)
         freqs_filt = np.fft.rfftfreq(len(filt), d=1/fs)
-        # freqs, filt_spectrum = welch(samples["GlobalFilter"]["y"], fs=fs, nperseg=fs*5)
+        # freqs, filt_spectrum = welch(samples["ecHTFilter"]["y"], fs=fs, nperseg=fs*5)
     else:
         filt_spectrum = None
 
@@ -789,18 +792,18 @@ def plot_time_series(ground_truth, samples: dict, hilbert_phase, stim_ref, fs: f
         return None
 
     raw_eeg = ground_truth["raw"]-np.mean(ground_truth["raw"])
-    filt_online = _pick("GlobalFilter")
+    filt_online = _pick("ecHTFilter")
 
     online_phase = _pick("PhaseEstimator_phase")
     true_phase = ground_truth["true_phase"] if ground_truth["true_phase"] is not None else None
 
     stimulus = _pick("StimulusController")
     trigger = _pick("SourceClient_TRIGGER")
-    aux = _pick("SourceClient_AUX")
-    if aux is not None:
-        # Scale to be between 0 and 1 for plotting, and zero-centre
-        aux = (aux - np.min(aux)) / (np.max(aux) - np.min(aux))
-        aux = aux - np.mean(aux)
+    # aux = _pick("SourceClient_AUX")
+    # if aux is not None:
+    #     # Scale to be between 0 and 1 for plotting, and zero-centre
+    #     aux = (aux - np.min(aux)) / (np.max(aux) - np.min(aux))
+    #     aux = aux - np.mean(aux)
 
     fig, axes = plt.subplots(2, 1, sharex=True, figsize=(14, 9), height_ratios=[3, 1])
     ax_raw, ax_phase = axes
@@ -815,7 +818,7 @@ def plot_time_series(ground_truth, samples: dict, hilbert_phase, stim_ref, fs: f
                         color='tab:blue', alpha=0.4, transform=ax_raw.get_xaxis_transform(), label="Target stim")
     if trigger is not None:
         ax_raw.fill_between(time_s, 0, 1, where=trigger[:n],
-                        color='tab:orange', alpha=0.4, transform=ax_raw.get_xaxis_transform(), label="Stim")
+                        color='tab:orange', alpha=0.4, transform=ax_raw.get_xaxis_transform(), label="Trigger Stim")
     elif stimulus is not None:
         ax_raw.fill_between(time_s, 0, 1, where=stimulus[:n],
                         color='tab:orange', alpha=0.4, transform=ax_raw.get_xaxis_transform(), label="Stimulus")
@@ -871,6 +874,11 @@ def analyse_results(
 ) -> None:
 
     graph_file = glob.glob(os.path.join(results_dir, "*.yaml"))
+
+    if len(graph_file) == 0:
+        print(f"Error: no graph config (.yaml) found in {results_dir}")
+        return
+
     if Path(results_dir).is_symlink():
         edf_path = os.path.join(results_dir, Path(results_dir).readlink().stem + ".edf")
     else:
@@ -940,9 +948,9 @@ def get_erp_windows(fs, samples, channel=1):
     windows=[]
     channel = channel - 1 # zero-based index
     
-    if samples.get("GlobalFilter") is not None:
-        eeg_y = samples["GlobalFilter"]["y"]
-        eeg_t = samples["GlobalFilter"]["x"]
+    if samples.get("ecHTFilter") is not None:
+        eeg_y = samples["ecHTFilter"]["y"]
+        eeg_t = samples["ecHTFilter"]["x"]
     elif samples.get(f"SourceClient_{channel}") is not None:
         eeg_y = samples[f"SourceClient_{channel}"]["y"]
         eeg_t = samples[f"SourceClient_{channel}"]["x"]

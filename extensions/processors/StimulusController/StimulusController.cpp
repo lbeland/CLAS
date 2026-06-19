@@ -43,6 +43,11 @@ static inline int16_t double_to_s16_(double x)
     return static_cast<int16_t>(lrint(x * 32767.0));
 }
 
+double wrap_phase_rad(double radians)
+{
+    return std::fmod(radians + M_PI, 2.0 * M_PI) - M_PI;
+}
+
 StimulusController::StimulusController() : IProcessor(PRIORITY_HIGH)
 {
     add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
@@ -96,22 +101,22 @@ void StimulusController::CompleteStreamInfo()
 bool StimulusController::compute_burst_params_(double iaf)
 {
     const int sample_rate = std::max(1, audio_sample_rate_());
+    double new_burst_ms = 0;
     int new_burst_frames = 0;
 
     if (dur_unit_ == DurUnit::kMs)
     {
         // Fixed duration — IAF is irrelevant for burst length.
         // stim_dur_rad_ still uses IAF so the phase window scales with alpha.
-        const int burst_ms = std::max(1, stim_dur_ms_());
-        new_burst_frames = burst_ms * sample_rate / 1000;
+        new_burst_ms = std::max(1.0, stim_dur_ms_());
         if (std::isfinite(iaf) && iaf > 0.0)
         {
-            stim_dur_rad_ = (burst_ms / 1000.0) * (2.0 * M_PI * iaf);
+            stim_dur_rad_ = (new_burst_ms / 1000.0) * (2.0 * M_PI * iaf);
         }
         else
         {
             // No IAF available: assume 10 Hz
-            stim_dur_rad_ = (burst_ms / 1000.0) * (2.0 * M_PI * 10.0);
+            stim_dur_rad_ = (new_burst_ms / 1000.0) * (2.0 * M_PI * 10.0);
             LOG(WARNING) << name() << " IAF unavailable in ms-mode; phase window assumes 10 Hz";
         }
     }
@@ -121,17 +126,15 @@ bool StimulusController::compute_burst_params_(double iaf)
         if (!std::isfinite(iaf) || iaf <= 0.0)
         {
             // Fallback to stim_dur_ms_ until a valid IAF arrives.
-            const int burst_ms = std::max(1, stim_dur_ms_());
-            new_burst_frames = burst_ms * sample_rate / 1000;
+            new_burst_ms = std::max(1.0, stim_dur_ms_());
             stim_dur_rad_ = stim_dur_deg_() * (1.0 / 180.0 * M_PI);
-            // LOG(WARNING) << name() << " IAF unavailable in deg-mode; using stim_dur_ms=" << burst_ms << " ms as fallback";
+            // LOG(WARNING) << name() << " IAF unavailable in deg-mode; using stim_dur_ms=" << new_burst_ms << " ms as fallback";
         }
         else
         {
             const double deg = std::clamp(stim_dur_deg_(), 0.0, 360.0);
-            const double duration_sec = std::clamp((deg / 360.0) / iaf, 0.0, 5.0);
-            new_burst_frames = static_cast<int>(std::lround(duration_sec * sample_rate));
             stim_dur_rad_ = deg * (1.0 / 180.0 * M_PI);
+            new_burst_ms = std::clamp((deg / 360.0) / iaf, 0.0, 5.0) * 1000.0;
         }
     }
     else
@@ -140,12 +143,17 @@ bool StimulusController::compute_burst_params_(double iaf)
         LOG(ERROR) << name() << " Invalid dur_unit_ enum value";
         throw std::runtime_error("Invalid dur_unit_: must be kMs or kDeg");
     }
-    LOG(INFO) << name() << "Stimulus duration: " << stim_dur_rad_ << " rad, " << new_burst_frames << " frames at " << sample_rate << " Hz (IAF: " << iaf << " Hz)";
-    new_burst_frames = std::max(1, new_burst_frames);
-    const bool changed = (new_burst_frames != burst_frames_);
-    burst_frames_ = new_burst_frames;
-    period_ms_ = stim_period_ms_(); // silence period
-    return changed;
+    if (std::abs(new_burst_ms - burst_ms_) > 1) // if burst duration changed by more than 1 ms, rebuild buffers
+    {
+        burst_ms_ = new_burst_ms;
+        burst_frames_ = std::max(1, (int)(new_burst_ms * sample_rate / 1000.0));
+        period_ms_ = stim_period_ms_(); // silence period
+        return true;
+    }
+    else
+    {
+        return false;
+    }
 }
 
 void StimulusController::Prepare(GlobalContext &context)
@@ -174,7 +182,7 @@ void StimulusController::Preprocess(ProcessingContext &context)
     const double iaf = iaf_state_ ? iaf_state_->get() : std::numeric_limits<double>::quiet_NaN();
     last_iaf_ = iaf;
     compute_burst_params_(iaf); // sets stim_dur_rad_, burst_frames_, period_ms_
-    build_audio_buffers_(); // uses burst_frames_ and period_ms_ set above
+    build_audio_buffers_();     // uses burst_frames_ and period_ms_ set above
 
     if (!start_audio_())
     {
@@ -200,9 +208,9 @@ void StimulusController::build_audio_buffers_()
     if (period_frames_ <= 0)
         period_frames_ = 1;
 
-    LOG(INFO) << name() << " Building audio buffers: burst=" << burst_frames_
-              << " frames (" << (static_cast<double>(burst_frames_) / sample_rate * 1000.0) << " ms)"
-              << ", period=" << period_frames_ << " frames";
+    // LOG(INFO) << name() << " Building audio buffers: burst=" << burst_frames_
+    //           << " frames (" << (static_cast<double>(burst_frames_) / sample_rate * 1000.0) << " ms)"
+    //           << ", period=" << period_frames_ << " frames";
 
     // Pink noise (Voss-McCartney)
     // Seed is fixed for reproducibility: every burst sounds identical, which is
@@ -549,14 +557,16 @@ void StimulusController::Process(ProcessingContext &context)
     MultiChannelType<double>::Data *data_in;
     MultiChannelType<double>::Data *data_out;
 
+    bool valid_stimulation = true;
+
     // Randomization setup for stimulus timing (if randomize_stim_onset_() is enabled)
     TimePoint last_stim_time_ = Clock::now();
     double time_since_last_stim = 0.0;
-    std::random_device rd;   // non-deterministic generator
-    std::mt19937 gen(rd());  // to seed mersenne twister.
-                        // replace the call to rd() with a
-                        // constant value to get repeatable
-                        // results.
+    std::random_device rd;  // non-deterministic generator
+    std::mt19937 gen(rd()); // to seed mersenne twister.
+                            // replace the call to rd() with a
+                            // constant value to get repeatable
+                            // results.
     std::uniform_real_distribution<double> distrib_interval;
     if (max_stim_dist_sec_() < min_stim_dist_sec_())
     {
@@ -566,10 +576,11 @@ void StimulusController::Process(ProcessingContext &context)
     {
         distrib_interval = std::uniform_real_distribution<double>(min_stim_dist_sec_(), max_stim_dist_sec_());
     }
-    
+
     std::uniform_real_distribution<double> distrib_onset(0.0, 2.0 * M_PI);
     double stim_dist_sec_ = distrib_interval(gen);
-    if (randomize_stim_onset_()) {
+    if (randomize_stim_onset_())
+    {
         stim_onset_rad_ = distrib_onset(gen);
     }
     LOG(INFO) << name() << " Initial stimulus distance: " << stim_dist_sec_ << " s, onset: " << stim_onset_rad_ << " rad";
@@ -588,19 +599,31 @@ void StimulusController::Process(ProcessingContext &context)
         {
             break;
         }
+        // At the start of each loop assume that stimulation is valid
+        valid_stimulation = true;
 
         data_out = data_out_port_->slot(0)->ClaimData(false);
 
         // data_out->CloneTimestamps(*data_in);
         data_out->set_hardware_timestamp(data_in->hardware_timestamp());
-        data_out->set_source_timestamp(data_in->source_timestamp());
+        // data_out->set_source_timestamp(data_in->source_timestamp());
 
         double phase = data_in->data_sample(0, 0);
+        if (std::isnan(phase))
+        {
+            valid_stimulation = false;
+            // LOG(WARNING) << name() << " Received NaN phase; skipping stimulation for this packet.";
+        }
         const double iaf_ = iaf_state_->get();
 
         // In "deg" mode the burst duration depends on IAF. Rebuild buffers
         // when IAF changes (guarded by audio_mutex_ so the audio thread is safe).
-        if ((std::isnan(last_iaf_) && std::isfinite(iaf_)) || iaf_ - last_iaf_ > 1e-2)
+        if (std::isnan(iaf_))
+        {
+            valid_stimulation = false;
+            // LOG(WARNING) << name() << " IAF is NaN; skipping stimulation for this packet.";
+        }
+        else if ((std::isnan(last_iaf_) && std::isfinite(iaf_)) || std::abs(iaf_ - last_iaf_) > 1e-1)
         {
             const bool frames_changed = compute_burst_params_(iaf_);
             if (frames_changed)
@@ -608,7 +631,7 @@ void StimulusController::Process(ProcessingContext &context)
                 std::lock_guard<std::mutex> lock(audio_mutex_);
                 build_audio_buffers_();
                 LOG(INFO) << name() << " IAF changed " << last_iaf_ << " -> " << iaf_
-                          << ": burst rebuilt to " << burst_frames_ << " frames";
+                          << ": burst rebuilt to " << burst_ms_ << " ms";
             }
             last_iaf_ = iaf_;
         }
@@ -616,12 +639,17 @@ void StimulusController::Process(ProcessingContext &context)
         TimePoint now = Clock::now();
 
         TimePoint sample_ts = data_in->source_timestamp();
+        if (now < sample_ts)
+        {
+            LOG(WARNING) << name() << " Current time is before sample timestamp (now: " << std::chrono::duration<double, std::milli>(now.time_since_epoch()).count()
+                         << " ms, sample_ts: " << std::chrono::duration<double, std::milli>(sample_ts.time_since_epoch()).count() << " ms).";
+        }
         // data_out->set_source_timestamp(now);
         data_in_port_->slot(0)->ReleaseData();
 
         time_since_last_stim = std::chrono::duration<double>(now - last_stim_time_).count();
 
-        if (time_since_last_stim >= stim_dist_sec_)
+        if (valid_stimulation && time_since_last_stim >= stim_dist_sec_)
         {
             double delay_sec = 0;
             if (correct_latencies_())
@@ -633,8 +661,7 @@ void StimulusController::Process(ProcessingContext &context)
             }
 
             double phase_advance = 2.0 * M_PI * iaf_ * delay_sec;
-            double corrected_phase = std::fmod(phase + phase_advance, 2.0 * M_PI);
-            double diff = corrected_phase - stim_onset_rad_;
+            double diff = phase + phase_advance - stim_onset_rad_;
 
             // Wrap diff to [-pi, pi] once
             const double wrapped_diff = std::atan2(std::sin(diff), std::cos(diff));
@@ -644,8 +671,9 @@ void StimulusController::Process(ProcessingContext &context)
             // Trigger a single burst on the rising edge (false -> true)
             if (output_ && !last_output_)
             {
-                LOG(INFO) << name() << "Deliver stimulus after: " << time_since_last_stim << " s since last stimulus";
+                // LOG(INFO) << name() << "Deliver stimulus after: " << time_since_last_stim << " s since last stimulus";
                 audio_trigger_pending_.store(true);
+
                 // LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated phase = " << phase << " , delay = " << delay_sec << " s, corr_phase = " << corrected_phase;
             }
             else if (!output_ && last_output_)
@@ -653,21 +681,28 @@ void StimulusController::Process(ProcessingContext &context)
                 last_stim_time_ = now;
                 stimuli_count_++;
                 stim_dist_sec_ = distrib_interval(gen);
-                if (randomize_stim_onset_()) {
+                if (randomize_stim_onset_())
+                {
                     stim_onset_rad_ = distrib_onset(gen);
                 }
                 // LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated phase = " << phase << " , delay = " << delay_sec << " s, corr_phase = " << corrected_phase;
             }
         }
+        else
+        {
+            output_ = false;
+        }
+
+        TimePoint timestamp = Clock::now();
         last_output_ = output_;
 
+        data_out->set_source_timestamp(timestamp);
         data_out->set_data_sample(0, 0, static_cast<double>(output_));
         data_out_port_->slot(0)->PublishData();
 
         packet_count_++;
     }
     LOG(INFO) << name() << " stopped working";
-
 }
 
 void StimulusController::Postprocess(ProcessingContext &context)

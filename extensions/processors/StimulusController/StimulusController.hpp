@@ -79,6 +79,7 @@ class StimulusController : public IProcessor {
     snd_pcm_t* pcm_ = nullptr;
 
     double period_ms_ = 0;
+    double burst_ms_ = 0;
     double last_iaf_ = std::numeric_limits<double>::quiet_NaN(); // last IAF used to build buffers
 
     int burst_frames_ = 0;
@@ -111,7 +112,7 @@ class StimulusController : public IProcessor {
     options::Int stim_num_octaves_{6};
 
     options::String stim_dur_unit_{"deg"};
-    options::Int stim_dur_ms_{20};
+    options::Double stim_dur_ms_{20};
     options::Double stim_dur_deg_{90};
 
     // Audio options

@@ -276,7 +276,7 @@ void PhaseEstimator::calibrate_gain(const int N)
             c_gain_ = std::complex<double>(1.0, 0.0); // fallback to unity gain
         }
         
-        LOG(INFO) << "Calibration gain for " << f0_ << " Hz set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i";
+        LOG(DEBUG) << "Calibration gain for " << f0_ << " Hz set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i";
     }
     else
     {
@@ -394,7 +394,7 @@ void PhaseEstimator::Preprocess(ProcessingContext &context)
 
     if (compensate_filter_())
     {
-        LOG(INFO) << name() << " Loading phase shift values for filter compensation";
+        // LOG(INFO) << name() << " Loading phase shift values for filter compensation";
         load_phase_shift(context, f0_);
     }
 
@@ -488,7 +488,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
                         sample_window.rset_capacity(window_size_);
                     }
                     n_fft_ = good_size_real(window_size_);
-                    LOG(INFO) << name() << " Packet " << packet_count_ << ": Update IAF to " << f0_ << " Hz, window size: " << window_size_ << ", FFT size: " << n_fft_;
+                    LOG(DEBUG) << name() << " Packet " << packet_count_ << ": Update IAF to " << f0_ << " Hz, window size: " << window_size_ << ", FFT size: " << n_fft_;
 
                     load_filter_coeffs(context, f0_);
                     calibrate_gain(window_size_);
@@ -530,7 +530,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
                     if (compensate_filter_())
                     {
                         filter_phase_shift_ = filter_phase_shift_values[f0_ * 10]; // Phase shift values are stored in 0.1 Hz increments and thus indexed with (iaf * 10)
-                        LOG(INFO) << name() << " Loaded phase shift of " << filter_phase_shift_ << " radians for compensation";
+                        // LOG(INFO) << name() << " Loaded phase shift of " << filter_phase_shift_ << " radians for compensation";
                     }
                 }                
                 // else {
@@ -541,7 +541,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
 
         TimePoint claim_output_time = Clock::now();
 
-        if (valid_iaf_ && sample_window.size() >= static_cast<size_t>(window_size_))
+        if (valid_iaf_ && (sample_window.size() >= static_cast<size_t>(window_size_)))
         { //} && (packet_count_ % (sample_window.capacity()/2) == 0)) {
 
             // Convert circular buffer<float> to continuous array for FFTW input and zero-pad to n_fft length
@@ -636,7 +636,10 @@ void PhaseEstimator::Process(ProcessingContext &context)
         {
             // Set to NaN to indicate invalid IAF
             data_phase_out->set_data_sample(0, 0, std::numeric_limits<double>::quiet_NaN());
+            data_phase_out->set_sample_timestamps(data_in->sample_timestamps());
             data_real_out->set_data_sample(0, 0, std::numeric_limits<double>::quiet_NaN()); 
+            data_real_out->set_sample_timestamps(data_in->sample_timestamps());
+            // LOG(WARNING) << name() << " Packet " << packet_count_ << ": IAF value is invalid or not enough samples in window, outputting NaN";
         }
 
         data_out_port_->slot(0)->PublishData();

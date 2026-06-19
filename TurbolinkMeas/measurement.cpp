@@ -10,6 +10,7 @@
 #include <vector>
 #include <cmath>
 #include <fstream>
+#include <algorithm>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <time.h>
@@ -78,89 +79,102 @@ int main() {
     addr.sin_port = htons(25000);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    // int busy_poll_us = 10;
-    // if (setsockopt(sockfd, SOL_SOCKET, SO_BUSY_POLL,
-    //             &busy_poll_us, sizeof(busy_poll_us)) < 0) {
-    //     perror("setsockopt(SO_BUSY_POLL)");
-    // }
-
     if (bind(sockfd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
         perror("bind");
         close(sockfd);
         return 1;
     }
 
-    // No connect to specific sender because IP is broadcast 
+    // No connect to specific sender because IP is broadcast
 
     std::cout << "Listening on UDP port 25000 \n";
 
     std::array<std::uint8_t, 2048> buffer{};
 
-    const int freq = 5000; // Hz, has to be adapted to the actual frequency of the incoming packets
+    const double freq = 500.0; // Hz, nominal device sample rate
 
-    static const int n_packets = 5 * freq; // 5 seconds worth of packets 
-    std::array<std::chrono::_V2::steady_clock::time_point, n_packets> receive_times;
+    const int n_packets = static_cast<int>(10 * freq); // ~10 seconds worth of packets
+
+    // Use vectors (not a large stack array) and only ever access [0, count)
+    std::vector<std::chrono::steady_clock::time_point> receive_times;
+    std::vector<uint32_t> sample_counters;
+    receive_times.reserve(n_packets);
+    sample_counters.reserve(n_packets);
+
     int count = 0;
-    std::chrono::_V2::steady_clock::time_point timestamp;
     ssize_t len = 0;
     sockaddr_in sender{};
     socklen_t sender_len = sizeof(sender);
-    int last_counter;
 
-    while (count<n_packets) {
+    uint32_t last_counter = 0;
+    bool have_last_counter = false;
+    uint64_t missed_total = 0;
+    uint64_t max_gap = 0;
 
-        len = recvfrom(sockfd, buffer.data(), buffer.size(), 0, reinterpret_cast<sockaddr*>(&sender), &sender_len);
-        timestamp = std::chrono::steady_clock::now();
+    while (count < n_packets) {
+
+        len = recvfrom(sockfd, buffer.data(), buffer.size(), 0,
+                        reinterpret_cast<sockaddr*>(&sender), &sender_len);
+        auto timestamp = std::chrono::steady_clock::now();
 
         if (len < 0) {
             perror("recvfrom");
             break;
         }
-        receive_times[count] = timestamp;
-
 
         Frame frame{};
         if (!parse_frame(buffer.data(), static_cast<std::size_t>(len), frame)) {
             std::cerr << "Unexpected packet size: " << len << " bytes\n";
             continue;
         }
-        // for (std::size_t i = 0; i < len; ++i) {
-        //     if (i % 16 == 0) std::cout << '\n';
-        //     std::cout << std::hex << std::setw(2) << std::setfill('0')
-        //               << static_cast<unsigned>(buffer.data()[i]) << ' ';
-        // }
-        // std::cout << std::dec << '\n';
-        // std::cout << "Sample counter: " << frame.sample_counter << "\n";
-        if (count == 0){
-            last_counter = frame.sample_counter-1;
+
+        if (!have_last_counter) {
+            last_counter = frame.sample_counter - 1;
+            have_last_counter = true;
         }
 
-        if (frame.sample_counter != static_cast<uint32_t>(last_counter + 1)) {
-            std::cerr << "Warning: Missed packet(s). Last counter: " << last_counter << ", current: " << frame.sample_counter << "\n";
+        uint32_t expected = last_counter + 1;
+        if (frame.sample_counter != expected) {
+            uint64_t gap = static_cast<uint64_t>(frame.sample_counter) - static_cast<uint64_t>(expected) + 1;
+            std::cerr << "Warning: Missed packet(s). Last counter: " << last_counter
+                      << ", current: " << frame.sample_counter
+                      << " (" << gap << " missed)\n";
+            missed_total += gap;
+            max_gap = std::max(max_gap, gap);
         }
         last_counter = frame.sample_counter;
+
+        receive_times.push_back(timestamp);
+        sample_counters.push_back(frame.sample_counter);
         count++;
     }
 
     std::cout << "\nReceived " << count << " packets.\n";
+    std::cout << "Missed (interpolated) packets: " << missed_total
+              << " (max single gap: " << max_gap << ")\n";
     close(sockfd);
 
-
-    if (receive_times.empty()) {
+    if (count < 2) {
+        std::cerr << "Not enough packets received for analysis.\n";
         return 1;
     }
 
-    // Calculate statistics
+    // ------------------------------------------------------------------
+    // Legacy metric: raw inter-arrival periods.
+    // Kept for comparison, but note this measures *changes* in jitter
+    // between consecutive packets, not absolute per-packet jitter.
+    // ------------------------------------------------------------------
     double sum_diff = 0.0;
     double max_diff = 0.0;
     std::size_t max_idx = 0;
     double sum_sq_diff = 0.0;
-    std::vector<double> receive_times_diff;
-    receive_times_diff.resize(receive_times.size() - 1);
+    const std::size_t n = receive_times.size() - 1;
+    std::vector<double> inter_sample_us(n);
 
-    for (std::size_t i = 0; i < receive_times.size()-1; i++) {
-        double diff = std::chrono::duration_cast<std::chrono::nanoseconds>(receive_times[i+1] - receive_times[i]).count();
-        receive_times_diff[i] = diff;
+    for (std::size_t i = 0; i < n; i++) {
+        double diff = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            receive_times[i + 1] - receive_times[i]).count();
+        inter_sample_us[i] = diff * 1e-3; // convert to microseconds
         sum_diff += diff;
         sum_sq_diff += diff * diff;
         if (diff > max_diff) {
@@ -169,26 +183,125 @@ int main() {
         }
     }
 
-    double avg_period_sec = sum_diff / (receive_times.size() - 1);
-    double avg_period = avg_period_sec * 1e-3;  // us
-    double variance = (sum_sq_diff / (receive_times.size() - 1)) - (avg_period_sec * avg_period_sec);  // s²
-    double std_period = sqrt(fmax(0.0, variance)) * 1e-3;  // us
+    double avg_period_ns = sum_diff / static_cast<double>(n);
+    double variance_ns2 = (sum_sq_diff / static_cast<double>(n)) - (avg_period_ns * avg_period_ns);
+    double std_period_ns = std::sqrt(std::fmax(0.0, variance_ns2));
 
-    printf("\n Average receive period (us): %.6f", avg_period);
-    printf("\n Max receive period (us): %.6f, idx: %zu", max_diff * 1e-3, max_idx);
-    printf("\n Std receive period (us): %.6f\n", std_period);
+    std::cout << "\n--- Inter-arrival period (legacy) ---";
+    printf("\n Average receive period (us): %.3f", avg_period_ns * 1e-3);
+    printf("\n Max receive period (us): %.3f, idx: %zu", max_diff * 1e-3, max_idx);
+    printf("\n Std receive period (us): %.3f\n", std_period_ns * 1e-3);
 
-    std::ofstream receive_times_output;
-    receive_times_output.open("receive_times.csv");
-    if (!receive_times_output.is_open()) {
-        std::cerr << "Failed to open receive_times.csv for writing\n";
-        return 1;
+    // ------------------------------------------------------------------
+    // Grid-based jitter analysis.
+    //
+    // offset_i = (a_i - a_0) - (sample_counter_i - sample_counter_0) / fs
+    //
+    // offset_i drifts linearly if the true device sample rate differs from
+    // the nominal `freq`, so we first detrend via linear regression against
+    // sample index, then take jitter_i = residual_i - min(residual).
+    // jitter_i is now a true non-negative per-packet delay relative to the
+    // best-case (lowest-latency) packet observed.
+    // ------------------------------------------------------------------
+    {
+        const std::size_t n = receive_times.size();
+
+        std::vector<double> x(n);       // sample index relative to first packet
+        std::vector<double> offset(n);  // offset from ideal grid, in microseconds
+
+        const uint32_t sc0 = sample_counters[0];
+        for (std::size_t i = 0; i < n; ++i) {
+            x[i] = static_cast<double>(sample_counters[i]) - static_cast<double>(sc0);
+
+            double a_us = std::chrono::duration<double, std::micro>(
+                receive_times[i] - receive_times[0]).count();
+            double ideal_us = x[i] / freq * 1e6;
+            offset[i] = a_us - ideal_us;
+        }
+
+        // Linear regression (centered) to estimate drift slope b (us per sample)
+        double mean_x = 0.0, mean_offset = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            mean_x += x[i];
+            mean_offset += offset[i];
+        }
+        mean_x /= static_cast<double>(n);
+        mean_offset /= static_cast<double>(n);
+
+        double sxy = 0.0, sxx = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            double dx = x[i] - mean_x;
+            double doff = offset[i] - mean_offset;
+            sxy += dx * doff;
+            sxx += dx * dx;
+        }
+        double b_us_per_sample = (sxx > 0.0) ? (sxy / sxx) : 0.0;
+
+        // Detrend
+        std::vector<double> residual(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            double fitted = mean_offset + b_us_per_sample * (x[i] - mean_x);
+            residual[i] = offset[i] - fitted;
+        }
+
+        double min_residual = *std::min_element(residual.begin(), residual.end());
+
+        std::vector<double> jitter(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            jitter[i] = residual[i] - min_residual;
+        }
+
+        // Stats on jitter
+        double sum_j = 0.0, sum_sq_j = 0.0, max_j = 0.0;
+        std::size_t max_j_idx = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            sum_j += jitter[i];
+            sum_sq_j += jitter[i] * jitter[i];
+            if (jitter[i] > max_j) {
+                max_j = jitter[i];
+                max_j_idx = i;
+            }
+        }
+        double mean_j = sum_j / static_cast<double>(n);
+        double var_j = (sum_sq_j / static_cast<double>(n)) - (mean_j * mean_j);
+        double std_j = std::sqrt(std::fmax(0.0, var_j));
+
+        // Percentiles
+        std::vector<double> sorted_jitter = jitter;
+        std::sort(sorted_jitter.begin(), sorted_jitter.end());
+        auto percentile = [&](double p) {
+            std::size_t idx = static_cast<std::size_t>(p * (sorted_jitter.size() - 1));
+            return sorted_jitter[idx];
+        };
+
+        // Estimated true sample rate from regression slope:
+        // d(offset)/dx = 1/true_fs - 1/freq  =>  1/true_fs = 1/freq + b
+        double true_fs = freq / (1.0 + freq * b_us_per_sample * 1e-6);
+
+        std::cout << "\n--- Grid-based jitter (relative to sample_counter) ---";
+        printf("\n Estimated true sample rate (Hz): %.4f (nominal %.1f)", true_fs, freq);
+        printf("\n Drift slope (us per sample):     %.6f", b_us_per_sample);
+        printf("\n Jitter mean (us):  %.3f", mean_j);
+        printf("\n Jitter std  (us):  %.3f", std_j);
+        printf("\n Jitter min  (us):  %.3f (by construction, = 0)", *std::min_element(jitter.begin(), jitter.end()));
+        printf("\n Jitter max  (us):  %.3f, idx: %zu", max_j, max_j_idx);
+        printf("\n Jitter p50  (us):  %.3f", percentile(0.50));
+        printf("\n Jitter p95  (us):  %.3f", percentile(0.95));
+        printf("\n Jitter p99  (us):  %.3f\n", percentile(0.99));
+
+        // Save per-packet jitter for further analysis / plotting
+        std::ofstream out("jitter_" + std::to_string((int)freq) + ".csv");
+        if (!out.is_open()) {
+            std::cerr << "Failed to open jitter_" << (int)freq << ".csv for writing\n";
+            return 1;
+        }
+        out << "sample_counter,jitter_us,inter_sample_us\n";
+        for (std::size_t i = 0; i < n; ++i) {
+            out << sample_counters[i] << "," << jitter[i] << "," << inter_sample_us[i] << "\n";
+        }
+        out.close();
+        std::cout << "Per-packet jitter saved to jitter_" << (int)freq << ".csv\n";
     }
-    for (double t : receive_times_diff) {
-        receive_times_output << t << "\n";
-    }
-    receive_times_output.close();
-    std::cout << "Results saved to receive_times.csv\n";
 
     return 0;
 }

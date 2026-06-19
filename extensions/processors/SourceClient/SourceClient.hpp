@@ -58,6 +58,24 @@ class SourceClient : public IProcessor {
   options::Int nsamples_{100};
   options::Int n_messages_{-1};
   options::Bool store_aux_{true};
-  
+
+  // Number of packets used for the initial start-time calibration.
+  // At 10 kHz, 1000 packets = 100 ms of startup delay.
+  options::Int calib_packets_{1000};
+ 
+  // Calibrated reference time (microseconds, in Clock's epoch) such that
+  // hardware_time_us(n) = start_time_us_ + n * 1e6 / fs approximates the
+  // true ADC sampling time of sample n (plus the fixed transit delay floor).
+  // Stored as a member so a later re-calibration step can update it.
+  uint64_t start_time_us_ = 0;
+ 
+  // Offset (microseconds) such that:
+  //   wallclock_us = clock_us + steady_to_wallclock_offset_us_
+  // Sampled once during calibration so hardware_time_us values (which live
+  // in Clock's/steady epoch) can be converted back to a real datetime
+  // during post-hoc analysis. Not used in any in-loop latency math.
+  int64_t steady_to_wallclock_offset_us_ = 0;
+ 
 //   std::vector<std::chrono::steady_clock::time_point> send_times;
+
 };

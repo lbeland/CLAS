@@ -26,6 +26,7 @@
 #include <chrono>
 #include <cmath>
 #include <sstream>
+#include <algorithm>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -73,6 +74,17 @@ bool parse_packet(const uint8_t *data, size_t len, Packet &pkt)
     return true;
 }
 
+namespace
+{
+    // Convert a microsecond count expressed in Clock's epoch back into a
+    // TimePoint of that same Clock. Used to turn the calibrated
+    // hardware_time_us back into a TimePoint for set_source_timestamp().
+    TimePoint micros_to_timepoint(uint64_t us)
+    {
+        return TimePoint(std::chrono::microseconds(us));
+    }
+}
+
 SourceClient::SourceClient() : IProcessor(PRIORITY_HIGH)
 {
     add_option("fs", fs_, "Sample Frequency of Turbolink Client");
@@ -80,6 +92,7 @@ SourceClient::SourceClient() : IProcessor(PRIORITY_HIGH)
     add_option("nsamples", nsamples_, "Number of samples per packet.");
     add_option("n_messages", n_messages_, "Number of packets to generate (-1 = infinite).");
     add_option("store_aux", store_aux_, "Whether to store auxiliary data.");
+    add_option("calib_packets", calib_packets_, "Number of packets used for initial start-time calibration.");
 }
 
 void SourceClient::CreatePorts()
@@ -110,6 +123,7 @@ void SourceClient::Preprocess(ProcessingContext &context)
 {
     // send_times.clear();
     packet_count_ = 0;
+    start_time_us_ = 0;
 
     sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0)
@@ -144,10 +158,8 @@ void SourceClient::Process(ProcessingContext &context)
     std::vector<float> eeg_vec(nchannels_());
     std::vector<float> aux_vec(9); // 8 aux channels + 1
 
-    // Measurement phase
     sockaddr_in src{};
     socklen_t srclen = sizeof(src);
-    TimePoint first_timestamp;
     TimePoint timestamp;
     uint64_t hardware_time_us = 0;
 
@@ -169,8 +181,104 @@ void SourceClient::Process(ProcessingContext &context)
         return;
     }
 
-    // Use wall clock time as reference for hardware timestamps
-    uint64_t start_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    // -----------------------------------------------------------------
+    // Calibration phase
+    //
+    // Receive a number of packets without publishing them, and use the
+    // (timestamp, sample_counter) pairs to estimate start_time_us_ such
+    // that:
+    //
+    //   hardware_time_us(n) = start_time_us_ + n * 1e6 / fs
+    //
+    // approximates the true ADC sampling time of relative sample n (plus
+    // the fixed transit-delay floor). Since reception jitter is one-sided
+    // (packets can only be delayed, never early), the minimum of
+    //
+    //   offset_i = timestamp_i_us - (sample_counter_i - first_counter) * 1e6 / fs
+    //
+    // over the calibration window is the best estimate of that floor.
+    // -----------------------------------------------------------------
+    {
+        const int n_calib = calib_packets_();
+        std::vector<int64_t> offsets_us;
+        offsets_us.reserve(static_cast<size_t>(std::max(n_calib, 0)));
+
+        bool have_first = false;
+        int collected = 0;
+        steady_to_wallclock_offset_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count() -
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                Clock::now().time_since_epoch()).count();
+
+        while (collected < n_calib && !context.terminated())
+        {
+            received = recvfrom(sock, buffer, sizeof(buffer), 0,
+                                (struct sockaddr *)&src, &srclen);
+            timestamp = Clock::now();
+
+            if (received < 0)
+            {
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    continue; // timeout: keep waiting for calibration packets
+
+                if (context.terminated())
+                    break;
+
+                perror("recvfrom");
+                break;
+            }
+
+            if (!parse_packet(buffer, received, pkt))
+            {
+                std::cerr << "Invalid packet size during calibration: " << received << std::endl;
+                continue;
+            }
+
+            if (!have_first)
+            {
+                first_sample_counter = pkt.sample_counter;
+                have_first = true;
+            }
+
+            const int64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                timestamp.time_since_epoch()).count();
+            const int64_t rel_samples = static_cast<int64_t>(pkt.sample_counter) -
+                                         static_cast<int64_t>(first_sample_counter);
+            const int64_t ideal_us = static_cast<int64_t>(
+                static_cast<double>(rel_samples) * 1e6 / fs_());
+
+            offsets_us.push_back(ts_us - ideal_us);
+
+            last_packet_ = pkt;
+            collected++;
+        }
+
+        if (!offsets_us.empty())
+        {
+            start_time_us_ = static_cast<uint64_t>(
+                *std::min_element(offsets_us.begin(), offsets_us.end()));
+
+            // Continue the main loop from where calibration left off.
+            sample_counter = pkt.sample_counter - first_sample_counter;
+
+            LOG(INFO) << name() << " Calibration complete using " << collected
+                      << " packets. start_time_us_ = " << start_time_us_
+                      << ", first_sample_counter = " << first_sample_counter;
+        }
+        else
+        {
+            // No packets received during calibration window (e.g. terminated
+            // early). Fall back to "now" so the processor can still run.
+            start_time_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
+                Clock::now().time_since_epoch()).count();
+
+            LOG(WARNING) << name() << " Calibration received no packets; "
+                         << "using current time as fallback start_time_us_ = "
+                         << start_time_us_;
+        }
+    }
+
+    const uint64_t start_time = start_time_us_;
 
     while (!context.terminated())
     {
@@ -206,66 +314,76 @@ void SourceClient::Process(ProcessingContext &context)
             continue;
         }
 
-        if (packet_count_ == 0)
+        // Sequence check (first_sample_counter / sample_counter were already
+        // initialized by the calibration phase above).
+        if (((pkt.sample_counter - first_sample_counter) > sample_counter + 1))
         {
-            first_sample_counter = pkt.sample_counter;
-            sample_counter = pkt.sample_counter - first_sample_counter;
-            first_timestamp = timestamp;
-            LOG(INFO) << name() << " First packet received. Sample counter: " << first_sample_counter;
-        }
-        else
-        {
-            if (((pkt.sample_counter - first_sample_counter) > sample_counter + 1))
+            int missed = (pkt.sample_counter - first_sample_counter) - sample_counter;
+            LOG(ERROR) << name() << " Missed packet(s). Last sample counter: " << sample_counter << ", current: " << pkt.sample_counter - first_sample_counter << ". Missed " << missed << " packets.";
+
+            int virt_sample_counter = sample_counter;
+            std::vector<MultiChannelType<float>::Data *> data_out_vec = data_slot->ClaimDataN(missed, false);
+            for (auto &data_out : data_out_vec)
             {
-                int missed = (pkt.sample_counter - first_sample_counter) - sample_counter;
-                LOG(ERROR) << name() << " Missed packet(s). Last sample counter: " << sample_counter << ", current: " << pkt.sample_counter - first_sample_counter << ". Missed " << missed << " packets.";
-                
-                int virt_sample_counter = sample_counter;
-                std::vector<MultiChannelType<float>::Data *> data_out_vec = data_slot->ClaimDataN(missed, false);
-                for (auto &data_out : data_out_vec)
+                virt_sample_counter++;
+                hardware_time_us = start_time + (uint64_t)virt_sample_counter * 1000000ULL / fs_();
+                const uint64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                    timestamp.time_since_epoch()).count();
+                if (hardware_time_us > ts_us) {
+                    // Calibration floor was set too high for this packet; clamp.
+                    hardware_time_us = ts_us;
+                }
+                // Linear interpolation (set last stored packet)
+                std::copy(last_packet_.eeg.begin(), last_packet_.eeg.begin() + nchannels_(), eeg_vec.begin());
+                data_out->set_data_sample(0, eeg_vec);
+
+                data_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us_);
+                data_out->set_source_timestamp(micros_to_timepoint(hardware_time_us));
+                data_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us_);
+            }
+            // data_slot->PublishData();
+
+            virt_sample_counter = sample_counter;
+            if (store_aux)
+            {
+                std::vector<MultiChannelType<float>::Data *> aux_out_vec = aux_slot->ClaimDataN(missed, false);
+                for (auto &aux_out : aux_out_vec)              
                 {
                     virt_sample_counter++;
                     hardware_time_us = start_time + (uint64_t)virt_sample_counter * 1000000ULL / fs_();
-                    // Linear interpolation (set last stored packet)
-                    std::copy(last_packet_.eeg.begin(), last_packet_.eeg.begin() + nchannels_(), eeg_vec.begin());
-                    data_out->set_data_sample(0, eeg_vec);
-
-                    data_out->set_sample_timestamp(0, hardware_time_us);
-                    data_out->set_source_timestamp(timestamp);
-                    data_out->set_hardware_timestamp(hardware_time_us);
-                }
-                // data_slot->PublishData();
-
-                virt_sample_counter = sample_counter;
-                if (store_aux)
-                {
-                    std::vector<MultiChannelType<float>::Data *> aux_out_vec = aux_slot->ClaimDataN(missed, false);
-                    for (auto &aux_out : aux_out_vec)              
-                    {
-                        virt_sample_counter++;
-                        hardware_time_us = start_time + (uint64_t)virt_sample_counter * 1000000ULL / fs_();
-                        std::copy(last_packet_.aux.begin(), last_packet_.aux.end(), aux_vec.begin());
-                        aux_vec[8] = (last_packet_.input_trigger >> 7) & 1 ? 1.0f : 0.0f; // Add trigger data in ninth channel
-                        aux_out->set_data_sample(0, aux_vec);
-
-                        // LOG(INFO) << name() << " Packet count: " << packet_count << " Received trigger: " << std::bitset<8>(pkt.input_trigger) << ", " << (pkt.input_trigger >> 7);
-                        aux_out->set_sample_timestamp(0, hardware_time_us);
-                        aux_out->set_source_timestamp(timestamp);
-                        aux_out->set_hardware_timestamp(hardware_time_us);
+                    const uint64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                        timestamp.time_since_epoch()).count();
+                    if (hardware_time_us > ts_us) {
+                        // Calibration floor was set too high for this packet; clamp.
+                        hardware_time_us = ts_us;
                     }
-                    // aux_slot->PublishData();
+                    std::copy(last_packet_.aux.begin(), last_packet_.aux.end(), aux_vec.begin());
+                    aux_vec[8] = (last_packet_.input_trigger >> 7) & 1 ? 1.0f : 0.0f; // Add trigger data in ninth channel
+                    aux_out->set_data_sample(0, aux_vec);
+
+                    // LOG(INFO) << name() << " Packet count: " << packet_count << " Received trigger: " << std::bitset<8>(pkt.input_trigger) << ", " << (pkt.input_trigger >> 7);
+                    aux_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us_);
+                    aux_out->set_source_timestamp(micros_to_timepoint(hardware_time_us));
+                    aux_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us_);
                 }
-                sample_counter += missed;
             }
-            else
-            {
-                sample_counter += 1;
-            }
+            sample_counter += missed;
+        }
+        else
+        {
+            sample_counter += 1;
         }
 
         TimePoint after_parsing = Clock::now();
 
         hardware_time_us = start_time + (uint64_t)sample_counter * 1000000ULL / fs_();
+        const uint64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            timestamp.time_since_epoch()).count();
+        if (hardware_time_us > ts_us) {
+            // Calibration floor was set too high for this packet; clamp.
+            LOG(WARNING) << name() << " Computed hardware_time_us (" << hardware_time_us << ") is in the future compared to current time (" << ts_us << ") Clamping hardware_time_us to current time.";
+            hardware_time_us = ts_us;
+        }
         // if (packet_count % 100 == 0) {
         //     LOG(INFO) << name() << ". Received packet " << packet_count + 1 << " with sample " << std::fixed << std::setprecision(2) << pkt.eeg[0] << " with sample counter " << pkt.sample_counter << " (hardware timestamp: " << hw_us << ")";
         // }
@@ -278,9 +396,9 @@ void SourceClient::Process(ProcessingContext &context)
         std::copy(pkt.eeg.begin(), pkt.eeg.begin() + nchannels_(), eeg_vec.begin());
         data_out->set_data_sample(0, eeg_vec);        
 
-        data_out->set_sample_timestamp(0, hardware_time_us);
-        data_out->set_source_timestamp(timestamp);
-        data_out->set_hardware_timestamp(hardware_time_us);
+        data_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us_);
+        data_out->set_source_timestamp(micros_to_timepoint(hardware_time_us));
+        data_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us_);
 
         // LOG(INFO) << name() << ". Sent message " << packet_count + 1 << " with sample " << pkt.eeg[0] << ".";
 
@@ -292,20 +410,18 @@ void SourceClient::Process(ProcessingContext &context)
         TimePoint after_publish_eeg = Clock::now();
 
         // Handle AUX and Trigger data if defined
+        aux_out = aux_slot->ClaimData(true);
+        aux_out->set_source_timestamp(micros_to_timepoint(hardware_time_us));
+        aux_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us_); 
         if (store_aux)
         {
-            aux_out = aux_slot->ClaimData(false);
             std::copy(pkt.aux.begin(), pkt.aux.end(), aux_vec.begin());
             aux_vec[8] = (pkt.input_trigger >> 7) & 1 ? 1.0f : 0.0f; // Add trigger data in ninth channel
             aux_out->set_data_sample(0, aux_vec);
 
-            aux_out->set_sample_timestamp(0, hardware_time_us);
-            // LOG(INFO) << name() << " Packet count: " << packet_count << " Received trigger: " << std::bitset<8>(pkt.input_trigger) << ", " << (pkt.input_trigger >> 7);
-            aux_out->set_sample_timestamp(0, hardware_time_us);
-            aux_out->set_source_timestamp(timestamp);
-            aux_out->set_hardware_timestamp(hardware_time_us);
-            aux_slot->PublishData();
+            aux_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us_);
         }
+        aux_slot->PublishData();
 
         TimePoint after_publish_aux = Clock::now();
 

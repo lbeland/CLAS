@@ -163,7 +163,7 @@ def make_snr_only(snr_mode, snr_threshold=5.0, floor_value=1.0):
             P_noise  = np.sum(aperiodic_lin[band_mask])
         elif snr_mode == "model_minus_aperiodic":
             aperiodic_lin = np.power(10, aperiodic_simple)
-            P_signal = np.sum((aperiodic_lin[band_mask] * gaussian[band_mask]) - aperiodic_lin[band_mask])
+            P_signal = np.sum((aperiodic_lin[band_mask] * (gaussian[band_mask]) - 1.0))
             P_noise  = np.sum(aperiodic_lin[band_mask])
         elif snr_mode == "gauss_over_flat":
             floor_value_use = floor_value if floor_value != "median" else np.median(psd_flat)

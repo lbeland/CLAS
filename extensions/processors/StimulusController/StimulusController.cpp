@@ -246,25 +246,17 @@ void StimulusController::build_audio_buffers_()
     if (peak < 1e-12)
         peak = 1.0;
     for (double &v : mono)
-        v = (v / peak) * amplitude;
+        v = v / peak;
 
-    burst_buf_.assign(static_cast<size_t>(burst_frames_ * channels), 0.0);
+    sound_buf_.assign(static_cast<size_t>(burst_frames_ * channels), 0.0);
     for (int i = 0; i < burst_frames_; ++i)
     {
         for (int ch = 0; ch < channels; ++ch)
         {
-            burst_buf_[static_cast<size_t>(i * channels + ch)] = mono[static_cast<size_t>(i)];
+            sound_buf_[static_cast<size_t>(i * channels + ch)] = mono[static_cast<size_t>(i)];
         }
     }
 
-    silence_buf_.assign(static_cast<size_t>(period_frames_ * channels), 0.0);
-
-    burst_buf_s16_.assign(burst_buf_.size(), 0);
-    for (size_t i = 0; i < burst_buf_.size(); ++i)
-    {
-        burst_buf_s16_[i] = double_to_s16_(burst_buf_[i]);
-    }
-    silence_buf_s16_.assign(silence_buf_.size(), 0);
 }
 
 static bool set_hw_params_interleaved_(snd_pcm_t *pcm,
@@ -483,60 +475,74 @@ void StimulusController::stop_audio_() noexcept
     }
 }
 
+void StimulusController::write_with_recovery_(snd_pcm_t *pcm, const void *buf, snd_pcm_uframes_t frames)
+{
+    snd_pcm_sframes_t written = snd_pcm_writei(pcm, buf, frames);
+    if (written == -EPIPE)
+    {
+        auto rc = snd_pcm_prepare(pcm);
+        if (rc < 0)
+            LOG(ERROR) << name() << " Failed to prepare ALSA device after underrun: " << snd_strerror(rc);
+        (void)snd_pcm_writei(pcm, buf, frames);
+        LOG(WARNING) << name() << " ALSA buffer underrun occurred; attempted recovery";
+    }
+    else if (written < 0)
+    {
+        auto rc = snd_pcm_prepare(pcm);
+        if (rc < 0)
+            LOG(ERROR) << name() << " Failed to prepare ALSA device after underrun: " << snd_strerror(rc);
+    }
+}
+
 void StimulusController::audio_thread_main_()
 {
     while (audio_running_.load())
     {
         snd_pcm_t *local_pcm = nullptr;
-        const void *buf = nullptr;
+        bool do_burst = false;
+        float target_gain = 0.0f;
         snd_pcm_uframes_t frames = 0;
 
         {
             std::lock_guard<std::mutex> lock(audio_mutex_);
             local_pcm = pcm_;
-            if (!local_pcm)
-                break;
-
+            if (!local_pcm) break;
             // Resolve buffer pointer and frame count under the mutex so we never
             // race with build_audio_buffers_() rewriting these vectors.
-            const bool do_burst = audio_trigger_pending_.exchange(false);
-            frames = static_cast<snd_pcm_uframes_t>(do_burst ? burst_frames_ : period_frames_);
-            if (pcm_format_ == SND_PCM_FORMAT_S16_LE)
-            {
-                buf = do_burst ? static_cast<const void *>(burst_buf_s16_.data())
-                               : static_cast<const void *>(silence_buf_s16_.data());
-            }
-            else
-            {
-                buf = do_burst ? static_cast<const void *>(burst_buf_.data())
-                               : static_cast<const void *>(silence_buf_.data());
-            }
+            do_burst = audio_trigger_pending_.exchange(false);
+            target_gain = do_burst ? static_cast<float>(stim_amplitude_()) : 0.0f;
+
+            // Determine frame count
+            frames = do_burst ? burst_frames_ : period_frames_;
         }
-        // buf points into vector heap storage. Reallocation only happens inside
-        // build_audio_buffers_() which requires audio_mutex_, so the pointer is
-        // stable for the duration of this (blocking) write.
-        snd_pcm_sframes_t written = snd_pcm_writei(local_pcm, buf, frames);
-        if (written == -EPIPE)
+
+
+        snd_pcm_sframes_t written;
+
+        // Apply gain and convert inline — no second buffer needed
+        if (pcm_format_ == SND_PCM_FORMAT_S16_LE)
+            {
+            std::vector<int16_t> out(frames * audio_channels_());
+            for (int i = 0; i < frames * audio_channels_(); ++i)
+            {
+                // gain_ is directly set to target, change 1 to a smaller value for smoothing
+                gain_ += (target_gain - gain_) * 0.01; //0.01f;
+                out[i] = double_to_s16_(sound_buf_[i] * gain_);
+            }
+            write_with_recovery_(local_pcm, out.data(), frames);
+            
+        }
+        else
         {
-            auto rc = snd_pcm_prepare(local_pcm);
-            if (rc < 0)
-            {
-                LOG(ERROR) << name() << " Failed to prepare ALSA device after underrun: " << snd_strerror(rc);
-            }
-            // Retry once after xrun recovery
-            (void)snd_pcm_writei(local_pcm, buf, frames);
-            LOG(WARNING) << name() << " ALSA buffer underrun occurred; attempted recovery";
-        }
-        else if (written < 0)
+            std::vector<float> out(frames * audio_channels_());
+            for (int i = 0; i < frames * audio_channels_(); ++i)
         {
-            // Other recoverable errors (e.g. suspended)
-            auto rc = snd_pcm_prepare(local_pcm);
-            if (rc < 0)
-            {
-                LOG(ERROR) << name() << " Failed to prepare ALSA device after underrun: " << snd_strerror(rc);
+                gain_ += (target_gain - gain_) * 0.01; //0.01f;
+                out[i] = static_cast<float>(sound_buf_[i]) * gain_;
             }
+            write_with_recovery_(local_pcm, out.data(), frames);
         }
-        // Short-write: remaining frames will be covered by the next silence period.
+        
     }
 
     // Drain only if we still have a valid handle

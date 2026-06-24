@@ -639,6 +639,12 @@ void StimulusController::Process(ProcessingContext &context)
                 LOG(INFO) << name() << " IAF changed " << last_iaf_ << " -> " << iaf_
                           << ": burst rebuilt to " << burst_ms_ << " ms";
             }
+            if (min_stim_dist_sec_() == 0){
+                // make sure each stimulus is minimum half an alpha cycle apart to avoid overlapping bursts 
+                double half_alpha_cycle = 1.0 / (2.0 * iaf_);   
+                distrib_interval = std::uniform_real_distribution<double>(half_alpha_cycle, half_alpha_cycle);
+                stim_dist_sec_ = distrib_interval(gen);
+            }
             last_iaf_ = iaf_;
         }
 

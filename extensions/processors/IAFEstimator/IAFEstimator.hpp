@@ -64,6 +64,7 @@ class IAFEstimator : public IProcessor {
     int max_analyze_bin;
     int f_min_bin;
     int f_max_bin;
+    double SNR_ = 1.0;
     fftwf_plan fft_plan_;
     float *signal_in;
     fftwf_complex *freq_half;
@@ -83,8 +84,9 @@ class IAFEstimator : public IProcessor {
     options::Double f_min_{5.0};
     options::Double f_max_{18.0};
     options::Value<unsigned int, false> calc_interval_{100};
-    options::Double max_invalid_sec{3.0};
-    options::Double kalman_estimator_std_{0.96};       // estimator noise std [Hz]
+    options::Double max_invalid_sec{1.0};
+    // options::Double kalman_estimator_std_{0.96};       // estimator noise std [Hz]
     options::Double kalman_iaf_std_{0.397857};        // IAF drift std [Hz]
     options::Bool   kalman_full_{true};               // true = full KF (adaptive gain), false = EMA-equivalent (fixed gain)
+    options::Double max_gauss_width_hz_{2.0};           // Max Gaussian width for peak detection (Hz)
 };

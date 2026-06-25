@@ -168,7 +168,7 @@ void Producer::Process(ProcessingContext &context)
         data_out = data_out_port_->slot(0)->ClaimData(false);
         meta_out = meta_out_port_->slot(0)->ClaimData(false);
 
-        const SignalState state = ComputeSignalState(
+        SignalState state = ComputeSignalState(
             carrier_phase,
             carrier_amplitude_(),
             carrier_frequency_(),
@@ -176,6 +176,9 @@ void Producer::Process(ProcessingContext &context)
             modulation_amplitude_(),
             modulation_frequency_(),
             modulation_phase);
+
+        // Add random noise
+        state.value += 0.1 * carrier_amplitude_() * ((std::rand() / (double)RAND_MAX) - 0.5);
 
         std::vector<double> meta_data = {
             state.amplitude,
@@ -206,7 +209,8 @@ void Producer::Process(ProcessingContext &context)
 
         // send_times.push_back(timestamp);
         ++packet_count_;
-        // custom_sleep_for(90);
+
+        custom_sleep_for(90);
 
         carrier_phase = WrapPhase(carrier_phase + carrier_step);
         modulation_phase = WrapPhase(modulation_phase + modulation_step);

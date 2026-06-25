@@ -80,23 +80,24 @@ def main():
                         gen_filter_ecHT(params, output_folder=os.path.join(resources_folder, "filters"))
      
 
-    graph_process = subprocess.Popen(["./build/release/falcon/falcon",args.graph, "--config", WORKSPACE_FALCON_CONFIG],stdin=subprocess.PIPE)
-
-    time.sleep(0.5)
-
-    context = zmq.Context()
-    socket = context.socket(zmq.REQ)
-    socket.connect(f"tcp://127.0.0.1:{config['network']['port']}")
-    output = f"{Path(args.results_dir).name}_{time.strftime('%Y%m%d_%H%M%S')}"
-    socket.send_multipart([b"graph", b"start", RESULTS_DIR.encode(), output.encode(), b""])
-    socket.recv_multipart()
-    # Copy graph file to results directory for record-keeping
-    results_dir_path =  Path(RESULTS_DIR) / Path(output)
-    results_dir_path.mkdir(parents=True, exist_ok=True)
-    output_graph_path = results_dir_path / args.graph
-    shutil.copy2(graph_path, output_graph_path)
-
     try:
+
+        graph_process = subprocess.Popen(["./build/release/falcon/falcon",args.graph, "--config", WORKSPACE_FALCON_CONFIG],stdin=subprocess.PIPE)
+
+        time.sleep(0.5)
+
+        context = zmq.Context()
+        socket = context.socket(zmq.REQ)
+        socket.connect(f"tcp://127.0.0.1:{config['network']['port']}")
+        output = f"{Path(args.results_dir).name}_{time.strftime('%Y%m%d_%H%M%S')}"
+        socket.send_multipart([b"graph", b"start", RESULTS_DIR.encode(), output.encode(), b""])
+        socket.recv_multipart()
+        # Copy graph file to results directory for record-keeping
+        results_dir_path =  Path(RESULTS_DIR) / Path(output)
+        results_dir_path.mkdir(parents=True, exist_ok=True)
+        output_graph_path = results_dir_path / args.graph
+        shutil.copy2(graph_path, output_graph_path)
+
         # Wait for falcon to complete (processors will auto-exit after processing n_messages)
         # return_code = graph_process.wait()
 

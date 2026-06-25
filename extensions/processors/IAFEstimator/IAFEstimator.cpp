@@ -373,7 +373,7 @@ IAFEstimator::IAFEstimator() : IProcessor(PRIORITY_HIGH)
     add_option("f_max", f_max_, "Right bound of alpha search range.");
     add_option("calc_interval", calc_interval_, "Number of packets between IAF calculations.");
     add_option("max_invalid_sec", max_invalid_sec, "Maximum duration of invalid data in seconds before reset of estimation.");
-    add_option("kalman_estimator_std", kalman_estimator_std_, "Expected std of the IAF estimator output [Hz]. Sets Kalman R.");
+    // add_option("kalman_estimator_std", kalman_estimator_std_, "Expected std of the IAF estimator output [Hz]. Sets Kalman R.");
     add_option("kalman_iaf_std", kalman_iaf_std_, "Std of the IAF drift [Hz/s]. Sets Kalman Q.");
     add_option("kalman_full", kalman_full_, "If true, use full Kalman filter with adaptive gain and cold-start. If false, use EMA-equivalent fixed gain.");
 
@@ -419,8 +419,8 @@ void IAFEstimator::Prepare(GlobalContext &context)
 
     const double update_interval_s = static_cast<double>(calc_interval_()) / p.sample_rate;
 
-    // R: measurement noise variance from estimator std
-    kf_R_ = kalman_estimator_std_() * kalman_estimator_std_();
+    // R: measurement noise variance from estimator std (see IAF_tests)
+    kf_R_ = 0.9933;
 
     // Q: process noise variance per update step
     const double drift_var_per_s = kalman_iaf_std_() * kalman_iaf_std_();
@@ -437,7 +437,7 @@ void IAFEstimator::Prepare(GlobalContext &context)
     const double alpha_equivalent = 1.0 - K_steady;
     const double tau_equivalent   = -update_interval_s / std::log(alpha_equivalent);
 
-    invalid_threshold_ = static_cast<int>(std::ceil(tau_equivalent * p.sample_rate / calc_interval_()));
+    invalid_threshold_ = static_cast<int>((fs_ * max_invalid_sec()) / calc_interval_());
 
     LOG(INFO) << name() << " Kalman filter configured:"
               << " Q=" << kf_Q_ << " R=" << kf_R_
@@ -514,11 +514,19 @@ void IAFEstimator::Process(ProcessingContext &context)
     MultiChannelType<float>::Data *data_in;
     ScalarType<double>::Data *data_out;
 
-    // Helper lambda: one Kalman update step
-    auto kalman_update = [&](double measurement) {
+
+    auto kalman_predict = [&]() {
         // Predict: uncertainty grows
         kf_P_ = kf_P_ + kf_Q_;
+    };
+
+    // Helper lambda: one Kalman update step
+    auto kalman_update = [&](double measurement, double R_n) {
         // Update: compute gain, correct estimate, shrink uncertainty
+        if (kalman_full_())
+        {
+            kf_R_ = R_n;
+        }
         const double K = kf_P_ / (kf_P_ + kf_R_);
         kf_x_ = kf_x_ + K * (measurement - kf_x_);
         kf_P_ = (1.0 - K) * kf_P_;
@@ -598,6 +606,10 @@ void IAFEstimator::Process(ProcessingContext &context)
 
             if (peak.valid)
             {
+                invalid_count_ = std::max(0, invalid_count_ - 1);
+                current_iaf_ = peak.iaf_hz;
+                last_valid_iaf_ = peak.iaf_hz;
+                current_gauss_width_ = peak.sigma_hz;
                 if (std::isnan(kf_x_))
                 {
                     // First valid estimate — initialize state directly (no smoothing yet)
@@ -605,26 +617,55 @@ void IAFEstimator::Process(ProcessingContext &context)
                 }
                 else
                 {
-                    kalman_update(peak.iaf_hz);
+                    if (kalman_full_())
+                    {
+                        // double P_signal = 0.0;
+                        // double P_noise = 0.0;
+
+                        for (int k = 0; k < max_analyze_bin; ++k)
+                        {
+                            double freq = freqs[k];
+                            if (std::abs(freq - peak.iaf_hz) <= 2 * peak.sigma_hz) // Consider power within +-2 sigma of the peak as signal
+                            {
+                                // gauss[k] is only excess power above aperiodic fit: 10^G - 1 
+                                // P_signal += aperiodic[k] * (gauss[k] + 1.0 - 1.0);
+                                // P_signal += aperiodic[k] * gauss[k]; // Signal power is gaussian peak
+                                // P_noise += aperiodic[k];
+                                SNR_ += gauss[k];
+                            }
+                        }
+ 
+                        // Prevent SNR from being zero (would cause division by zero), minimum -100dB
+                        SNR_ = std::max(SNR_, 1e-5);
+
+                        // double T = 1.0 / fs_;
+                        // double R_n = 6 / (4*pow(M_PI,2)*SNR_*pow(T,2)*window_size_*(pow(window_size_,2)-1));
+                        double R_n = current_gauss_width_*current_gauss_width_ / (2 * SNR_); 
+
+                        kalman_update(peak.iaf_hz, R_n);
+                    }
+                    else
+                    {
+                        // EMA-equivalent fixed gain update
+                        kalman_update(peak.iaf_hz, kf_R_);
+                    }
                 }
-                invalid_count_ = std::max(0, invalid_count_ - 1);
-                current_iaf_ = peak.iaf_hz;
-                last_valid_iaf_ = peak.iaf_hz;
-                current_gauss_width_ = peak.sigma_hz;
             }
             else
             {
-                invalid_count_ = std::min(invalid_count_ + 1, invalid_threshold_);
-                if ((!std::isnan(last_valid_iaf_)) && (!std::isnan(kf_x_)))
-                {
-                    // No valid peak — fall back to last known IAF as measurement
-                    kalman_update(last_valid_iaf_);
-                }
+                // to get valid IAF again after many invalids, we need at least 10 consecutive valid estimates to trust estimation again
+                invalid_count_ = std::min(invalid_count_ + 1, invalid_threshold_ + 10);
+                // if ((!std::isnan(last_valid_iaf_)) && (!std::isnan(kf_x_)))
+                // {
+                    // No valid peak — do not update 
+                    // kalman_update(last_valid_iaf_);
+                // }
                 current_iaf_ = std::numeric_limits<double>::quiet_NaN();
                 current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
             }
-            if (invalid_count_ >= (fs_ * max_invalid_sec()) / calc_interval_())
+            if (invalid_count_ >= invalid_threshold_)
             {
+                LOG(WARNING) << name() << " Too many consecutive invalid estimates, resetting IAF Estimation.";
                 kf_x_ = std::numeric_limits<double>::quiet_NaN(); // Reset if too many invalid estimates
                 kf_P_ = kalman_full_() ? kf_R_ : std::sqrt(kf_Q_ * kf_R_);
             }
@@ -633,7 +674,7 @@ void IAFEstimator::Process(ProcessingContext &context)
             TimePoint end_time = Clock::now();
             if (packet_count_ % int(fs_) == 0)
             {
-                LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated IAF = " << current_iaf_ << "Hz (sigma: " << current_gauss_width_ << "), KF estimate: " << kf_x_ << "Hz (P=" << kf_P_ << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
+                LOG(INFO) << name() << " Packet " << packet_count_ << "(" << invalid_count_ << " invalid): Estimated IAF = " << current_iaf_ << "Hz (sigma: " << current_gauss_width_ << "), KF estimate: " << kf_x_ << "Hz (R=" << kf_R_ << ", SNR=" << SNR_ << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
             }
             // double processing_time_us = std::chrono::duration<double, std::micro>(end_time - start_time).count();
             // LOG(INFO) << name() << " Processed packet "<< packet_count_ << " in " << std::fixed << std::setprecision(2) << processing_time_us << " us";

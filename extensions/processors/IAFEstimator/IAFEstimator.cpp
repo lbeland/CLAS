@@ -699,12 +699,12 @@ void IAFEstimator::Unprepare(GlobalContext &context)
 {
     {
         std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
-    // Save FFTW wisdom for future runs to speed up plan creation
-    int ret = fftwf_export_wisdom_to_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
-    if (ret == 0)
-    {
-        LOG(WARNING) << name() << " Failed to save FFTW wisdom.";
-    }
+        // Save FFTW wisdom for future runs to speed up plan creation
+        int ret = fftwf_export_wisdom_to_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
+        if (ret == 0)
+        {
+            LOG(WARNING) << name() << " Failed to save FFTW wisdom.";
+        }
 
         fftwf_destroy_plan(fft_plan_);
     }

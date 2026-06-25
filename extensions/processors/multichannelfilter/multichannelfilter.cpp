@@ -148,7 +148,7 @@ void MultiChannelFilter::Process(ProcessingContext &context) {
 }
 
 void MultiChannelFilter::Postprocess(ProcessingContext &context) {
-  printf("\n ---------------- \n MultiChannelFilter: Total messages processed: %d", packet_count_);
+  LOG(INFO) << name() << ": Total messages processed: " << packet_count_;
 }
 
 REGISTERPROCESSOR(MultiChannelFilter)

@@ -21,7 +21,9 @@
 #include "iprocessor.hpp"
 #include "scalardata/scalardata.hpp"
 #include "multichanneldata/multichanneldata.hpp"
+#include <boost/circular_buffer.hpp>
 #include <alsa/asoundlib.h>
+#include "miniaudio/miniaudio.c"
 #include <atomic>
 #include <complex>
 #include <mutex>
@@ -69,8 +71,18 @@ class StimulusController : public IProcessor {
 
     void build_audio_buffers_();
     bool start_audio_();
+    void write_with_recovery_(snd_pcm_t *pcm, const void *buf, snd_pcm_uframes_t frames);
     void stop_audio_() noexcept;
     void audio_thread_main_();
+    bool set_hw_params_interleaved_(snd_pcm_t *pcm,
+        int sample_rate,
+        int channels,
+        snd_pcm_uframes_t period_frames,
+        snd_pcm_uframes_t buffer_frames,
+        snd_pcm_format_t format,
+        const char *format_name,
+        std::string *fail_step,
+        int *fail_rc);
 
     std::atomic<bool> audio_running_{false};
     std::atomic<bool> audio_trigger_pending_{false};
@@ -79,17 +91,26 @@ class StimulusController : public IProcessor {
     snd_pcm_t* pcm_ = nullptr;
 
     double period_ms_ = 0;
+    double burst_precompute_ms_ = 1000; // precompute 1 second of audio buffers
     double burst_ms_ = 0;
     double last_iaf_ = std::numeric_limits<double>::quiet_NaN(); // last IAF used to build buffers
 
+    // std::vector<double> burst_buf_;
+    // std::vector<double> silence_buf_;
+
+    // // Optional integer buffers for direct hw devices
+    // std::vector<int16_t> burst_buf_s16_;
+    // std::vector<int16_t> silence_buf_s16_;
+
+    double fs_audio_ = 0;
     int burst_frames_ = 0;
     int period_frames_ = 0;
-    std::vector<double> burst_buf_;
-    std::vector<double> silence_buf_;
-
-    // Optional integer buffers for direct hw devices
-    std::vector<int16_t> burst_buf_s16_;
-    std::vector<int16_t> silence_buf_s16_;
+    boost::circular_buffer<float> background_sound_buffer_{1}; // Initialized with size 1, will be resized in Prepare
+    float gain_ = 0.0;
+    float power_s_ = 0.0; // Power of the stimulus signal (used for gain normalization)
+    std::vector<double> sound_buf_;
+    bool valid_background_ = false;
+    ma_decoder decoder_;
 
     // Active PCM format (set during start_audio_)
     snd_pcm_format_t pcm_format_ = SND_PCM_FORMAT_FLOAT_LE;
@@ -128,5 +149,6 @@ class StimulusController : public IProcessor {
     options::Bool randomize_stim_onset_{false};
     options::Double min_stim_dist_sec_{0};
     options::Double max_stim_dist_sec_{-1};
+    options::Bool use_background_sound_{false};
 
 };

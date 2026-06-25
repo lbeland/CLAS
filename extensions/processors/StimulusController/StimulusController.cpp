@@ -33,6 +33,8 @@
 #include <cstdint>
 #include <random>
 
+namespace
+{
 static inline int16_t double_to_s16_(double x)
 {
     if (x > 1.0)
@@ -43,9 +45,11 @@ static inline int16_t double_to_s16_(double x)
     return static_cast<int16_t>(lrint(x * 32767.0));
 }
 
-double wrap_phase_rad(double radians)
-{
-    return std::fmod(radians + M_PI, 2.0 * M_PI) - M_PI;
+// double wrap_phase_rad(double radians)
+// {
+//     return std::fmod(radians + M_PI, 2.0 * M_PI) - M_PI;
+// }
+
 }
 
 StimulusController::StimulusController() : IProcessor(PRIORITY_HIGH)
@@ -71,6 +75,8 @@ StimulusController::StimulusController() : IProcessor(PRIORITY_HIGH)
     add_option("randomize_stim_onset", randomize_stim_onset_, "Whether to randomize stimulus onset phase on each presentation (default: false).");
     add_option("min_stim_dist_sec", min_stim_dist_sec_, "Minimum distance between stimuli in seconds.");
     add_option("max_stim_dist_sec", max_stim_dist_sec_, "Maximum distance between stimuli in seconds.");
+
+    add_option("use_background_sound", use_background_sound_, "Whether to play a continuous background sound (default: false).");
 
     iaf_state_ = create_follower_state<double>(
         "iaf", 10.0, Permission::NONE,
@@ -101,7 +107,6 @@ void StimulusController::CompleteStreamInfo()
 bool StimulusController::compute_burst_params_(double iaf)
 {
     double new_burst_ms = 0;
-    int new_burst_frames = 0;
 
     if (dur_unit_ == DurUnit::kMs)
     {
@@ -174,6 +179,37 @@ void StimulusController::Prepare(GlobalContext &context)
         LOG(INFO) << name() << " Stimulus onset: " << stim_onset_deg_() << " deg (" << stim_onset_rad_ << " rad)";
     }
     dur_unit_ = (stim_dur_unit_() == "deg") ? DurUnit::kDeg : DurUnit::kMs;
+
+    fs_audio_ = std::max(1, audio_sample_rate_());
+    period_ms_ = stim_period_ms_();
+    period_frames_ = static_cast<int>(period_ms_ * fs_audio_ / 1000.0);
+    LOG(INFO) << name() << " Period frames: " << period_frames_ << " (period_ms=" << period_ms_ << " ms, sample_rate=" << fs_audio_ << " Hz)";
+
+    background_sound_buffer_.set_capacity(fs_audio_ * audio_channels_() * 5); // 5 seconds of background sound buffer
+    background_sound_buffer_.clear();
+
+    // Load background sound if enabled
+    if (use_background_sound_())
+    {
+        std::string file = context.resolve_path("background.mp3","sounds");
+        const char *sound_path = file.c_str();
+        LOG(INFO) << name() << " Loading background sound from " << sound_path;
+
+        ma_result result;
+  
+        ma_decoder_config config = ma_decoder_config_init(ma_format_f32, audio_channels_(), fs_audio_);
+        result = ma_decoder_init_file(sound_path, &config, &decoder_);
+        if (result != MA_SUCCESS)
+        {
+            LOG(ERROR) << name() << " Failed to initialize decoder for background sound: " << sound_path;
+            valid_background_ = false;
+        }
+        else
+        {
+            ma_data_source_set_looping(&decoder_, MA_TRUE);
+            valid_background_ = true;
+        }
+    }
 }
 
 void StimulusController::Preprocess(ProcessingContext &context)
@@ -183,10 +219,32 @@ void StimulusController::Preprocess(ProcessingContext &context)
     compute_burst_params_(iaf); // sets stim_dur_rad_, burst_frames_, period_ms_
     build_audio_buffers_();     // uses burst_frames_ and period_ms_ set above
 
-    if (!start_audio_())
+    background_sound_buffer_.clear();
+    if (use_background_sound_() && valid_background_)
     {
-        LOG(ERROR) << name() << " failed to start audio playback (device: " << audio_device_() << ")";
-        throw std::runtime_error("Failed to start audio playback");
+        // Fill buffer with 1 second of background sound to avoid underruns at start
+        int frames = (int)(5 * fs_audio_); // 5 seconds of audio
+        std::vector<float> out_f(frames * audio_channels_());
+        ma_data_source_read_pcm_frames(&decoder_, out_f.data(), frames, NULL);
+        background_sound_buffer_.insert(background_sound_buffer_.end(), out_f.begin(), out_f.end());
+
+        // Get power of background sound for gain normalization
+        double power_b = 0.0;
+        for (float sample : out_f)
+        {
+            power_b += sample * sample;
+        }
+        power_b /= out_f.size();
+        // Stimulus shall be 18db above background sound
+        gain_ = std::pow(10.0, 18.0 / 10.0) * power_b/power_s_;
+
+    }
+    else {
+        // use stimulus amplitude as gain if no background sound
+        gain_ = stim_amplitude_();
+        // fill background with zeros
+        std::vector<float> zeros(background_sound_buffer_.capacity(), 0.0f);
+        background_sound_buffer_.insert(background_sound_buffer_.end(), zeros.begin(), zeros.end());
     }
 
     packet_count_ = 0;
@@ -215,9 +273,10 @@ void StimulusController::build_audio_buffers_()
 
     std::vector<double> bands(static_cast<size_t>(num_octaves), 0.0);
     unsigned int counter = 0;
+    int burst_frames_precompute =(int)(burst_precompute_ms_ * fs_audio_ / 1000.0);
 
-    std::vector<double> mono(static_cast<size_t>(burst_frames_));
-    for (int i = 0; i < burst_frames_; ++i)
+    std::vector<double> mono(static_cast<size_t>(burst_frames_precompute));
+    for (int i = 0; i < burst_frames_precompute; ++i)
     {
         ++counter;
         for (int b = 0; b < num_octaves; ++b)
@@ -234,25 +293,29 @@ void StimulusController::build_audio_buffers_()
     }
 
     double peak = 0.0;
+    power_s_ = 0.0;
     for (double v : mono)
         peak = std::max(peak, std::abs(v));
     if (peak < 1e-12)
         peak = 1.0;
     for (double &v : mono)
+    {
         v = v / peak;
+        power_s_ += v * v;
+    }
+    power_s_ /= mono.size();
 
-    sound_buf_.assign(static_cast<size_t>(burst_frames_ * channels), 0.0);
-    for (int i = 0; i < burst_frames_; ++i)
+    sound_buf_.assign(static_cast<size_t>(burst_frames_precompute * channels), 0.0);
+    for (int i = 0; i < burst_frames_precompute; ++i)
     {
         for (int ch = 0; ch < channels; ++ch)
         {
             sound_buf_[static_cast<size_t>(i * channels + ch)] = mono[static_cast<size_t>(i)];
         }
     }
-
 }
 
-static bool set_hw_params_interleaved_(snd_pcm_t *pcm,
+bool StimulusController::set_hw_params_interleaved_(snd_pcm_t *pcm,
                                        int sample_rate,
                                        int channels,
                                        snd_pcm_uframes_t period_frames,
@@ -310,11 +373,20 @@ static bool set_hw_params_interleaved_(snd_pcm_t *pcm,
     rc = snd_pcm_hw_params_set_period_size_near(pcm, hw, &period, 0);
     if (rc < 0)
         return fail("snd_pcm_hw_params_set_period_size_near", rc);
+    else if (period != period_frames)
+    {
+        LOG(WARNING) << "ALSA period size changed from requested " << period_frames << " to " << period;
+        period_frames_ = period; // update to actual period size
+    }
 
     snd_pcm_uframes_t bufsize = buffer_frames;
     rc = snd_pcm_hw_params_set_buffer_size_near(pcm, hw, &bufsize);
     if (rc < 0)
         return fail("snd_pcm_hw_params_set_buffer_size_near", rc);
+    else if (bufsize != buffer_frames)
+    {
+        LOG(WARNING) << "ALSA buffer size changed from requested " << buffer_frames << " to " << bufsize;
+    }
 
     rc = snd_pcm_hw_params(pcm, hw);
     if (rc < 0)
@@ -352,10 +424,11 @@ bool StimulusController::start_audio_()
 {
     stop_audio_();
 
-    const int sample_rate = std::max(1, audio_sample_rate_());
     const int channels = std::clamp(audio_channels_(), 1, 8);
     const snd_pcm_uframes_t period = static_cast<snd_pcm_uframes_t>(std::max(1, period_frames_));
-    const snd_pcm_uframes_t bufsize = period * 2; // How many frames ALSA should buffer internally; must be >= period_frames_
+    // How many frames ALSA can buffer internally; must be >= 2*period_frames_ (10ms)
+    // const snd_pcm_uframes_t bufsize = static_cast<snd_pcm_uframes_t>(std::max(1, fs_audio_ * 10 / 1000));
+    const snd_pcm_uframes_t bufsize = static_cast<snd_pcm_uframes_t>(std::max(1, period_frames_ * 3)); // 2 periods 
 
     snd_pcm_t *local_pcm = nullptr;
     const std::string dev = audio_device_();
@@ -486,61 +559,90 @@ void StimulusController::write_with_recovery_(snd_pcm_t *pcm, const void *buf, s
         if (rc < 0)
             LOG(ERROR) << name() << " Failed to prepare ALSA device after underrun: " << snd_strerror(rc);
     }
+    else if (written != static_cast<snd_pcm_sframes_t>(frames))
+    {
+        LOG(WARNING) << name() << " ALSA write returned " << written << " frames, expected " << frames;
+    }
 }
 
 void StimulusController::audio_thread_main_()
 {
+    int channels = audio_channels_();
+    snd_pcm_sframes_t buffer_size = 1 * fs_audio_ * channels; // 1 second of audio buffer
+    std::vector<float>   out_f(buffer_size);
+    std::vector<int16_t> out_s(buffer_size);
+    int queue_size_left = 0;
+    int queue_size_max = 0;
+    int queue_size_min = snd_pcm_avail(pcm_);
+    LOG(INFO) << name() << " Audio thread started, initial queue size: " << queue_size_min << " frames";
+    snd_pcm_t *local_pcm = nullptr;
+    bool do_burst = false;
+    snd_pcm_uframes_t frames = 0;
+
     while (audio_running_.load())
     {
-        snd_pcm_t *local_pcm = nullptr;
-        bool do_burst = false;
-        float target_gain = 0.0f;
-        snd_pcm_uframes_t frames = 0;
-
+        TimePoint now = Clock::now();
         {
             std::lock_guard<std::mutex> lock(audio_mutex_);
             local_pcm = pcm_;
-            if (!local_pcm) break;
+            if (!local_pcm)
+                break;
             // Resolve buffer pointer and frame count under the mutex so we never
             // race with build_audio_buffers_() rewriting these vectors.
             do_burst = audio_trigger_pending_.exchange(false);
-            target_gain = do_burst ? static_cast<float>(stim_amplitude_()) : 0.0f;
-
-            // Determine frame count
+            // target_gain = do_burst ? static_cast<float>(stim_amplitude_()) : 0.0f;
             frames = do_burst ? burst_frames_ : period_frames_;
         }
 
+        // queue_size_left = snd_pcm_avail(pcm_);
 
-        snd_pcm_sframes_t written;
+        // if (queue_size_left > queue_size_max)
+        // {
+        //     queue_size_max = queue_size_left;
+        // }
+        // if (queue_size_left < queue_size_min)
+        // {
+        //     queue_size_min = queue_size_left;
+        // }
+        // Determine frame count
 
-        // Apply gain and convert inline — no second buffer needed
-        if (pcm_format_ == SND_PCM_FORMAT_S16_LE)
-            {
-            std::vector<int16_t> out(frames * audio_channels_());
-            for (int i = 0; i < frames * audio_channels_(); ++i)
-            {
-                // gain_ is directly set to target, change 1 to a smaller value for smoothing
-                gain_ += (target_gain - gain_) * 0.01; //0.01f;
-                out[i] = double_to_s16_(sound_buf_[i] * gain_);
-            }
-            write_with_recovery_(local_pcm, out.data(), frames);
-            
-        }
-        else
+        float target_gain = do_burst ? gain_ : 0.0f;
+
+        // if (background_sound_buffer_.size() < frames * channels)
+        // {
+        //     LOG(WARNING) << name() << " Background sound buffer underrun: requested " << frames * channels << " samples, but only " << background_sound_buffer_.size() << " available";
+        // }
+
+        if (frames > 0)
         {
-            std::vector<float> out(frames * audio_channels_());
-            for (int i = 0; i < frames * audio_channels_(); ++i)
-        {
-                gain_ += (target_gain - gain_) * 0.01; //0.01f;
-                out[i] = static_cast<float>(sound_buf_[i]) * gain_;
+            if (pcm_format_ == SND_PCM_FORMAT_S16_LE)
+            {
+                for (int i = 0; i < frames * channels; ++i)
+                {
+                    // gain_ is directly set to target, change 1 to a smaller value for smoothing
+                    // gain_ += (target_gain - gain_) * 0.01; // 0.01f;
+                    out_s[i] = double_to_s16_(sound_buf_[i] * target_gain + background_sound_buffer_[i]);
+                    // background_sound_buffer_.pop_front();
+                }
+                write_with_recovery_(local_pcm, out_s.data(), frames);
             }
-            write_with_recovery_(local_pcm, out.data(), frames);
+            else
+            {
+                for (int i = 0; i < frames * channels; ++i)
+                {
+                    // gain_ += (target_gain - gain_) * 0.01; // 0.01f;
+                    out_f[i] = static_cast<float>(sound_buf_[i]) * target_gain + background_sound_buffer_[i];
+                    // background_sound_buffer_.pop_front();
+                }
+                write_with_recovery_(local_pcm, out_f.data(), frames);
+            }
         }
-        
+        background_sound_buffer_.erase(background_sound_buffer_.begin(), background_sound_buffer_.begin() + frames * channels);
+        // LOG(INFO) << name() << " Audio thread took "<< std::chrono::duration<double, std::milli>(Clock::now() - now).count() << " ms to write " << frames << " frames"; 
     }
 
+    LOG(INFO) << name() << "Max queue size:: " << queue_size_max << " frames, Min queue size: " << queue_size_min << " frames";
     // Drain only if we still have a valid handle
-    snd_pcm_t *local_pcm = nullptr;
     {
         std::lock_guard<std::mutex> lock(audio_mutex_);
         local_pcm = pcm_;
@@ -554,6 +656,12 @@ void StimulusController::audio_thread_main_()
 
 void StimulusController::Process(ProcessingContext &context)
 {
+    if (!start_audio_())
+    {
+        LOG(ERROR) << name() << " failed to start audio playback (device: " << audio_device_() << ")";
+        throw std::runtime_error("Failed to start audio playback");
+    }
+
     MultiChannelType<double>::Data *data_in;
     MultiChannelType<double>::Data *data_out;
 
@@ -626,17 +734,19 @@ void StimulusController::Process(ProcessingContext &context)
         else if ((std::isnan(last_iaf_) && std::isfinite(iaf_)) || std::abs(iaf_ - last_iaf_) > 1e-1)
         {
             const bool frames_changed = compute_burst_params_(iaf_);
-            if (frames_changed)
+            // if (frames_changed)
+            // {
+            //     std::lock_guard<std::mutex> lock(audio_mutex_);
+            //     build_audio_buffers_();
+            //     LOG(INFO) << name() << " IAF changed " << last_iaf_ << " -> " << iaf_
+            //               << ": burst rebuilt to " << burst_ms_ << " ms";
+            // }
+            if (min_stim_dist_sec_() == 0)
             {
-                std::lock_guard<std::mutex> lock(audio_mutex_);
-                build_audio_buffers_();
-                LOG(INFO) << name() << " IAF changed " << last_iaf_ << " -> " << iaf_
-                          << ": burst rebuilt to " << burst_ms_ << " ms";
-            }
-            if (min_stim_dist_sec_() == 0){
-                // make sure each stimulus is minimum half an alpha cycle apart to avoid overlapping bursts 
-                double half_alpha_cycle = 1.0 / (2.0 * iaf_);   
-                distrib_interval = std::uniform_real_distribution<double>(half_alpha_cycle, half_alpha_cycle);
+                // make sure each stimulus is minimum half an alpha cycle apart to avoid overlapping bursts
+                // double half_alpha_cycle = 1.0 / (2.0 * iaf_);
+                double max_dist = 1 / (iaf_ + iaf_ * 0.1); // 10% faster than IAF
+                distrib_interval = std::uniform_real_distribution<double>(max_dist, max_dist);
                 stim_dist_sec_ = distrib_interval(gen);
             }
             last_iaf_ = iaf_;
@@ -655,7 +765,7 @@ void StimulusController::Process(ProcessingContext &context)
 
         time_since_last_stim = std::chrono::duration<double>(now - last_stim_time_).count();
 
-        if (valid_stimulation && time_since_last_stim >= stim_dist_sec_)
+        if (valid_stimulation && time_since_last_stim >= stim_dist_sec_ || output_)
         {
             double delay_sec = 0;
             if (correct_latencies_())
@@ -679,11 +789,6 @@ void StimulusController::Process(ProcessingContext &context)
             {
                 // LOG(INFO) << name() << "Deliver stimulus after: " << time_since_last_stim << " s since last stimulus";
                 audio_trigger_pending_.store(true);
-
-                // LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated phase = " << phase << " , delay = " << delay_sec << " s, corr_phase = " << corrected_phase;
-            }
-            else if (!output_ && last_output_)
-            {
                 last_stim_time_ = now;
                 stimuli_count_++;
                 stim_dist_sec_ = distrib_interval(gen);
@@ -691,6 +796,7 @@ void StimulusController::Process(ProcessingContext &context)
                 {
                     stim_onset_rad_ = distrib_onset(gen);
                 }
+
                 // LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated phase = " << phase << " , delay = " << delay_sec << " s, corr_phase = " << corrected_phase;
             }
         }
@@ -707,6 +813,25 @@ void StimulusController::Process(ProcessingContext &context)
         data_out_port_->slot(0)->PublishData();
 
         packet_count_++;
+        if (packet_count_ % (int)fs_ == 0)
+        {
+            // Each second, load fill background buffer again until full
+            int buffer_free_size = background_sound_buffer_.capacity() - background_sound_buffer_.size();
+            if (use_background_sound_() && valid_background_)
+            {
+                int frames = buffer_free_size / audio_channels_();
+                std::vector<float> out_f(frames * audio_channels_());
+                ma_data_source_read_pcm_frames(&decoder_, out_f.data(), frames, NULL);
+                background_sound_buffer_.insert(background_sound_buffer_.end(), out_f.begin(), out_f.end());
+            }
+            else {
+                // fill background with zeros
+                std::vector<float> zeros(buffer_free_size, 0.0f);
+                background_sound_buffer_.insert(background_sound_buffer_.end(), zeros.begin(), zeros.end());
+            }
+
+
+        }
     }
     LOG(INFO) << name() << " stopped working";
 }
@@ -719,7 +844,13 @@ void StimulusController::Postprocess(ProcessingContext &context)
 
 void StimulusController::Unprepare(GlobalContext &context)
 {
-    (void)context;
+    (void)context; 
+    if (use_background_sound_() && valid_background_)
+    {
+        // ma_device_uninit(&device_);
+        ma_decoder_uninit(&decoder_);
+    }
+
     stop_audio_();
 }
 

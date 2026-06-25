@@ -384,6 +384,9 @@ void SourceClient::Process(ProcessingContext &context)
             LOG(WARNING) << name() << " Computed hardware_time_us (" << hardware_time_us << ") is in the future compared to current time (" << ts_us << ") Clamping hardware_time_us to current time.";
             hardware_time_us = ts_us;
         }
+        else if ((int)ts_us - (int)hardware_time_us > 1e6) {
+            LOG(WARNING) << name() << " Computed hardware_time_us (" << hardware_time_us << ") is more than 1ms behind current time (" << ts_us << ").";
+        }
         // if (packet_count % 100 == 0) {
         //     LOG(INFO) << name() << ". Received packet " << packet_count + 1 << " with sample " << std::fixed << std::setprecision(2) << pkt.eeg[0] << " with sample counter " << pkt.sample_counter << " (hardware timestamp: " << hw_us << ")";
         // }

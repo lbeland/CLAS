@@ -158,13 +158,13 @@ namespace
     {
         PeakFitResult result;
 
-        double amplitude = seed.peak_value;
+        double amplitude = seed.peak_value - 1.0; // Subtract 1.0 to convert from relative power to excess power above aperiodic fit
         if (amplitude <= 0.0)
         {
             return result;
         }
 
-        double half_max = amplitude / 2.0;
+        double half_max = amplitude / 2.0 + 1.0; // Relative power value at half max (add back 1.0 to convert from excess power to relative power)
         int left_half_bin = seed.bin;
         while (left_half_bin > 0 && smoothed_power[left_half_bin] > half_max)
         {
@@ -188,20 +188,17 @@ namespace
         return result;
     }
 
-    bool bic_test(const std::vector<double> &smoothed_power, const std::vector<double> &freqs, PeakFitResult &peak, int f_min_bin, int f_max_bin)
+    bool bic_test(const std::vector<double> &power, const std::vector<double> &freqs, const std::vector<double> &gauss, PeakFitResult &peak, int f_min_bin, int f_max_bin)
     {
-
-        std::vector<double> gauss = gaussian(freqs, peak.amplitude, peak.iaf_hz, peak.sigma_hz);
-
         size_t n = static_cast<size_t>(f_max_bin - f_min_bin + 1);
         double ss_h0 = 0.0;
         double ss_h1 = 0.0;
         for (int k = f_min_bin; k <= f_max_bin; ++k)
         {
-            double centered = smoothed_power[k];
-            ss_h0 += centered * centered;
-            double resid = smoothed_power[k] - gauss[k];
-            ss_h1 += resid * resid;
+            double centered = power[k] - 1.0;
+            ss_h0 += (centered * centered);
+            double resid = power[k] - 1.0 - gauss[k];
+            ss_h1 += (resid * resid);
         }
 
         double bic_null = n * std::log(ss_h0 / n);
@@ -239,15 +236,18 @@ namespace
         return {slope, intercept, r_squared};
     }
 
-    std::vector<double> remove_aperiodic(const std::vector<double> &power, const std::vector<double> &freqs)
+    void power_safe(std::vector<double> &power)
     {
-        size_t N = power.size();
         // Safe power (no zeros)
-        std::vector<double> safe_power(N);
-        for (size_t k = 0; k < N; ++k)
+        for (double &p : power)
         {
-            safe_power[k] = std::max(power[k], 1e-12);
+            p = std::max(p, std::numeric_limits<double>::denorm_min());
         }
+    }
+
+    std::vector<double> get_aperiodic(const std::vector<double> &safe_power, const std::vector<double> &freqs)
+    {
+        size_t N = safe_power.size();
 
         // Ignore DC-bin
         std::vector<double> log_freqs(N - 1);
@@ -263,6 +263,7 @@ namespace
         // LOG(INFO) << "Aperiodic fit: slope = " << fit.slope << ", intercept = " << fit.intercept << ", R^2 = " << fit.r_squared;
 
         std::vector<double> power_flat(N);
+        std::vector<double> aperiodic(N);
 
         for (size_t k = 1; k < N; ++k)
         {
@@ -286,11 +287,22 @@ namespace
         fit = linear_regression(log_freqs_select, log_power_select);
         for (size_t k = 1; k < N; ++k)
         {
-            double aperiodic_fit = fit.slope * log_freqs[k - 1] + fit.intercept;
-            power_flat[k] = safe_power[k] / std::pow(10, aperiodic_fit);
+            aperiodic[k] = std::pow(10, fit.slope * log_freqs[k - 1] + fit.intercept);  // in linear power units
+            // power_flat[k] = safe_power[k] / std::pow(10, aperiodic_fit);
         }
 
-        return power_flat;
+        return aperiodic;
+    }
+
+    std::vector<double> remove_aperiodic(const std::vector<double> &aperiodic, std::vector<double> &safe_power)
+    {
+        size_t N = safe_power.size();
+        for (size_t k = 1; k < N; ++k)
+        {
+            safe_power[k] /= aperiodic[k];
+        }
+        safe_power[0] = safe_power[1]; // Set DC bin to same as first non-DC bin to avoid causing artificial rise/fall
+        return safe_power;
     }
 
     std::vector<double> savgol_filter(gram_sg::SavitzkyGolayFilter savgol, const std::vector<double> &power)
@@ -558,9 +570,12 @@ void IAFEstimator::Process(ProcessingContext &context)
             {
                 power[k] = (pow(freq_half[k][0], 2) + pow(freq_half[k][1], 2)) / (n_fft_ * fs_);
             }
+            power_safe(power);
+
+            std::vector<double> aperiodic = get_aperiodic(power, freqs);
 
             std::vector<double> power_flat(max_analyze_bin);
-            power_flat = remove_aperiodic(power, freqs);
+            power_flat = remove_aperiodic(aperiodic, power);
 
             std::vector<double> power_smooth(max_analyze_bin);
             power_smooth = savgol_filter(savgol_, power_flat);
@@ -568,7 +583,19 @@ void IAFEstimator::Process(ProcessingContext &context)
             PeakSeed seed = find_peak_seed(power_smooth, f_min_bin, f_max_bin, freq_resolution, true);
             PeakFitResult peak = fit_gaussian_peak(power_smooth, seed, freq_resolution);
 
-            peak.valid = bic_test(power_smooth, freqs, peak, f_min_bin, f_max_bin);
+            std::vector<double> gauss = gaussian(freqs, peak.amplitude, peak.iaf_hz, peak.sigma_hz); // outside of peak  gauss[k]= 0
+
+            if (peak.sigma_hz > max_gauss_width_hz_())
+            {
+                peak.valid = false; // Reject peaks that are too broad (either highly fluctuating iaf or very noisy)
+            }
+            else
+            {
+                peak.valid = bic_test(power_flat, freqs, gauss, peak, 0, freqs.size() - 1); // Test if peak is significant above aperiodic fit
+            }
+
+            // Always predict (uncertainty grows) before processing new measurement
+            kalman_predict();
 
             if (peak.valid)
             {

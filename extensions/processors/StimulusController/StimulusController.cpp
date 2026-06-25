@@ -35,14 +35,8 @@
 
 namespace
 {
-static inline int16_t double_to_s16_(double x)
-{
-    if (x > 1.0)
-        x = 1.0;
-    if (x < -1.0)
-        x = -1.0;
-    // symmetric mapping; -1.0 maps to -32767 to avoid overflow on int16
-    return static_cast<int16_t>(lrint(x * 32767.0));
+[[gnu::always_inline]] inline int16_t float_to_s16_(float v) {
+    return static_cast<int16_t>(v * 32767.0f + 0.5f);
 }
 
 // double wrap_phase_rad(double radians)
@@ -428,7 +422,7 @@ bool StimulusController::start_audio_()
     const snd_pcm_uframes_t period = static_cast<snd_pcm_uframes_t>(std::max(1, period_frames_));
     // How many frames ALSA can buffer internally; must be >= 2*period_frames_ (10ms)
     // const snd_pcm_uframes_t bufsize = static_cast<snd_pcm_uframes_t>(std::max(1, fs_audio_ * 10 / 1000));
-    const snd_pcm_uframes_t bufsize = static_cast<snd_pcm_uframes_t>(std::max(1, period_frames_ * 3)); // 2 periods 
+    const snd_pcm_uframes_t bufsize = static_cast<snd_pcm_uframes_t>(std::max(1, period_frames_ * 3)); // 3 periods 
 
     snd_pcm_t *local_pcm = nullptr;
     const std::string dev = audio_device_();
@@ -577,11 +571,10 @@ void StimulusController::audio_thread_main_()
     LOG(INFO) << name() << " Audio thread started, initial queue size: " << queue_size_min << " frames";
     snd_pcm_t *local_pcm = nullptr;
     bool do_burst = false;
-    snd_pcm_uframes_t frames = 0;
+    snd_pcm_sframes_t frames = 0;
 
     while (audio_running_.load())
     {
-        TimePoint now = Clock::now();
         {
             std::lock_guard<std::mutex> lock(audio_mutex_);
             local_pcm = pcm_;
@@ -593,19 +586,6 @@ void StimulusController::audio_thread_main_()
             // target_gain = do_burst ? static_cast<float>(stim_amplitude_()) : 0.0f;
             frames = do_burst ? burst_frames_ : period_frames_;
         }
-
-        // queue_size_left = snd_pcm_avail(pcm_);
-
-        // if (queue_size_left > queue_size_max)
-        // {
-        //     queue_size_max = queue_size_left;
-        // }
-        // if (queue_size_left < queue_size_min)
-        // {
-        //     queue_size_min = queue_size_left;
-        // }
-        // Determine frame count
-
         float target_gain = do_burst ? gain_ : 0.0f;
 
         // if (background_sound_buffer_.size() < frames * channels)
@@ -621,8 +601,7 @@ void StimulusController::audio_thread_main_()
                 {
                     // gain_ is directly set to target, change 1 to a smaller value for smoothing
                     // gain_ += (target_gain - gain_) * 0.01; // 0.01f;
-                    out_s[i] = double_to_s16_(sound_buf_[i] * target_gain + background_sound_buffer_[i]);
-                    // background_sound_buffer_.pop_front();
+                    out_s[i] = float_to_s16_(sound_buf_[i] * target_gain + background_sound_buffer_[i]);
                 }
                 write_with_recovery_(local_pcm, out_s.data(), frames);
             }
@@ -632,13 +611,11 @@ void StimulusController::audio_thread_main_()
                 {
                     // gain_ += (target_gain - gain_) * 0.01; // 0.01f;
                     out_f[i] = static_cast<float>(sound_buf_[i]) * target_gain + background_sound_buffer_[i];
-                    // background_sound_buffer_.pop_front();
                 }
                 write_with_recovery_(local_pcm, out_f.data(), frames);
             }
+            background_sound_buffer_.erase(background_sound_buffer_.begin(), background_sound_buffer_.begin() + frames * channels);
         }
-        background_sound_buffer_.erase(background_sound_buffer_.begin(), background_sound_buffer_.begin() + frames * channels);
-        // LOG(INFO) << name() << " Audio thread took "<< std::chrono::duration<double, std::milli>(Clock::now() - now).count() << " ms to write " << frames << " frames"; 
     }
 
     LOG(INFO) << name() << "Max queue size:: " << queue_size_max << " frames, Min queue size: " << queue_size_min << " frames";

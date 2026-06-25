@@ -100,7 +100,6 @@ void StimulusController::CompleteStreamInfo()
 
 bool StimulusController::compute_burst_params_(double iaf)
 {
-    const int sample_rate = std::max(1, audio_sample_rate_());
     double new_burst_ms = 0;
     int new_burst_frames = 0;
 
@@ -146,8 +145,8 @@ bool StimulusController::compute_burst_params_(double iaf)
     if (std::abs(new_burst_ms - burst_ms_) > 1) // if burst duration changed by more than 1 ms, rebuild buffers
     {
         burst_ms_ = new_burst_ms;
-        burst_frames_ = std::max(1, (int)(new_burst_ms * sample_rate / 1000.0));
-        period_ms_ = stim_period_ms_(); // silence period
+        burst_frames_ = std::max(1, (int)(new_burst_ms * fs_audio_ / 1000.0));
+        // period_ms_ = stim_period_ms_(); // silence period
         return true;
     }
     else
@@ -196,20 +195,14 @@ void StimulusController::Preprocess(ProcessingContext &context)
 
 void StimulusController::build_audio_buffers_()
 {
-    const int sample_rate = std::max(1, audio_sample_rate_());
     const int channels = std::clamp(audio_channels_(), 1, 8);
-    const double amplitude = std::clamp(stim_amplitude_(), 0.0, 1.0);
     const int num_octaves = std::clamp(stim_num_octaves_(), 1, 16);
 
     // burst_frames_ and period_ms_ are already set by compute_burst_params_().
-    period_frames_ = static_cast<int>(period_ms_ * sample_rate / 1000.0);
-    if (burst_frames_ <= 0)
-        burst_frames_ = 1;
-    if (period_frames_ <= 0)
-        period_frames_ = 1;
+
 
     // LOG(INFO) << name() << " Building audio buffers: burst=" << burst_frames_
-    //           << " frames (" << (static_cast<double>(burst_frames_) / sample_rate * 1000.0) << " ms)"
+    //           << " frames (" << (static_cast<double>(burst_frames_) / fs_audio_ * 1000.0) << " ms)"
     //           << ", period=" << period_frames_ << " frames";
 
     // Pink noise (Voss-McCartney)
@@ -379,7 +372,8 @@ bool StimulusController::start_audio_()
 
     auto try_config = [&](snd_pcm_format_t fmt, std::string &fail_step, int &fail_rc)
     {
-        return set_hw_params_interleaved_(local_pcm, sample_rate, channels, period, bufsize,
+        // ALSA 
+        return set_hw_params_interleaved_(local_pcm, fs_audio_, channels, period, bufsize,
                                           fmt, format_name_(fmt), &fail_step, &fail_rc);
     };
 
@@ -410,7 +404,7 @@ bool StimulusController::start_audio_()
                 LOG(ERROR) << name() << " Failed to configure ALSA HW params for '" << dev << "'"
                            << " (step: " << (fail_step.empty() ? "<unknown>" : fail_step) << ", error: "
                            << snd_strerror(fail_rc) << ")"
-                           << " [requested rate=" << sample_rate << "Hz, channels=" << channels
+                           << " [requested rate=" << fs_audio_ << "Hz, channels=" << channels
                            << ", period_frames=" << period << ", buffer_frames=" << bufsize
                            << ", format=" << format_name_(desired_fmt) << "]";
                 LOG(ERROR) << name() << " Fallback to S16_LE also failed for '" << dev << "'"
@@ -425,7 +419,7 @@ bool StimulusController::start_audio_()
             LOG(ERROR) << name() << " Failed to configure ALSA HW params for '" << dev << "'"
                        << " (step: " << (fail_step.empty() ? "<unknown>" : fail_step) << ", error: "
                        << snd_strerror(fail_rc) << ")"
-                       << " [requested rate=" << sample_rate << "Hz, channels=" << channels
+                       << " [requested rate=" << fs_audio_ << "Hz, channels=" << channels
                        << ", period_frames=" << period << ", buffer_frames=" << bufsize
                        << ", format=" << format_name_(desired_fmt) << "]";
             snd_pcm_close(local_pcm);

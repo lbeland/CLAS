@@ -448,9 +448,6 @@ void IAFEstimator::Prepare(GlobalContext &context)
               << " mode=" << (kalman_full_() ? "full KF" : "EMA-equivalent")
               << " invalid_threshold=" << invalid_threshold_ << " estimates";
 
-    // Load FFTW wisdom if available to speed up plan creation
-    fftwf_import_wisdom_from_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
-
     freq_resolution = fs_ / n_fft_;
     LOG(INFO) << name() << " Frequency resolution: " << freq_resolution << " Hz";
 
@@ -489,6 +486,8 @@ void IAFEstimator::Prepare(GlobalContext &context)
     }
 
     {
+        // Load FFTW wisdom if available to speed up plan creation
+        fftwf_import_wisdom_from_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
         std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
         fft_plan_ = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half, FFTW_WISDOM_ONLY);
         if (fft_plan_ == nullptr)
@@ -657,14 +656,15 @@ void IAFEstimator::Postprocess(ProcessingContext &context)
 
 void IAFEstimator::Unprepare(GlobalContext &context)
 {
+    {
+        std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
     // Save FFTW wisdom for future runs to speed up plan creation
     int ret = fftwf_export_wisdom_to_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
     if (ret == 0)
     {
         LOG(WARNING) << name() << " Failed to save FFTW wisdom.";
     }
-    {
-        std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
+
         fftwf_destroy_plan(fft_plan_);
     }
     fftwf_free(signal_in);

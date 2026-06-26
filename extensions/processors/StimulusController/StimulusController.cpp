@@ -35,6 +35,53 @@
 
 namespace
 {
+// Finds processes holding the ALSA PCM device node (parsed from "hw:C,D") open
+// and sends them SIGTERM. Returns the number of processes signalled.
+int sigterm_alsa_device_holders_(const std::string &dev)
+{
+    int card = -1, device = 0;
+    if (sscanf(dev.c_str(), "hw:%d,%d", &card, &device) < 1 || card < 0)
+        return 0;
+
+    char snd_path[64];
+    snprintf(snd_path, sizeof(snd_path), "/dev/snd/pcmC%dD%dp", card, device);
+
+    int count = 0;
+    DIR *proc = opendir("/proc");
+    if (!proc) return 0;
+
+    struct dirent *pent;
+    while ((pent = readdir(proc)) != nullptr)
+    {
+        pid_t pid = static_cast<pid_t>(atoi(pent->d_name));
+        if (pid <= 1) continue;
+
+        char fd_dir[32];
+        snprintf(fd_dir, sizeof(fd_dir), "/proc/%d/fd", pid);
+        DIR *fds = opendir(fd_dir);
+        if (!fds) continue;
+
+        struct dirent *fent;
+        while ((fent = readdir(fds)) != nullptr)
+        {
+            char link[64], target[256];
+            snprintf(link, sizeof(link), "/proc/%d/fd/%s", pid, fent->d_name);
+            ssize_t n = readlink(link, target, sizeof(target) - 1);
+            if (n <= 0) continue;
+            target[n] = '\0';
+            if (strcmp(target, snd_path) == 0)
+            {
+                kill(pid, SIGTERM);
+                ++count;
+                break;
+            }
+        }
+        closedir(fds);
+    }
+    closedir(proc);
+    return count;
+}
+
 [[gnu::always_inline]] inline int16_t float_to_s16_(float v) {
     return static_cast<int16_t>(v * 32767.0f + 0.5f);
 }
@@ -442,6 +489,14 @@ bool StimulusController::start_audio_()
     snd_pcm_t *local_pcm = nullptr;
     const std::string dev = audio_device_();
     int rc = snd_pcm_open(&local_pcm, dev.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
+    if (rc == -EBUSY)
+    {
+        int n = sigterm_alsa_device_holders_(dev);
+        LOG(WARNING) << name() << " ALSA device '" << dev << "' busy; sent SIGTERM to "
+                     << n << " holder(s), retrying...";
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        rc = snd_pcm_open(&local_pcm, dev.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
+    }
     if (rc < 0)
     {
         LOG(ERROR) << name() << " Cannot open ALSA device '" << dev << "': " << snd_strerror(rc);

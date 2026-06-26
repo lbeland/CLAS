@@ -635,8 +635,9 @@ void IAFEstimator::Process(ProcessingContext &context)
                             }
                         }
  
-                        // Prevent SNR from being zero (would cause division by zero), minimum -100dB
+                        // Prevent SNR from being zero (would cause division by zero), minimum -100dB, and from being extrem high
                         SNR_ = std::max(SNR_, 1e-5);
+                        SNR_ = std::min(SNR_, 1e2);
 
                         // double T = 1.0 / fs_;
                         // double R_n = 6 / (4*pow(M_PI,2)*SNR_*pow(T,2)*window_size_*(pow(window_size_,2)-1));
@@ -692,6 +693,8 @@ void IAFEstimator::Process(ProcessingContext &context)
 
 void IAFEstimator::Postprocess(ProcessingContext &context)
 {
+    sample_window.clear();
+    iaf_state_->set(std::numeric_limits<double>::quiet_NaN());
     printf("\n ---------------- \n IAFEstimator: Total messages processed: %d", packet_count_);
 }
 

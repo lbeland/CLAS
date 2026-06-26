@@ -29,59 +29,57 @@
 class PhaseEstimator : public IProcessor {
   public:
     PhaseEstimator();
+
     void calibrate_gain(const int N);
-    void load_filter_coeffs(const StorageContext& context, double iaf);
-    void load_phase_shift(const StorageContext& context, double iaf);
+    void load_filter_coeffs(const StorageContext &context, double iaf);
+    void load_phase_shift(const StorageContext &context, double iaf);
 
-  void CreatePorts() override;
-  void CompleteStreamInfo() override;
-  void Prepare(GlobalContext &context) override;
-  void Preprocess(ProcessingContext &context) override;
-  void Process(ProcessingContext &context) override;
-  void Postprocess(ProcessingContext &context) override;
-  void Unprepare(GlobalContext &context) override;
+    void CreatePorts() override;
+    void CompleteStreamInfo() override;
+    void Prepare(GlobalContext &context) override;
+    void Preprocess(ProcessingContext &context) override;
+    void Process(ProcessingContext &context) override;
+    void Postprocess(ProcessingContext &context) override;
+    void Unprepare(GlobalContext &context) override;
 
-  // VARIABLES
   protected:
-    unsigned int packet_count_ = 0;
-    double first_timestamp_ = 0.0;
-    double fs_ = 0.0;
-    double f0_ = 10.0; // default IAF value, will be updated from state
-    size_t n_fft_ = 0;
-    size_t window_size_ = 1;
-    boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Preprocess
-    std::string coeff_file_;  // Path to bandpass filter coefficients file
-    std::vector<std::complex<double>> coeffs_;  // Filter coefficients of bandpass filter
-    std::complex<double> c_gain_;  // Calibration gain for cecHT
-
-    float *signal_in = nullptr;
-    fftwf_complex *freq_half = nullptr;
-    fftwf_complex *freq = nullptr;
-    fftwf_complex *out = nullptr;
-
-    fftwf_plan p_;
-    fftwf_plan p_inv_;
-
-    std::vector<double> filter_phase_shift_values;
-    double filter_phase_shift_ = 0.0;
-    
-    FollowerState<double>* iaf_state_ = nullptr;
-    bool valid_iaf_ = false;
-
-    const uint32_t MAX_NCHANNELS=384;
-
-  // DATA PORTS
-  protected:
-    PortIn<MultiChannelType<float>> *data_in_port_;
+    // Data ports
+    PortIn<MultiChannelType<float>>   *data_in_port_;
     PortOut<MultiChannelType<double>> *data_out_port_;
 
-  // OPTIONS
-  protected:
+    // Options
     options::Int n_messages_{-1};
-    // options::Value<unsigned int, false> n_fft_{4096};
     options::Bool calibrate_{false};
     options::Value<unsigned int, false> iaf_read_interval_{5000};
     options::Value<YAML::Node, false> filter_def_{};
     options::Bool compensate_filter_{true};
 
+    // Runtime state
+    unsigned int packet_count_ = 0;
+    double first_timestamp_ = 0.0;
+    double fs_ = 0.0;
+    double f0_ = 10.0;         // current IAF (updated from shared state)
+    size_t n_fft_ = 0;
+    size_t window_size_ = 1;
+
+    boost::circular_buffer<float> sample_window{1}; // resized in Preprocess
+    std::string coeff_file_;                         // path to bandpass filter coefficients
+    std::vector<std::complex<double>> coeffs_;       // frequency-domain bandpass coefficients
+    std::complex<double> c_gain_;                    // MSE-optimal calibration gain for cecHT
+
+    std::vector<double> filter_phase_shift_values_; // phase shift per 0.1 Hz increment
+    double filter_phase_shift_ = 0.0;               // active phase shift for current f0_
+
+    FollowerState<double> *iaf_state_ = nullptr;
+    bool valid_iaf_ = false;
+
+    // FFTW resources (allocated in Preprocess, freed in Unprepare)
+    float         *signal_in = nullptr;
+    fftwf_complex *freq_half = nullptr;
+    fftwf_complex *freq = nullptr;
+    fftwf_complex *out = nullptr;
+    fftwf_plan p_;
+    fftwf_plan p_inv_;
+
+    const uint32_t MAX_NCHANNELS = 384;
 };

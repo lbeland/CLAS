@@ -21,7 +21,6 @@
 #include "iprocessor.hpp"
 #include "scalardata/scalardata.hpp"
 #include "multichanneldata/multichanneldata.hpp"
-// #include <boost/circular_buffer.hpp>
 #include <readerwriterqueue/readerwriterqueue.h>
 #include <alsa/asoundlib.h>
 #include "miniaudio/miniaudio.c"
@@ -39,16 +38,46 @@ class StimulusController : public IProcessor {
   public:
     StimulusController();
 
-  void CreatePorts() override;
-  void CompleteStreamInfo() override;
-  void Prepare(GlobalContext &context) override;
-  void Preprocess(ProcessingContext &context) override;
-  void Unprepare(GlobalContext &context) override;
-  void Process(ProcessingContext &context) override;
-  void Postprocess(ProcessingContext &context) override;
+    void CreatePorts() override;
+    void CompleteStreamInfo() override;
+    void Prepare(GlobalContext &context) override;
+    void Preprocess(ProcessingContext &context) override;
+    void Unprepare(GlobalContext &context) override;
+    void Process(ProcessingContext &context) override;
+    void Postprocess(ProcessingContext &context) override;
 
-  // VARIABLES
   protected:
+    // Data ports
+    PortIn<MultiChannelType<double>>  *data_in_port_;
+    PortOut<MultiChannelType<double>> *data_out_port_;
+
+    // Options
+    options::Int    n_messages_{-1};
+    options::Double stim_onset_deg_{0};
+    options::Double audio_latency_s_{0};
+    options::Double erp_latency_s_{0};        // auditory evoked response potential latency (s)
+    options::Bool   correct_latencies_{true};
+
+    options::Double stim_period_ms_{1};
+    options::Double stim_amplitude_{0.7};
+    options::Int    stim_num_octaves_{6};      // Voss-McCartney pink noise octaves
+
+    options::String stim_dur_unit_{"deg"};     // "deg" or "ms"
+    options::Double stim_dur_ms_{20};          // fallback burst duration when IAF is unavailable
+    options::Double stim_dur_deg_{90};
+
+    options::String audio_device_{"hw:1,0"};
+    options::Int    audio_sample_rate_{44100};
+    options::Int    audio_channels_{2};
+    options::String audio_format_{"s32"};      // "float", "s16", or "s32"
+
+    options::Bool   randomize_stim_onset_{false};
+    options::Double min_stim_dist_sec_{0};
+    options::Double max_stim_dist_sec_{-1};
+    options::Bool   use_background_sound_{false};
+    options::Int    background_dB_{18};        // stimulus level above background sound (dB)
+
+    // Runtime state — phase / burst logic
     unsigned int packet_count_ = 0;
     int stimuli_count_ = 0;
     bool output_      = false;
@@ -56,20 +85,14 @@ class StimulusController : public IProcessor {
     double stim_onset_rad_ = 0;
     double stim_dur_rad_   = 0;
 
-    // Cached enum for stim_dur_unit_ — avoids string comparison every packet in Process().
+    // Cached enum for stim_dur_unit_ — avoids string comparison every packet in Process()
     enum class DurUnit { kMs, kDeg };
     DurUnit dur_unit_ = DurUnit::kMs;
 
-    const uint32_t MAX_NCHANNELS=384;
-
-    double fs_ = 0; // sample rate (Hz), set during CompleteStreamInfo()
-    FollowerState<double>* iaf_state_ = nullptr;
+    double fs_ = 0;          // input stream sample rate (Hz), set in CompleteStreamInfo
+    FollowerState<double> *iaf_state_ = nullptr;
 
     // Audio burst playback
-
-    // Single source of truth: derives stim_dur_rad_ and burst_frames_ from
-    // iaf (only used when stim_dur_unit_ == "deg"; ignored for "ms").
-    // Returns true if burst_frames_ changed and buffers need rebuilding.
     virtual bool compute_burst_params_(double iaf);
 
     void build_audio_buffers_();
@@ -91,69 +114,26 @@ class StimulusController : public IProcessor {
     std::atomic<bool> audio_trigger_pending_{false};
     std::thread audio_thread_;
     std::mutex audio_mutex_;
-    snd_pcm_t* pcm_ = nullptr;
+    snd_pcm_t *pcm_ = nullptr;
 
     double period_ms_ = 0;
-    double burst_precompute_ms_ = 1000; // precompute 1 second of audio buffers
+    double burst_precompute_ms_ = 1000; // pre-compute 1 second of audio buffers
     double burst_ms_ = 0;
-    double last_iaf_ = std::numeric_limits<double>::quiet_NaN(); // last IAF used to build buffers
-
-    // std::vector<double> burst_buf_;
-    // std::vector<double> silence_buf_;
-
-    // // Optional integer buffers for direct hw devices
-    // std::vector<int16_t> burst_buf_s16_;
-    // std::vector<int16_t> silence_buf_s16_;
+    double last_iaf_ = std::numeric_limits<double>::quiet_NaN();
 
     double fs_audio_ = 0;
     int burst_frames_ = 0;
     int period_frames_ = 0;
-    // boost::circular_buffer<float> background_sound_buffer_{1}; // Initialized with size 1, will be resized in Prepare
-    std::unique_ptr<moodycamel::ReaderWriterQueue<float>> background_sound_buffer_; // Initialized with size 1, will be resized in Prepare
+
+    std::unique_ptr<moodycamel::ReaderWriterQueue<float>> background_sound_buffer_;
     float gain_ = 0.0;
-    float power_s_ = 0.0; // Power of the stimulus signal (used for gain normalization)
+    float bg_gain_ = 1.0;   // background scale factor, reduced when stimulus would cause clipping
+    float power_s_ = 0.0;   // power of the stimulus signal (for gain normalization)
     std::vector<double> sound_buf_;
     bool valid_background_ = false;
     ma_decoder decoder_;
 
-    // Active PCM format (set during start_audio_)
-    snd_pcm_format_t pcm_format_ = SND_PCM_FORMAT_FLOAT_LE;
+    snd_pcm_format_t pcm_format_ = SND_PCM_FORMAT_FLOAT_LE; // active PCM format (set in start_audio_)
 
-  // DATA PORTS
-  protected:
-    PortIn<MultiChannelType<double>> *data_in_port_;
-    PortOut<MultiChannelType<double>> *data_out_port_;
-
-  // OPTIONS
-  protected:
-    options::Int n_messages_{-1};
-    options::Double stim_onset_deg_{0};
-    options::Double audio_latency_s_{0};
-    options::Double erp_latency_s_{0};  //auditory evoked response potential latency in seconds
-    options::Bool correct_latencies_{true};
-
-    options::Double stim_period_ms_{1};
-    options::Double stim_amplitude_{0.7};
-    options::Int stim_num_octaves_{6};
-
-    options::String stim_dur_unit_{"deg"};
-    options::Double stim_dur_ms_{20};
-    options::Double stim_dur_deg_{90};
-
-    // Audio options
-    options::String audio_device_{"hw:1,0"};
-    options::Int audio_sample_rate_{44100};
-    options::Int audio_channels_{2};
-
-
-    // Audio sample format: "float" (FLOAT_LE) or "s16" (S16_LE)
-    options::String audio_format_{"s32"};
-
-    // Options for random stimulation with silent/skipped intervals
-    options::Bool randomize_stim_onset_{false};
-    options::Double min_stim_dist_sec_{0};
-    options::Double max_stim_dist_sec_{-1};
-    options::Bool use_background_sound_{false};
-    options::Int background_dB_{18};
-
+    const uint32_t MAX_NCHANNELS = 384;
 };

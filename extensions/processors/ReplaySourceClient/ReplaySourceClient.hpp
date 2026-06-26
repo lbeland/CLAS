@@ -36,70 +36,61 @@
 // ---------------------------------------------------------------------------
 struct FieldDescriptor {
   std::string name;
-  std::string dtype;       // "float32", "uint64", ...
-  std::vector<int> dims;   // shape, e.g. {32, 64} or {1}
-  std::size_t n_items;     // product of dims
-  std::size_t byte_size;   // n_items * sizeof(element)
-  std::size_t offset;      // byte offset within one record
+  std::string dtype;     // "float32", "uint64", ...
+  std::vector<int> dims; // shape, e.g. {32, 64} or {1}
+  std::size_t n_items;   // product of dims
+  std::size_t byte_size; // n_items * sizeof(element)
+  std::size_t offset;    // byte offset within one record
 };
 
 class ReplaySourceClient : public IProcessor {
- public:
-  ReplaySourceClient();
+  public:
+    ReplaySourceClient();
 
-  void CreatePorts() override;
-  void CompleteStreamInfo() override;
-  void Prepare(GlobalContext &context) override;
-  void Preprocess(ProcessingContext &context) override;
-  void Process(ProcessingContext &context) override;
-  void Postprocess(ProcessingContext &context) override;
+    void CreatePorts() override;
+    void CompleteStreamInfo() override;
+    void Prepare(GlobalContext &context) override;
+    void Preprocess(ProcessingContext &context) override;
+    void Process(ProcessingContext &context) override;
+    void Postprocess(ProcessingContext &context) override;
 
- protected:
-  PortOut<MultiChannelType<float>> *data_out_port_;
+  protected:
+    // Data ports
+    PortOut<MultiChannelType<float>> *data_out_port_;
 
-  // Replay source selection.
-  options::String path_{"run://"};
-  options::String file_{""};
-  options::Int slot_{0};
+    // Options — replay source selection
+    options::String path_{"run://"};
+    options::String file_{""};
+    options::Int    slot_{0};
 
-  // Playback controls.
-  options::Bool loop_{false};
-  options::Bool real_time_{true};
-  options::Double speed_factor_{1.0};
-  options::Int n_messages_{-1};
+    // Options — playback controls
+    options::Bool   loop_{false};
+    options::Bool   real_time_{true};
+    options::Double speed_factor_{1.0};
+    options::Int    n_messages_{-1};
 
-  // Output contract.
-  options::Value<unsigned int, false> nchannels_{32};
-  options::Value<unsigned int, false> nsamples_{1};
-  options::Double fs_{1000.0};
+    // Options — output contract
+    options::Value<unsigned int, false> nchannels_{32};
+    options::Value<unsigned int, false> nsamples_{1};
+    options::Double fs_{1000.0};
 
-  std::vector<TimePoint> send_times;
+  private:
+    // Helpers
+    std::string ResolveFilePath(const std::string path) const;
+    void        LoadFile(const std::string &filepath);
+    static FieldDescriptor ParseDataEntry(const std::string &entry);
+    static std::size_t     DtypeSize(const std::string &dtype);
 
- private:
-  // ---- helpers ------------------------------------------------------------
+    // Parsed file state
+    std::vector<FieldDescriptor> layout_;   // field descriptors in record order
+    std::size_t record_size_{0};            // total bytes per record
+    std::size_t n_records_{0};              // number of complete records in the file
+    std::size_t signal_offset_{0};          // byte offset of the "signal" field
+    std::vector<std::uint8_t> payload_;     // raw binary payload (after YAML header)
 
-  // Resolve the concrete file path from path_ / file_ / slot_ options.
-  std::string ResolveFilePath(const std::string path) const;
-
-  // Parse the binary file: locate the YAML header terminator, parse the
-  // layout, and load the raw payload.  Fills all members below.
-  void LoadFile(const std::string &filepath);
-
-  // Parse one YAML "data" entry string into a FieldDescriptor.
-  static FieldDescriptor ParseDataEntry(const std::string &entry);
-
-  // Return the byte size of one element for a given dtype string.
-  static std::size_t DtypeSize(const std::string &dtype);
-
-  // ---- parsed file state --------------------------------------------------
-  std::vector<FieldDescriptor> layout_;  // field descriptors in record order
-  std::size_t record_size_{0};           // total bytes per record
-  std::size_t n_records_{0};             // number of complete records
-  std::size_t signal_offset_{0};         // byte offset of "signal" field
-  std::vector<std::uint8_t> payload_;    // raw binary payload (after header)
-
-  // ---- runtime replay state -----------------------------------------------
-  std::size_t current_record_{0};        // index of next record to emit
-  TimePoint last_emit_time_{};           // wall-clock time of previous emit
-  double inter_packet_ns_{0.0};          // expected gap between packets [ns]
+    // Runtime replay state
+    std::size_t current_record_{0};         // index of the next record to emit
+    TimePoint   last_emit_time_{};          // wall-clock time of the previous emit
+    double      inter_packet_ns_{0.0};      // expected gap between consecutive packets [ns]
+    std::int64_t emitted_{0};               // total packets emitted in the current run
 };

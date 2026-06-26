@@ -32,61 +32,63 @@ class IAFEstimator : public IProcessor {
   public:
     IAFEstimator();
 
-  void CreatePorts() override;
-  void CompleteStreamInfo() override;
-  void Prepare(GlobalContext &context) override;
-  void Preprocess(ProcessingContext &context) override;
-  void Process(ProcessingContext &context) override;
-  void Postprocess(ProcessingContext &context) override;
-  void Unprepare(GlobalContext &context) override;
+    void CreatePorts() override;
+    void CompleteStreamInfo() override;
+    void Prepare(GlobalContext &context) override;
+    void Preprocess(ProcessingContext &context) override;
+    void Process(ProcessingContext &context) override;
+    void Postprocess(ProcessingContext &context) override;
+    void Unprepare(GlobalContext &context) override;
 
-  // VARIABLES
   protected:
-    unsigned int packet_count_ = 0;
-    double freq_resolution;
-    double fs_ = 0.0;
-    size_t n_fft_ = 0;
-    size_t window_size_ = 1;
-    boost::circular_buffer<float> sample_window{1};  // Initialized with size 1, will be resized in Prepare
-    gram_sg::SavitzkyGolayFilter savgol_;
-    
-    BroadcasterState<double>* iaf_state_ = nullptr;
-    double current_iaf_ = std::numeric_limits<double>::quiet_NaN();
-    double last_valid_iaf_ = std::numeric_limits<double>::quiet_NaN();
-    double current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
-    // Kalman filter state (also used in EMA-equivalent mode)
-    double kf_x_;   // state estimate (smoothed IAF)
-    double kf_P_;   // state uncertainty
-    double kf_Q_;   // process noise variance (per update step)
-    double kf_R_;   // measurement noise variance
-    int invalid_count_ = 0;
-    int invalid_threshold_;
-    int max_analyze_bin;
-    int f_min_bin;
-    int f_max_bin;
-    double SNR_ = 1.0;
-    fftwf_plan fft_plan_;
-    float *signal_in;
-    fftwf_complex *freq_half;
-    std::vector<double> freqs;
+    // Data ports
+    PortIn<MultiChannelType<float>>  *data_in_port_;
+    PortOut<ScalarType<double>>      *data_out_port_;
 
-    const uint32_t MAX_NCHANNELS=384;
-
-  // DATA PORTS
-  protected:
-    PortIn<MultiChannelType<float>> *data_in_port_;
-    PortOut<ScalarType<double>> *data_out_port_;
-
-  // OPTIONS
-  protected:
-    options::Int n_messages_{-1};
+    // Options
+    options::Int    n_messages_{-1};
     options::Double window_size_sec_{5};
     options::Double f_min_{5.0};
     options::Double f_max_{18.0};
     options::Value<unsigned int, false> calc_interval_{100};
-    options::Double max_invalid_sec{1.0};
-    // options::Double kalman_estimator_std_{0.96};       // estimator noise std [Hz]
-    options::Double kalman_iaf_std_{0.397857};        // IAF drift std [Hz]
-    options::Bool   kalman_full_{true};               // true = full KF (adaptive gain), false = EMA-equivalent (fixed gain)
-    options::Double max_gauss_width_hz_{2.0};           // Max Gaussian width for peak detection (Hz)
+    options::Double max_invalid_sec_{1.0};
+    options::Double kalman_iaf_std_{0.397857};  // IAF drift std [Hz/s], sets Kalman Q
+    options::Bool   kalman_full_{true};          // true = full KF (adaptive gain), false = EMA-equivalent (fixed gain)
+    options::Double max_gauss_width_hz_{2.0};    // reject peaks broader than this (Hz)
+
+    // Runtime state — shared IAF broadcaster
+    BroadcasterState<double> *iaf_state_ = nullptr;
+    double current_iaf_ = std::numeric_limits<double>::quiet_NaN();
+    double last_valid_iaf_ = std::numeric_limits<double>::quiet_NaN();
+    double current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
+
+    // Kalman filter state
+    double kf_x_ = 0.0;  // state estimate (smoothed IAF)
+    double kf_P_ = 0.0;  // state uncertainty
+    double kf_Q_ = 0.0;  // process noise variance per update step
+    double kf_R_ = 0.0;  // measurement noise variance
+
+    // Signal processing parameters
+    unsigned int packet_count_ = 0;
+    double freq_resolution_ = 0.0;
+    double fs_ = 0.0;
+    double SNR_ = 1.0;
+    size_t n_fft_ = 0;
+    size_t window_size_ = 1;
+    int max_analyze_bin_ = 0;
+    int f_min_bin_ = 0;
+    int f_max_bin_ = 0;
+    int invalid_count_ = 0;
+    int invalid_threshold_ = 0;
+
+    boost::circular_buffer<float> sample_window{1}; // resized in Prepare
+    gram_sg::SavitzkyGolayFilter savgol_;
+
+    // FFTW resources (allocated in Prepare, freed in Unprepare)
+    fftwf_plan    fft_plan_ = nullptr;
+    float        *signal_in = nullptr;
+    fftwf_complex *freq_half = nullptr;
+    std::vector<double> freqs_;
+
+    const uint32_t MAX_NCHANNELS = 384;
 };

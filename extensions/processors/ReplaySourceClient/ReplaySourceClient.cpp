@@ -34,10 +34,7 @@
 
 namespace fs = std::filesystem;
 
-// ---------------------------------------------------------------------------
-// dtype helpers
-// ---------------------------------------------------------------------------
-
+// DtypeSize — byte size of one element for a given dtype string
 std::size_t ReplaySourceClient::DtypeSize(const std::string &dtype)
 {
     if (dtype == "int8" || dtype == "uint8")
@@ -51,13 +48,9 @@ std::size_t ReplaySourceClient::DtypeSize(const std::string &dtype)
     throw std::runtime_error("ReplaySourceClient: unknown dtype '" + dtype + "'");
 }
 
-// ---------------------------------------------------------------------------
-// Parse one YAML "data" list entry, e.g. "signal float32 (32,64)"
-// ---------------------------------------------------------------------------
-
+// ParseDataEntry — parse one YAML "data" list entry, e.g. "signal float32 (32,64)"
 FieldDescriptor ReplaySourceClient::ParseDataEntry(const std::string &entry)
 {
-    // Pattern: <name> <dtype> (<d0>[,<d1>,...])
     static const std::regex kPattern(R"(^(.+?)\s+(\w+)\s*\(([^)]*)\)\s*$)");
     std::smatch m;
     if (!std::regex_match(entry, m, kPattern))
@@ -68,12 +61,10 @@ FieldDescriptor ReplaySourceClient::ParseDataEntry(const std::string &entry)
 
     FieldDescriptor fd;
     fd.name = m[1].str();
-    // Normalise to lowercase, e.g. "Float32" -> "float32"
     fd.dtype = m[2].str();
     for (auto &c : fd.dtype)
         c = static_cast<char>(std::tolower(c));
 
-    // Parse comma-separated dimensions
     std::istringstream dim_ss(m[3].str());
     std::string tok;
     while (std::getline(dim_ss, tok, ','))
@@ -95,15 +86,11 @@ FieldDescriptor ReplaySourceClient::ParseDataEntry(const std::string &entry)
     return fd;
 }
 
-// ---------------------------------------------------------------------------
 // ResolveFilePath
-//
 // Priority:
 //   1. file_ option set explicitly → use verbatim.
 //   2. Otherwise search <resolved_path>/ for a file matching
 //      "*.<slot_>_*.bin"  (the naming convention from FileSerializer).
-// ---------------------------------------------------------------------------
-
 std::string ReplaySourceClient::ResolveFilePath(const std::string path) const
 {
     if (!file_().empty())
@@ -111,11 +98,7 @@ std::string ReplaySourceClient::ResolveFilePath(const std::string path) const
         return file_();
     }
 
-    std::string input = path;
-
-    fs::path run_dir(input);
-
-    // If an existing directory is given explicitly, use it directly.
+    fs::path run_dir(path);
     if (!fs::is_directory(run_dir))
     {
         throw std::runtime_error(
@@ -142,8 +125,7 @@ std::string ReplaySourceClient::ResolveFilePath(const std::string path) const
 
         const std::string fname = entry.path().filename().string();
 
-        // Preferred serializer pattern:
-        //   SerializerX.<slot>_SourceClient.out.<slot>.bin
+        // Preferred pattern: SerializerX.<slot>_SourceClient.out.<slot>.bin
         if (ends_with(fname, sourceclient_suffix) &&
             fname.find("_SourceClient") != std::string::npos)
         {
@@ -151,8 +133,7 @@ std::string ReplaySourceClient::ResolveFilePath(const std::string path) const
             continue;
         }
 
-        // Backward-compatible fallback pattern:
-        //   <processor_name>.<slot>_<upstream>.bin
+        // Backward-compatible fallback: <processor_name>.<slot>_<upstream>.bin
         std::regex slot_pat(".*\\." + slot_str + "_.*\\.bin$");
         if (std::regex_match(fname, slot_pat))
         {
@@ -175,13 +156,9 @@ std::string ReplaySourceClient::ResolveFilePath(const std::string path) const
     throw std::runtime_error(
         "ReplaySourceClient: no serialized file found for slot " + slot_str +
         " in '" + run_dir.string() + "'");
-
 }
 
-// ---------------------------------------------------------------------------
-// LoadFile — read header + binary payload into memory
-// ---------------------------------------------------------------------------
-
+// LoadFile — read YAML header + binary payload into memory
 void ReplaySourceClient::LoadFile(const std::string &filepath)
 {
     std::ifstream f(filepath, std::ios::binary);
@@ -191,14 +168,11 @@ void ReplaySourceClient::LoadFile(const std::string &filepath)
             "ReplaySourceClient: cannot open file '" + filepath + "'");
     }
 
-    // Slurp entire file
     std::vector<std::uint8_t> blob(
         (std::istreambuf_iterator<char>(f)),
         std::istreambuf_iterator<char>());
 
-    // ------------------------------------------------------------------
     // 1. Locate YAML header terminator "...\n" or "...\r\n"
-    // ------------------------------------------------------------------
     std::size_t header_end = std::string::npos;
     for (const auto &marker : {std::string("...\n"), std::string("...\r\n")})
     {
@@ -219,9 +193,7 @@ void ReplaySourceClient::LoadFile(const std::string &filepath)
             filepath + "'");
     }
 
-    // ------------------------------------------------------------------
     // 2. Parse YAML header
-    // ------------------------------------------------------------------
     const std::string header_str(blob.begin(),
                                  blob.begin() + static_cast<std::ptrdiff_t>(header_end));
     YAML::Node header = YAML::Load(header_str);
@@ -232,9 +204,7 @@ void ReplaySourceClient::LoadFile(const std::string &filepath)
             "ReplaySourceClient: 'data' key missing or not a sequence in header");
     }
 
-    // ------------------------------------------------------------------
     // 3. Build field layout
-    // ------------------------------------------------------------------
     layout_.clear();
     record_size_ = 0;
 
@@ -246,9 +216,7 @@ void ReplaySourceClient::LoadFile(const std::string &filepath)
         layout_.push_back(fd);
     }
 
-    // ------------------------------------------------------------------
     // 4. Locate the "signal" field (written by MultiChannelData)
-    // ------------------------------------------------------------------
     signal_offset_ = 0;
     bool found_signal = false;
     for (const auto &fd : layout_)
@@ -257,7 +225,6 @@ void ReplaySourceClient::LoadFile(const std::string &filepath)
         {
             signal_offset_ = fd.offset;
 
-            // Validate against configured nchannels / nsamples when available
             if (fd.dims.size() >= 2)
             {
                 const auto file_ch = static_cast<unsigned int>(fd.dims[0]);
@@ -282,9 +249,7 @@ void ReplaySourceClient::LoadFile(const std::string &filepath)
             filepath + "'");
     }
 
-    // ------------------------------------------------------------------
     // 5. Store payload
-    // ------------------------------------------------------------------
     payload_.assign(blob.begin() + static_cast<std::ptrdiff_t>(header_end),
                     blob.end());
 
@@ -294,21 +259,16 @@ void ReplaySourceClient::LoadFile(const std::string &filepath)
     }
 
     n_records_ = payload_.size() / record_size_;
-    // Trim to whole records
-    payload_.resize(n_records_ * record_size_);
+    payload_.resize(n_records_ * record_size_); // trim to whole records
 
     LOG(INFO) << name() << ": loaded " << n_records_ << " records ("
               << record_size_ << " bytes/record) from '" << filepath << "'";
 }
 
-// ===========================================================================
-// IProcessor interface
-// ===========================================================================
-
 ReplaySourceClient::ReplaySourceClient() : IProcessor(PRIORITY_HIGH)
 {
     add_option("path", path_, "Replay folder or run name. Run names resolve via _last_run_group/<run> first, then results/<run>; empty defaults to results.");
-    add_option("file", file_, "Optional file path to a specific recorded EEG stream.");
+    add_option("file", file_, "Optional explicit path to a recorded EEG stream file.");
     add_option("slot", slot_, "Recorded slot to replay when a processor wrote multiple streams.");
     add_option("loop", loop_, "Restart replay from the beginning after the last packet.");
     add_option("real_time", real_time_, "Replay using recorded timing instead of emitting as fast as possible.");
@@ -316,7 +276,7 @@ ReplaySourceClient::ReplaySourceClient() : IProcessor(PRIORITY_HIGH)
     add_option("n_messages", n_messages_, "Number of packets to replay (-1 = all available packets).");
     add_option("nchannels", nchannels_, "Number of EEG channels to replay.");
     add_option("nsamples", nsamples_, "Number of samples per packet.");
-    add_option("fs", fs_, "Replay sample frequency.");
+    add_option("fs", fs_, "Replay sample frequency (Hz).");
 }
 
 void ReplaySourceClient::CreatePorts()
@@ -336,23 +296,20 @@ void ReplaySourceClient::CompleteStreamInfo()
 
 void ReplaySourceClient::Prepare(GlobalContext &context)
 {
-    // Nothing to prepare; file loading is deferred to Preprocess to allow
-    // dynamic path resolution based on the run context.
+    // File loading is deferred to Preprocess to allow dynamic path resolution.
 }
 
 void ReplaySourceClient::Preprocess(ProcessingContext &context)
 {
-    send_times.clear();
     current_record_ = 0;
+    emitted_ = 0;
 
     // Pre-compute the expected wall-clock gap between consecutive packets.
-    // Each packet carries nsamples_ samples at fs_ Hz.
     // Gap [ns] = nsamples / fs * 1e9 / speed_factor
     inter_packet_ns_ =
         (static_cast<double>(nsamples_()) / fs_()) * 1e9 / speed_factor_();
 
-    std::string path_resolved = context.resolve_path(path_(),"lastrungroup");
-
+    std::string path_resolved = context.resolve_path(path_(), "lastrungroup");
     const std::string filepath = ResolveFilePath(path_resolved);
     LoadFile(filepath);
 
@@ -370,10 +327,6 @@ void ReplaySourceClient::Preprocess(ProcessingContext &context)
               << " n_records=" << n_records_;
 }
 
-// ---------------------------------------------------------------------------
-// Process — main replay loop
-// ---------------------------------------------------------------------------
-
 void ReplaySourceClient::Process(ProcessingContext &context)
 {
     if (n_records_ == 0)
@@ -383,13 +336,9 @@ void ReplaySourceClient::Process(ProcessingContext &context)
     }
 
     MultiChannelType<float>::Data *data_out = nullptr;
-
-    // Maximum number of packets to emit (−1 = unlimited)
-    const std::int64_t max_packets = n_messages_();
-    std::int64_t emitted = 0;
-
-    // Grab the output slot once
     auto *out_slot = data_out_port_->slot(0);
+
+    const std::int64_t max_packets = n_messages_();
 
     // Record the wall-clock time just before we start emitting so the first
     // packet is sent immediately and subsequent packets are paced from there.
@@ -397,17 +346,11 @@ void ReplaySourceClient::Process(ProcessingContext &context)
 
     while (!context.terminated())
     {
-        // ----------------------------------------------------------------
-        // Check message limit
-        // ----------------------------------------------------------------
-        if (max_packets >= 0 && emitted >= max_packets)
+        if (max_packets >= 0 && emitted_ >= max_packets)
         {
             break;
         }
 
-        // ----------------------------------------------------------------
-        // Loop / end-of-file handling
-        // ----------------------------------------------------------------
         if (current_record_ >= n_records_)
         {
             if (loop_())
@@ -422,9 +365,7 @@ void ReplaySourceClient::Process(ProcessingContext &context)
             }
         }
 
-        // ----------------------------------------------------------------
         // Real-time pacing: sleep until the next packet is due
-        // ----------------------------------------------------------------
         if (real_time_())
         {
             const TimePoint target =
@@ -439,22 +380,15 @@ void ReplaySourceClient::Process(ProcessingContext &context)
             }
         }
 
-        // ----------------------------------------------------------------
-        // Retrieve and fill the output data object
-        // ----------------------------------------------------------------
         data_out = out_slot->ClaimData(false);
 
         // Pointer to the start of the current record in the payload
         const std::uint8_t *record_ptr = payload_.data() + current_record_ * record_size_;
 
-        // Copy signal samples: layout is [nchannels][nsamples] of float32,
-        // stored contiguously in the record at signal_offset_.
-        const float *src = reinterpret_cast<const float *>(
-            record_ptr + signal_offset_);
-
+        // Copy signal samples: layout is [nchannels][nsamples] of float32
+        const float *src = reinterpret_cast<const float *>(record_ptr + signal_offset_);
         const unsigned int nch = nchannels_();
         const unsigned int ns = nsamples_();
-
         for (unsigned int ch = 0; ch < nch; ++ch)
         {
             for (unsigned int s = 0; s < ns; ++s)
@@ -463,7 +397,7 @@ void ReplaySourceClient::Process(ProcessingContext &context)
             }
         }
 
-        // Propagate hardware and source timestamp when available
+        // Propagate hardware timestamp when available
         const FieldDescriptor *hw_ts_fd = nullptr;
         for (const auto &fd : layout_)
         {
@@ -480,31 +414,20 @@ void ReplaySourceClient::Process(ProcessingContext &context)
             data_out->set_hardware_timestamp(hw_ts);
         }
 
-        TimePoint src_time_point;
-        src_time_point = Clock::now();
-        last_emit_time_ = src_time_point;
-        data_out->set_source_timestamp(src_time_point);
-
-        // ----------------------------------------------------------------
-        // Publish the data object
-        // ----------------------------------------------------------------
-        send_times.push_back(src_time_point);
+        last_emit_time_ = Clock::now();
+        data_out->set_source_timestamp(last_emit_time_);
 
         out_slot->PublishData();
 
         ++current_record_;
-        ++emitted;
+        ++emitted_;
     }
     LOG(INFO) << name() << " stopped working";
-
 }
 
 void ReplaySourceClient::Postprocess(ProcessingContext &context)
 {
-    std::ostringstream statistic_print;
-    statistic_print << "\n ---------------- \n Total replay packets emitted: "
-                    << send_times.size();
-    std::cout << statistic_print.str();
+    LOG(INFO) << name() << ": Total replay packets emitted: " << emitted_;
 }
 
 REGISTERPROCESSOR(ReplaySourceClient)

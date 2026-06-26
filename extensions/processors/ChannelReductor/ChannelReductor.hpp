@@ -24,27 +24,29 @@
 #include "utilities/time.hpp"
 
 class ChannelReductor : public IProcessor {
- public:
+  public:
     ChannelReductor();
 
-  void CreatePorts() override;
+    void CreatePorts() override;
     void CompleteStreamInfo() override;
-  void Prepare(GlobalContext &context) override;
-  void Preprocess(ProcessingContext &context) override;
-  void Process(ProcessingContext &context) override;
-  void Postprocess(ProcessingContext &context) override;
+    void Prepare(GlobalContext &context) override;
+    void Preprocess(ProcessingContext &context) override;
+    void Process(ProcessingContext &context) override;
+    void Postprocess(ProcessingContext &context) override;
 
- protected:
-  PortIn<MultiChannelType<float>> *data_in_port_;
-  PortOut<MultiChannelType<float>> *data_out_port_;
+  protected:
+    // Data ports
+    PortIn<MultiChannelType<float>>  *data_in_port_;
+    PortOut<MultiChannelType<float>> *data_out_port_;
 
-  FollowerState<unsigned int>* channel_state_ = nullptr;
-  unsigned int ch_idx;
+    // Options
+    options::Int n_messages_{-1};
+    options::Int default_channel_index_{1}; // 1-based
 
-  options::Int n_messages_{-1};
-  options::Int default_channel_index_{1}; // one-based
-  
-  unsigned int packet_count_ = 0;
+    // Runtime state
+    FollowerState<unsigned int> *channel_state_ = nullptr;
+    unsigned int ch_idx_ = 0;              // 0-based active channel index
+    unsigned int packet_count_ = 0;
 
-  const uint32_t MAX_NCHANNELS=384; 
+    const uint32_t MAX_NCHANNELS = 384;
 };

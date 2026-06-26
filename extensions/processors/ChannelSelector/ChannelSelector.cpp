@@ -44,28 +44,16 @@ void ChannelSelector::CreatePorts()
         MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
         PortInPolicy(SlotRange(0, MAX_NCHANNELS)));
 
-    // data_out_port_ = create_output_port<MultiChannelType<float>>(
-    //     "out",
-    //     MultiChannelType<float>::Parameters(1, 1, 1), // Placeholder, will be set in CompleteStreamInfo
-    //     PortOutPolicy(SlotRange(0, MAX_NCHANNELS), 200, WaitStrategy::kBlockingStrategy));
-
-    idx_out_port = create_output_port<ScalarType<unsigned int>>(
+    idx_out_port_ = create_output_port<ScalarType<unsigned int>>(
         "ch_idx_out",
-        ScalarType<unsigned int>::Parameters(1), // Placeholder, will be set in CompleteStreamInfo
+        ScalarType<unsigned int>::Parameters(1),
         PortOutPolicy(SlotRange(0, MAX_NCHANNELS), 200, WaitStrategy::kBlockingStrategy));
 }
 
 void ChannelSelector::CompleteStreamInfo()
 {
-    const auto &input_params = data_in_port_->slot(0)->streaminfo().parameters<MultiChannelType<float>::Parameters>();
-
-    // // only pass through the selected channel, so set output nchannels to 1 but keep nsamples and sample_rate the same as input
-    // data_out_port_->streaminfo(0).set_parameters(MultiChannelType<float>::Parameters(1, input_params.nsamples, input_params.sample_rate));
-    // data_out_port_->streaminfo(0).set_stream_rate(data_in_port_->streaminfo(0));
-
-    // Set the parameters for the channel index output port
-    idx_out_port->streaminfo(0).set_parameters(ScalarType<unsigned int>::Parameters(1));
-    idx_out_port->streaminfo(0).set_stream_rate(data_in_port_->streaminfo(0));
+    idx_out_port_->streaminfo(0).set_parameters(ScalarType<unsigned int>::Parameters(1));
+    idx_out_port_->streaminfo(0).set_stream_rate(data_in_port_->streaminfo(0));
 }
 
 void ChannelSelector::Prepare(GlobalContext &context)
@@ -96,12 +84,11 @@ void ChannelSelector::Prepare(GlobalContext &context)
             {
                 throw std::runtime_error(name() + ": channel_indices contains out-of-range index " + std::to_string(channel_idx));
             }
-            selected_channels_.push_back(static_cast<unsigned int>(channel_idx) - 1); // convert from 1-based to 0-based index
+            selected_channels_.push_back(static_cast<unsigned int>(channel_idx) - 1); // convert from 1-based to 0-based
         }
     }
 
     const double tau_seconds = rms_window_seconds_();
-    // EMA
     ema_mu_ = std::exp(-1.0 / (fs_ * tau_seconds));
 }
 
@@ -110,7 +97,7 @@ void ChannelSelector::Preprocess(ProcessingContext &context)
     current_channel_index_ = selected_channels_.front();
     channel_state_->set(current_channel_index_);
 
-    // Assign initial value as the exact threshold squared
+    // Initialize EMA at the squared threshold so all channels start neutral
     ema_.assign(n_channels_, rms_threshold_uv_() * rms_threshold_uv_());
 
     LOG(INFO) << name() << " RMS selector EMA tau: " << rms_window_seconds_()
@@ -122,39 +109,32 @@ void ChannelSelector::Preprocess(ProcessingContext &context)
 void ChannelSelector::Process(ProcessingContext &context)
 {
     MultiChannelType<float>::Data *data_in = nullptr;
-    // MultiChannelType<float>::Data *data_out = nullptr;
     ScalarType<unsigned int>::Data *idx_out = nullptr;
 
-    double rms_thresh_uv = rms_threshold_uv_();
+    const double rms_thresh_uv = rms_threshold_uv_();
 
-    // Measurement phase
     while (!context.terminated())
     {
-
         if (n_messages_() != -1 && packet_count_ >= n_messages_())
         {
             break;
         }
 
-        // Try to retrieve data
         if (!data_in_port_->slot(0)->RetrieveData(data_in))
         {
             break;
         }
 
-        // Always update EMA for all selected channels so no channel goes stale
+        // Update EMA for all selected channels so no channel goes stale
         for (unsigned int channel_idx : selected_channels_)
         {
             const double s = static_cast<double>(data_in->data_sample(0, channel_idx));
             ema_[channel_idx] = ema_mu_ * ema_[channel_idx] + (1.0 - ema_mu_) * s * s;
         }
 
-        // Because true RMS would take the sqrt, we compare to squared threshold
-        
-        // Keep current channel if still above threshold, otherwise pick the channel with highest EMA
+        // Compare squared EMA to squared threshold (avoids sqrt every packet)
         if (ema_[current_channel_index_] <= rms_thresh_uv * rms_thresh_uv)
         {
-                // LOG(DEBUG) << name() << packet_count_ << " Channel " << current_channel_index_ + 1 << " RMS " << std::sqrt(ema_[current_channel_index_]) << " uV below threshold " << rms_thresh_uv << " uV, checking other channels...";
             double best_mean_square = -std::numeric_limits<double>::infinity();
             for (unsigned int channel_idx : selected_channels_)
             {
@@ -168,36 +148,27 @@ void ChannelSelector::Process(ProcessingContext &context)
 
         channel_state_->set(current_channel_index_);
 
-        if (packet_count_ % int(5 * fs_) == 0)
+        if (packet_count_ % static_cast<int>(5 * fs_) == 0)
         {
             LOG(INFO) << name() << ". Packet " << packet_count_ + 1 << ": Selected channel " << current_channel_index_ + 1 << " (RMS: " << std::sqrt(ema_[current_channel_index_]) << "uV)";
         }
 
-        // Claim output buffer
-        // data_out = data_out_port_->slot(0)->ClaimData(false);
-        idx_out = idx_out_port->slot(0)->ClaimData(false);
-
-        // data_out->set_data_sample(0, 0, data_in->data_sample(0, current_channel_index_));
-        // data_out->set_sample_timestamps(data_in->sample_timestamps());
-        // data_out->CloneTimestamps(*data_in);
-
+        idx_out = idx_out_port_->slot(0)->ClaimData(false);
         idx_out->set_data(current_channel_index_ + 1); // convert back to 1-based index
         idx_out->set_hardware_timestamp(data_in->hardware_timestamp());
         idx_out->set_source_timestamp(Clock::now());
 
         data_in_port_->slot(0)->ReleaseData();
-        // data_out_port_->slot(0)->PublishData();
-        idx_out_port->slot(0)->PublishData();
+        idx_out_port_->slot(0)->PublishData();
 
         packet_count_++;
     }
     LOG(INFO) << name() << " stopped working";
-
 }
 
 void ChannelSelector::Postprocess(ProcessingContext &context)
 {
-    LOG(INFO) << "\n ---------------- \n ChannelSelector: Total messages processed: " << packet_count_ << ", last selected channel: " << current_channel_index_;
+    LOG(INFO) << name() << ": Total messages processed: " << packet_count_ << ", last selected channel: " << current_channel_index_ + 1;
 }
 
 REGISTERPROCESSOR(ChannelSelector);

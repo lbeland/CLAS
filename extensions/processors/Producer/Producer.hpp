@@ -23,33 +23,36 @@
 #include "options/options.hpp"
 #include "utilities/time.hpp"
 
-class Producer : public IProcessor {
- public:
-  Producer();
+class Producer : public IProcessor
+{
+public:
+    Producer();
 
-  void CreatePorts() override;
-  void CompleteStreamInfo() override;
-  void Preprocess(ProcessingContext &context) override;
-  void Process(ProcessingContext &context) override;
-  void Postprocess(ProcessingContext &context) override;
+    void CreatePorts() override;
+    void CompleteStreamInfo() override;
+    void Preprocess(ProcessingContext &context) override;
+    void Process(ProcessingContext &context) override;
+    void Postprocess(ProcessingContext &context) override;
 
- protected:
-  PortOut<MultiChannelType<float>> *data_out_port_;
-  PortOut<MultiChannelType<double>> *meta_out_port_;
+protected:
+    // Data ports
+    PortOut<MultiChannelType<float>> *data_out_port_;
+    PortOut<MultiChannelType<double>> *meta_out_port_;
 
-  options::String path_{"run://"};
-  options::Double fs_{10000.0};
-  options::Double carrier_amplitude_{3.0};
-  options::Double carrier_frequency_{8.0};
-  options::String modulation_type_{"phase"};
-  options::Double modulation_amplitude_{1.0};
-  options::Double modulation_frequency_{0.1};
-  options::Value<unsigned int, false> nchannels_{10};
-  options::Value<unsigned int, false> nsamples_{1};
-  options::Int n_messages_{-1};
-  
-  BroadcasterState<double>* iaf_state_ = nullptr;
-  double current_iaf_ = 10.0;
-//   inline static std::vector<TimePoint> send_times;
-  int packet_count_ = 0;
+    // Options
+    options::String path_{"run://"};
+    options::Double fs_{10000.0};
+    options::Double carrier_amplitude_{3.0};
+    options::Double carrier_frequency_{8.0};
+    options::String modulation_type_{"phase"};
+    options::Double modulation_amplitude_{1.0};
+    options::Double modulation_frequency_{0.1};
+    options::Value<unsigned int, false> nchannels_{10};
+    options::Value<unsigned int, false> nsamples_{1};
+    options::Int n_messages_{-1};
+
+    // Runtime state
+    BroadcasterState<double> *iaf_state_ = nullptr;
+    double current_iaf_ = 10.0;
+    int packet_count_ = 0;
 };

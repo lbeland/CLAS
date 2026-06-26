@@ -16,7 +16,6 @@
 // You should have received a copy of the GNU General Public License
 // along with falcon-core. If not, see <http://www.gnu.org/licenses/>.
 // ---------------------------------------------------------------------
-
 #pragma once
 
 #include <memory>
@@ -27,32 +26,30 @@
 #include <dsp/filter.hpp>
 
 class MultiChannelFilter : public IProcessor {
-  // CONSTRUCTOR and OVERLOADED METHODS
- public:
-  MultiChannelFilter();
-  void Configure(const GlobalContext &context) override;
-  void CreatePorts() override;
-  void CompleteStreamInfo() override;
-  void Prepare(GlobalContext &context) override;
-  void Preprocess(ProcessingContext &context) override;
-  void Process(ProcessingContext &context) override;
-  void Postprocess(ProcessingContext &context) override;
+  public:
+    MultiChannelFilter();
 
-  // VARIABLES
- protected:
-  std::unique_ptr<dsp::filter::IFilter> filter_template_;
-  std::vector<std::unique_ptr<dsp::filter::IFilter>> filters_;
-  int packet_count_ = 0;
+    void Configure(const GlobalContext &context) override;
+    void CreatePorts() override;
+    void CompleteStreamInfo() override;
+    void Prepare(GlobalContext &context) override;
+    void Preprocess(ProcessingContext &context) override;
+    void Process(ProcessingContext &context) override;
+    void Postprocess(ProcessingContext &context) override;
 
-  // DATA PORTS
- protected:
-  PortIn<MultiChannelType<float>> *data_in_port_;
-  PortOut<MultiChannelType<float>> *data_out_port_;
+  protected:
+    // Data ports
+    PortIn<MultiChannelType<float>>  *data_in_port_;
+    PortOut<MultiChannelType<float>> *data_out_port_;
 
-  // OPTIONS
- protected:
-  options::Value<YAML::Node, false> filter_def_{};
-  options::Int n_messages_{-1};
+    // Options
+    options::Value<YAML::Node, false> filter_def_{};
+    options::Int n_messages_{-1};
 
- const uint32_t MAX_NCHANNELS=384;
+    // Runtime state
+    std::unique_ptr<dsp::filter::IFilter> filter_template_;
+    std::vector<std::unique_ptr<dsp::filter::IFilter>> filters_; // one per input slot
+    int packet_count_ = 0;
+
+    const uint32_t MAX_NCHANNELS = 384;
 };

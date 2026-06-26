@@ -19,17 +19,13 @@
 
 #include "Consumer.hpp"
 #include "logging/log.hpp"
-#include <fstream>
-#include <iomanip>
 #include <chrono>
-#include <numeric>
-#include <limits>
 #include <sstream>
 
 Consumer::Consumer() : IProcessor(PRIORITY_HIGH)
 {
     add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
-    add_option("window_size", window_size_, "Window size of PhaseEstimator (exclude the first window_size packets in statistics calculation).");
+    add_option("window_size", window_size_, "Number of packets to skip at startup before computing latency statistics.");
     add_option("path", path_, "Path (server-side) where to save data.");
 }
 
@@ -45,7 +41,6 @@ void Consumer::Prepare(GlobalContext &context)
 {
     const auto &info = data_in_port_->streaminfo(0);
 
-    // Try to extract known parameter types
     if (info.datatype() == "MultiChannelType<float>")
     {
         try
@@ -82,28 +77,20 @@ void Consumer::Prepare(GlobalContext &context)
             LOG(WARNING) << name() << ": Failed to cast to ScalarType";
         }
     }
-    
 }
 
 void Consumer::Preprocess(ProcessingContext &context)
 {
     packet_count_ = 0;
-    // recv_times.clear();
-    // source_times.clear();
 }
-
 
 void Consumer::Process(ProcessingContext &context)
 {
-    // MultiChannelType<float>::Data *data_in_phase = nullptr;
     AnyType::Data *data_in = nullptr;
-
     TimePoint receive_timestamp;
-
     TimePoint source_timestamp;
-    // uint64_t hardware_timestamp;
+    double latency_ms = 0.0;
 
-    // Measurement phase
     while (!context.terminated())
     {
         if (n_messages_() != -1 && packet_count_ >= n_messages_())
@@ -111,7 +98,6 @@ void Consumer::Process(ProcessingContext &context)
             break;
         }
 
-        // Try to retrieve data
         for (int slot_idx = 0; slot_idx < data_in_port_->number_of_slots(); slot_idx++)
         {
             if (!data_in_port_->slot(slot_idx)->RetrieveData(data_in))
@@ -119,18 +105,11 @@ void Consumer::Process(ProcessingContext &context)
                 break;
             }
             receive_timestamp = Clock::now();
-
             source_timestamp = data_in->source_timestamp();
-            // hardware_timestamp = data_in->hardware_timestamp();
-
-            // Release data
             data_in_port_->slot(slot_idx)->ReleaseData();
         }
 
-        // if (packet_count_ % 100 == 0) {
-        //   LOG(INFO) << name() << ". Received packet " << packet_count_ + 1 << " with sample " << sample << " at " << std::chrono::duration<double, std::micro>(receive_timestamp.time_since_epoch()).count() << " us (source timestamp: " << std::chrono::duration<double, std::micro>(source_timestamp.time_since_epoch()).count() << " us, hardware timestamp: " << hardware_timestamp << " us)";
-        // }
-        double latency_ms = std::chrono::duration<double, std::milli>(receive_timestamp - source_timestamp).count();
+        latency_ms = std::chrono::duration<double, std::milli>(receive_timestamp - source_timestamp).count();
         if (latency_ms > max_latency_)
         {
             max_latency_ = latency_ms;
@@ -145,20 +124,16 @@ void Consumer::Process(ProcessingContext &context)
             }
             else
             {
-                mean_latency_ = ((latency_index)*mean_latency_ + latency_ms)/(latency_index+1);
+                mean_latency_ = ((latency_index)*mean_latency_ + latency_ms) / (latency_index + 1);
             }
         }
-        // recv_times.push_back(receive_timestamp);
-        // source_times.push_back(source_timestamp);
         packet_count_++;
     }
     LOG(INFO) << name() << " stopped working";
-
 }
 
 void Consumer::Postprocess(ProcessingContext &context)
 {
-
     std::ostringstream statistic_print;
     statistic_print << "\n ---------------- \n " << name() << ": Total messages processed: " << packet_count_;
 
@@ -166,119 +141,10 @@ void Consumer::Postprocess(ProcessingContext &context)
     {
         return;
     }
-    statistic_print << "\n Max latency (ms): " << max_latency_ << "(idx:" << max_latency_index_ << ")";
+    statistic_print << "\n Max latency (ms): " << max_latency_ << " (idx:" << max_latency_index_ << ")";
     statistic_print << "\n Mean latency (ms): " << mean_latency_ << "\n";
 
-    // // Jitter statistics
-    // double sum_diff_us = 0.0;
-    // double max_diff_us = 0.0;
-    // std::size_t max_idx = 0;
-    // double sum_sq_diff = 0.0;
-    // std::vector<double> recv_times_diff;
-
-    // int start_idx = window_size_(); // Skip the first window_size packets because PhaseEstimator is not activ when window is not full
-    // int n_times = recv_times.size() - start_idx;
-    // if (n_times <= 0)
-    // {
-    //     statistic_print << "\n Not enough messages to calculate statistics after skipping the first " << window_size_() << " packets.";
-    //     std::cout << statistic_print.str();
-    //     return;
-    // }
-
-    // recv_times_diff.resize(static_cast<std::size_t>(n_times - 1));
-
-    // for (std::size_t i = start_idx; i + 1 < recv_times.size(); i++)
-    // {
-    //     const double diff_us = std::chrono::duration<double, std::micro>(recv_times[i + 1] - recv_times[i]).count();
-    //     recv_times_diff[i - start_idx] = diff_us;
-    //     sum_diff_us += diff_us;
-    //     sum_sq_diff += diff_us * diff_us;
-    //     if (diff_us > max_diff_us)
-    //     {
-    //         max_diff_us = diff_us;
-    //         max_idx = i;
-    //     }
-    // }
-
-    // double avg_period = 0.0;
-    // double std_period = 0.0;
-    // avg_period = sum_diff_us / static_cast<double>(n_times);
-    // const double variance = (sum_sq_diff / static_cast<double>(n_times)) - (avg_period * avg_period);
-    // std_period = sqrt(fmax(0.0, variance));
-
-    // statistic_print << "\n Average receive period (us): " << avg_period;
-    // statistic_print << "\n Max receive period (us): " << max_diff_us << ", idx: " << max_idx;
-    // statistic_print << "\n Std receive period (us): " << std_period << "\n";
-
-    // // Latency statistics
-    // double sum_latency_us = 0.0;
-    // double max_latency_us = 0.0;
-    // max_idx = 0;
-    // double sum_sq_latency = 0.0;
-    // std::vector<double> process_times;
-    // process_times.resize(static_cast<std::size_t>(n_times));
-
-    // for (std::size_t i = start_idx; i < source_times.size(); i++)
-    // {
-    //     const double latency_us = std::chrono::duration<double, std::micro>(recv_times[i] - source_times[i]).count();
-    //     process_times[i - start_idx] = latency_us;
-    //     sum_latency_us += latency_us;
-    //     sum_sq_latency += latency_us * latency_us;
-    //     if (latency_us > max_latency_us)
-    //     {
-    //         max_latency_us = latency_us;
-    //         max_idx = i;
-    //     }
-    // }
-    // const double avg_latency = sum_latency_us / (static_cast<double>(n_times));
-    // const double variance_latency = (sum_sq_latency / static_cast<double>(n_times)) - (avg_latency * avg_latency);
-    // const double std_latency = sqrt(fmax(0.0, variance_latency));
-
-    // statistic_print << "\n Average latency (us): " << avg_latency;
-    // statistic_print << "\n Max latency (us): " << max_latency_us << ", idx: " << max_idx;
-    // statistic_print << "\n Std latency (us): " << std_latency << "\n";
-
-    // double throughput = 0.0;
-    // double elapsed_seconds = 0.0;
-    // elapsed_seconds = std::chrono::duration<double>(recv_times.back() - source_times[start_idx]).count();
-    // if (elapsed_seconds > 0.0)
-    // {
-    //     throughput = static_cast<double>(n_times) / elapsed_seconds;
-    // }
-    // statistic_print << "\n Throughput (msg/s): " << n_times << "/" << elapsed_seconds << " = " << throughput;
-
     std::cout << statistic_print.str() << "\n";
-
-    // // Save to CSV
-    // std::string append = "Consumer.csv";
-    // std::ofstream output;
-    // std::string filename = context.resolve_path(path_(), "run");
-    // output.open(filename + append);
-    // output << "Metric,Recv_period,Latency,Throughput\n";
-    // output << "mean," << avg_period << "," << avg_latency << "," << throughput << "\n";
-    // output << "std," << std_period << "," << std_latency << ",\n";
-    // output << "max," << max_diff_us << "," << max_latency_us << ",\n";
-    // output.close();
-
-    // append = "recv_times.csv";
-    // std::ofstream recv_times_output;
-    // recv_times_output << std::fixed << std::setprecision(17);
-    // recv_times_output.open(filename + append);
-    // for (double t : recv_times_diff)
-    // {
-    //     recv_times_output << t << "\n";
-    // }
-    // recv_times_output.close();
-
-    // append = "process_times.csv";
-    // std::ofstream process_times_output;
-    // process_times_output << std::fixed << std::setprecision(17);
-    // process_times_output.open(filename + append);
-    // for (double t : process_times)
-    // {
-    //     process_times_output << t << "\n";
-    // }
-    // process_times_output.close();
 }
 
 REGISTERPROCESSOR(Consumer);

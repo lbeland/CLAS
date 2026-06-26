@@ -94,12 +94,6 @@ int sigterm_alsa_device_holders_(const std::string &dev)
 [[gnu::always_inline]] inline int32_t float_to_s32(float v) {
     return static_cast<int32_t>(v * 8388607.0f) << 8;
 }
-
-// double wrap_phase_rad(double radians)
-// {
-//     return std::fmod(radians + M_PI, 2.0 * M_PI) - M_PI;
-// }
-
 }
 
 StimulusController::StimulusController() : IProcessor(PRIORITY_HIGH)
@@ -731,7 +725,7 @@ void StimulusController::audio_thread_main_()
     }
     if (local_pcm)
     {
-        // drop all queued sampels immediately
+        // drop all queued samples immediately
         snd_pcm_drop(local_pcm);
     }
 }
@@ -749,14 +743,11 @@ void StimulusController::Process(ProcessingContext &context)
 
     bool valid_stimulation = true;
 
-    // Randomization setup for stimulus timing (if randomize_stim_onset_() is enabled)
+    // Randomization setup for stimulus timing
     TimePoint last_stim_time_ = Clock::now();
     double time_since_last_stim = 0.0;
-    std::random_device rd;  // non-deterministic generator
-    std::mt19937 gen(rd()); // to seed mersenne twister.
-                            // replace the call to rd() with a
-                            // constant value to get repeatable
-                            // results.
+    std::random_device rd;
+    std::mt19937 gen(rd());
     std::uniform_real_distribution<double> distrib_interval;
     if (max_stim_dist_sec_() < min_stim_dist_sec_())
     {

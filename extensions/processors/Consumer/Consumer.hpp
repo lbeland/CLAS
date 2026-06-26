@@ -25,30 +25,29 @@
 #include "utilities/time.hpp"
 
 class Consumer : public IProcessor {
- public:
+  public:
     Consumer();
 
-  void CreatePorts() override;
-  void Prepare(GlobalContext &context) override;
-  void Preprocess(ProcessingContext &context) override;
-  void Process(ProcessingContext &context) override;
-  void Postprocess(ProcessingContext &context) override;
+    void CreatePorts() override;
+    void Prepare(GlobalContext &context) override;
+    void Preprocess(ProcessingContext &context) override;
+    void Process(ProcessingContext &context) override;
+    void Postprocess(ProcessingContext &context) override;
 
- protected:
-  PortIn<AnyType> *data_in_port_;
+  protected:
+    // Data ports
+    PortIn<AnyType> *data_in_port_;
 
-  options::Int n_messages_{-1};
-  options::Int window_size_{2000};
-  options::String path_{"run://"};
-  
-  unsigned int packet_count_ = 0;
-  std::vector<std::array<float, 3>> samples;
-//   std::vector<TimePoint> recv_times;
-//   std::vector<TimePoint> source_times;
+    // Options
+    options::Int n_messages_{-1};
+    options::Int window_size_{2000}; // packets to skip at startup before computing statistics
+    options::String path_{"run://"};
 
-  double max_latency_ = 0.0;
-  unsigned int max_latency_index_ = 0;
-  double mean_latency_ = 0.0;
+    // Runtime state
+    unsigned int packet_count_ = 0;
+    double max_latency_ = 0.0;
+    unsigned int max_latency_index_ = 0;
+    double mean_latency_ = 0.0;
 
-  const uint32_t MAX_NCHANNELS=384; 
+    const uint32_t MAX_NCHANNELS = 384;
 };

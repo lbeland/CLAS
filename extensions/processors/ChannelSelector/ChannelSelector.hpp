@@ -27,38 +27,33 @@ class ChannelSelector : public IProcessor {
   public:
     ChannelSelector();
 
-  void CreatePorts() override;
-  void CompleteStreamInfo() override;
-  void Prepare(GlobalContext &context) override;
-  void Preprocess(ProcessingContext &context) override;
-  void Process(ProcessingContext &context) override;
-  void Postprocess(ProcessingContext &context) override;
+    void CreatePorts() override;
+    void CompleteStreamInfo() override;
+    void Prepare(GlobalContext &context) override;
+    void Preprocess(ProcessingContext &context) override;
+    void Process(ProcessingContext &context) override;
+    void Postprocess(ProcessingContext &context) override;
 
-  BroadcasterState<unsigned int>* channel_state_ = nullptr;
-
-  // VARIABLES
   protected:
-    unsigned int packet_count_ = 0;
-    double fs_ = 0;
+    // Data ports
+    PortIn<MultiChannelType<float>>  *data_in_port_;
+    PortOut<ScalarType<unsigned int>> *idx_out_port_;
 
-    const uint32_t MAX_NCHANNELS=384;
-
-  // DATA PORTS
-  protected:
-    PortIn<MultiChannelType<float>> *data_in_port_;
-    // PortOut<MultiChannelType<float>> *data_out_port_;
-    PortOut<ScalarType<unsigned int>> *idx_out_port;
-
-  // OPTIONS
-  protected:
+    // Options
     options::Int n_messages_{-1};
     options::Vector<int, false> channel_indices_;
     options::Double rms_window_seconds_{5.0};
     options::Double rms_threshold_uv_{2.0};
 
+    // Runtime state
+    BroadcasterState<unsigned int> *channel_state_ = nullptr;
     unsigned int current_channel_index_ = 0;
-    double ema_mu_ = 1.0;
     unsigned int n_channels_ = 0;
+    unsigned int packet_count_ = 0;
+    double fs_ = 0;
+    double ema_mu_ = 1.0;
     std::vector<unsigned int> selected_channels_;
     std::vector<double> ema_;
+
+    const uint32_t MAX_NCHANNELS = 384;
 };

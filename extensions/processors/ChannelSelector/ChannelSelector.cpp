@@ -175,7 +175,7 @@ void ChannelSelector::Process(ProcessingContext &context)
 
         if (packet_count_ % int(5 * fs_) == 0)
         {
-            LOG(INFO) << name() << ". Packet " << packet_count_ + 1 << ": Selected channel " << current_channel_index_ + 1 << " (RMS: " << ema_[current_channel_index_] << ")";
+            LOG(INFO) << name() << ". Packet " << packet_count_ + 1 << ": Selected channel " << current_channel_index_ + 1 << " (RMS: " << std::sqrt(ema_[current_channel_index_]) << "uV)";
         }
 
         // Claim output buffer

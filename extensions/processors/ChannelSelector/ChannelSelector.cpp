@@ -142,27 +142,22 @@ void ChannelSelector::Process(ProcessingContext &context)
             break;
         }
 
-        double best_mean_square = -std::numeric_limits<double>::infinity();
-
-        // First check of current channel is still above threshold, if not, loop through all channels to find the one with highest RMS
-        const double sample = static_cast<double>(data_in->data_sample(0, current_channel_index_));
-        const double sample_square = sample * sample;
-        const double ema_current = ema_mu_ * ema_[current_channel_index_] + (1 - ema_mu_) * sample_square;
+        // Always update EMA for all selected channels so no channel goes stale
+        for (unsigned int channel_idx : selected_channels_)
+        {
+            const double s = static_cast<double>(data_in->data_sample(0, channel_idx));
+            ema_[channel_idx] = ema_mu_ * ema_[channel_idx] + (1.0 - ema_mu_) * s * s;
+        }
 
         // Because true RMS would take the sqrt, we compare to squared threshold
-        if (ema_current > rms_thresh_uv * rms_thresh_uv)
+        
+        // Keep current channel if still above threshold, otherwise pick the channel with highest EMA
+        if (ema_[current_channel_index_] <= rms_thresh_uv * rms_thresh_uv)
         {
-            ema_[current_channel_index_] = ema_current;
-            best_mean_square = ema_current;
-        }
-        else
-        {
-            // LOG(DEBUG) << name() << packet_count_ << " Channel " << current_channel_index_ + 1 << " RMS " << std::sqrt(ema_current) << " uV below threshold " << rms_thresh_uv << " uV, checking other channels...";
+                // LOG(DEBUG) << name() << packet_count_ << " Channel " << current_channel_index_ + 1 << " RMS " << std::sqrt(ema_[current_channel_index_]) << " uV below threshold " << rms_thresh_uv << " uV, checking other channels...";
+            double best_mean_square = -std::numeric_limits<double>::infinity();
             for (unsigned int channel_idx : selected_channels_)
             {
-                const double sample = static_cast<double>(data_in->data_sample(0, channel_idx));
-                const double sample_square = sample * sample;
-                ema_[channel_idx] = ema_mu_ * ema_[channel_idx] + (1 - ema_mu_) * sample_square;
                 if (ema_[channel_idx] > best_mean_square)
                 {
                     best_mean_square = ema_[channel_idx];
@@ -202,8 +197,7 @@ void ChannelSelector::Process(ProcessingContext &context)
 
 void ChannelSelector::Postprocess(ProcessingContext &context)
 {
-    printf("\n ---------------- \n ChannelSelector: Total messages processed: %d, last selected channel: %u",
-           packet_count_, current_channel_index_);
+    LOG(INFO) << "\n ---------------- \n ChannelSelector: Total messages processed: " << packet_count_ << ", last selected channel: " << current_channel_index_;
 }
 
 REGISTERPROCESSOR(ChannelSelector);

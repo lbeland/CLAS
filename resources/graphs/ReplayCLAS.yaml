@@ -9,7 +9,7 @@ graph:
       class: ReplaySourceClient
       options:
         fs: *fs
-        path: eike_stim_kalman_20260609_121408/  # replay from this run in _last_run_group or results
+        path: iafInterrupt_20260616_115736/  # replay from this run in _last_run_group or results
         nchannels: 32
         nsamples: 1
         n_messages: *n_messages
@@ -17,22 +17,22 @@ graph:
       advanced:
         buffer_sizes:
           out: 32
-        thread_core: 0
+        thread_core: 6
     SelectionFilter:
       class: MultiChannelFilter
       options:
         filter:
           # file: filters://2_2.0_20.0_10000.txt
           N: [1, 1]
-          low_cutoff: [5, 48]
-          high_cutoff: [15, 52]
+          low_cutoff: [5, 46]
+          high_cutoff: [18, 54]
           btype: [bandpass, bandstop]
           name: selection
         n_messages: *n_messages
       advanced:
         buffer_sizes:
-          out: 32
-        thread_core: 1
+          out: 256
+        thread_core: 7
     ChannelSelector:
       class: ChannelSelector
       options:
@@ -40,8 +40,8 @@ graph:
         channel_indices: [1]   # 1-based indices of channels to select
       advanced:
         buffer_sizes:
-          ch_idx_out: 32
-        thread_core: 2
+          ch_idx_out: 256
+        thread_core: 8
     ChannelReductor:
       class: ChannelReductor
       options:
@@ -49,24 +49,39 @@ graph:
         default_channel_index: 1  # 1-based
       advanced:
         buffer_sizes:
-          out: 32
-        thread_core: 3
+          out: 256
+        thread_core: 9
+    ecHTFilter:
+      class: MultiChannelFilter
+      options:
+        filter:
+          # file: filters://2_2.0_20.0_10000.txt
+          N: [1, 1]
+          low_cutoff: [5, 46]
+          high_cutoff: [20, 54]
+          btype: [bandpass, bandstop]
+          name: ecHTfilter
+        n_messages: *n_messages
+      advanced:
+        buffer_sizes:
+          out: 256
+        thread_core: 10
     IAFEstimator:
       class: IAFEstimator
       options:
         n_messages: *n_messages
         calc_interval: 100
         window_size_sec: 10
-        max_invalid_sec: 3
-        kalman_estimator_std: 0.96
-        kalman_iaf_std: 0.397857
+        max_invalid_sec: 1
+        # kalman_estimator_std: 0.088
+        kalman_iaf_std: 0.1
         kalman_full: true
-        f_min: 5.0
+        f_min: 7.0
         f_max: 16.0
       advanced:
         buffer_sizes:
-          out: 32
-        thread_core: 3
+          out: 256
+        thread_core: 18
     PhaseEstimator:
       class: PhaseEstimator
       options:
@@ -80,7 +95,7 @@ graph:
       advanced:
         buffer_sizes:
           out: 32
-        thread_core: 4
+        thread_core: 19
     StimulusController:
       class: StimulusController
       options:
@@ -88,22 +103,26 @@ graph:
         stim_onset_deg: 0
         stim_dur_unit: "deg"
         stim_dur_deg: 90
+        correct_latencies: false
         audio_latency_s: 0.003
         erp_latency_s: 0
         stim_dur_ms: 45
         stim_amplitude: 0.1
-        stim_period_ms: 0.1
+        stim_period_ms: 1.0
+        audio_device: "hw:1,0"
+        use_background_sound: true
+        background_dB: 50
       advanced:
         buffer_sizes:
           out: 32
-        thread_core: 5
+        thread_core: 20
     Consumer:   # Only for measurement of latency/throughput
       class: Consumer
       options:
         n_messages: *n_messages
         window_size: *window_size
       advanced:
-        thread_core: 6
+        thread_core: 7
     Serializer(1-5):    # one serializers per output stream
       class: FileSerializer
       options:
@@ -112,20 +131,23 @@ graph:
         overwrite: false 
         format: full
         n_messages: *n_messages
+      advanced:
+        thread_core: [21,22,23]
     
   connections:
   # - Producer.out.0 = SelectionFilter.in
   - SourceClient.out.0 = SelectionFilter.in
   - SourceClient.out.0 = ChannelReductor.in
   - SelectionFilter.out.0 = ChannelSelector.in
-  - ChannelReductor.out.0 = PhaseEstimator.in
+  - ChannelReductor.out.0 = ecHTFilter.in
+  - ecHTFilter.out.0 = PhaseEstimator.in
   - ChannelReductor.out.0 = IAFEstimator.in
   - PhaseEstimator.out.0 = StimulusController.in
   - StimulusController.out.0 = Consumer.in
 
   - SourceClient.out.0 = Serializer1.in
-  - SourceClient.out.1 = Serializer1.in
-  - SelectionFilter.out.0 = Serializer2.in
+  # - SourceClient.out.1 = Serializer1.in
+  - ecHTFilter.out.0 = Serializer2.in
   - PhaseEstimator.out.0 = Serializer3.in
   - PhaseEstimator.out.1 = Serializer3.in
   - IAFEstimator.out.0 = Serializer4.in

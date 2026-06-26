@@ -21,7 +21,8 @@
 #include "iprocessor.hpp"
 #include "scalardata/scalardata.hpp"
 #include "multichanneldata/multichanneldata.hpp"
-#include <boost/circular_buffer.hpp>
+// #include <boost/circular_buffer.hpp>
+#include <readerwriterqueue/readerwriterqueue.h>
 #include <alsa/asoundlib.h>
 #include "miniaudio/miniaudio.c"
 #include <atomic>
@@ -31,6 +32,8 @@
 #include <thread>
 #include <cstdint>
 #include <vector>
+
+using namespace moodycamel;
 
 class StimulusController : public IProcessor {
   public:
@@ -105,7 +108,8 @@ class StimulusController : public IProcessor {
     double fs_audio_ = 0;
     int burst_frames_ = 0;
     int period_frames_ = 0;
-    boost::circular_buffer<float> background_sound_buffer_{1}; // Initialized with size 1, will be resized in Prepare
+    // boost::circular_buffer<float> background_sound_buffer_{1}; // Initialized with size 1, will be resized in Prepare
+    std::unique_ptr<moodycamel::ReaderWriterQueue<float>> background_sound_buffer_; // Initialized with size 1, will be resized in Prepare
     float gain_ = 0.0;
     float power_s_ = 0.0; // Power of the stimulus signal (used for gain normalization)
     std::vector<double> sound_buf_;

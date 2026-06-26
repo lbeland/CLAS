@@ -179,8 +179,8 @@ void StimulusController::Prepare(GlobalContext &context)
     period_frames_ = static_cast<int>(period_ms_ * fs_audio_ / 1000.0);
     LOG(INFO) << name() << " Period frames: " << period_frames_ << " (period_ms=" << period_ms_ << " ms, sample_rate=" << fs_audio_ << " Hz)";
 
-    background_sound_buffer_.set_capacity(fs_audio_ * audio_channels_() * 5); // 5 seconds of background sound buffer
-    background_sound_buffer_.clear();
+    // Set size to 5 seconds
+    background_sound_buffer_ = std::make_unique<moodycamel::ReaderWriterQueue<float>>(5 * fs_audio_ * audio_channels_());
 
     // Load background sound if enabled
     if (use_background_sound_())
@@ -213,14 +213,17 @@ void StimulusController::Preprocess(ProcessingContext &context)
     compute_burst_params_(iaf); // sets stim_dur_rad_, burst_frames_, period_ms_
     build_audio_buffers_();     // uses burst_frames_ and period_ms_ set above
 
-    background_sound_buffer_.clear();
+    // Drain any leftover samples from a previous run
+    { float tmp; while (background_sound_buffer_->try_dequeue(tmp)) {} }
+
     if (use_background_sound_() && valid_background_)
     {
         // Fill buffer with 1 second of background sound to avoid underruns at start
         int frames = (int)(5 * fs_audio_); // 5 seconds of audio
         std::vector<float> out_f(frames * audio_channels_());
         ma_data_source_read_pcm_frames(&decoder_, out_f.data(), frames, NULL);
-        background_sound_buffer_.insert(background_sound_buffer_.end(), out_f.begin(), out_f.end());
+        for (float s : out_f)
+            background_sound_buffer_->try_enqueue(s);
 
         // Get power of background sound for gain normalization
         double power_b = 0.0;
@@ -229,16 +232,17 @@ void StimulusController::Preprocess(ProcessingContext &context)
             power_b += sample * sample;
         }
         power_b /= out_f.size();
-        // Stimulus shall be 18db above background sound
-        gain_ = std::pow(10.0, 18.0 / 10.0) * power_b/power_s_;
+        // Stimulus shall be 30db above background sound
+        gain_ = std::pow(10.0, background_dB_() / 10.0) * power_b/power_s_;
 
     }
     else {
         // use stimulus amplitude as gain if no background sound
         gain_ = stim_amplitude_();
         // fill background with zeros
-        std::vector<float> zeros(background_sound_buffer_.capacity(), 0.0f);
-        background_sound_buffer_.insert(background_sound_buffer_.end(), zeros.begin(), zeros.end());
+        const int cap = 5 * (int)fs_audio_ * audio_channels_();
+        for (int i = 0; i < cap; ++i)
+            background_sound_buffer_->try_enqueue(0.0f);
     }
 
     packet_count_ = 0;
@@ -601,7 +605,20 @@ void StimulusController::audio_thread_main_()
                 {
                     // gain_ is directly set to target, change 1 to a smaller value for smoothing
                     // gain_ += (target_gain - gain_) * 0.01; // 0.01f;
-                    out_s[i] = float_to_s16_(sound_buf_[i] * target_gain + background_sound_buffer_[i]);
+                    float bg = 0.0f;
+                    background_sound_buffer_->try_dequeue(bg);
+                    out_i16[i] = float_to_s16_(sound_buf_[i] * target_gain + bg);
+                }
+                written = write_with_recovery_(local_pcm, out_i16.data(), frames);
+            }
+            else if (pcm_format_ == SND_PCM_FORMAT_S32_LE)
+            {
+                for (int i = 0; i < frames * channels; ++i)
+                {
+                    // gain_ += (target_gain - gain_) * 0.01; // 0.01f;
+                    float bg = 0.0f;
+                    background_sound_buffer_->try_dequeue(bg);
+                    out_i32[i] = float_to_s32(sound_buf_[i] * target_gain + bg);
                 }
                 write_with_recovery_(local_pcm, out_s.data(), frames);
             }
@@ -610,12 +627,14 @@ void StimulusController::audio_thread_main_()
                 for (int i = 0; i < frames * channels; ++i)
                 {
                     // gain_ += (target_gain - gain_) * 0.01; // 0.01f;
-                    out_f[i] = static_cast<float>(sound_buf_[i]) * target_gain + background_sound_buffer_[i];
+                    float bg = 0.0f;
+                    background_sound_buffer_->try_dequeue(bg);
+                    out_f[i] = static_cast<float>(sound_buf_[i]) * target_gain + bg;
                 }
                 write_with_recovery_(local_pcm, out_f.data(), frames);
             }
-            background_sound_buffer_.erase(background_sound_buffer_.begin(), background_sound_buffer_.begin() + frames * channels);
         }
+        // LOG(INFO) << name() << " Audio thread loop time: " << std::chrono::duration<double, std::milli>(Clock::now() - start_time).count() << " ms";
     }
 
     LOG(INFO) << name() << "Max queue size:: " << queue_size_max << " frames, Min queue size: " << queue_size_min << " frames";
@@ -793,18 +812,33 @@ void StimulusController::Process(ProcessingContext &context)
         if (packet_count_ % (int)fs_ == 0)
         {
             // Each second, load fill background buffer again until full
-            int buffer_free_size = background_sound_buffer_.capacity() - background_sound_buffer_.size();
+            const int total_cap = 5 * (int)fs_audio_ * audio_channels_();
+            int buffer_free_size = 0.8 * (total_cap - (int)background_sound_buffer_->size_approx());
             if (use_background_sound_() && valid_background_)
             {
                 int frames = buffer_free_size / audio_channels_();
                 std::vector<float> out_f(frames * audio_channels_());
                 ma_data_source_read_pcm_frames(&decoder_, out_f.data(), frames, NULL);
-                background_sound_buffer_.insert(background_sound_buffer_.end(), out_f.begin(), out_f.end());
+                for (float s : out_f)
+                {
+                    bool success = background_sound_buffer_->try_enqueue(s);
+                    if (!success)
+                    {
+                        break;
+                    }
+                }
+
             }
             else {
                 // fill background with zeros
-                std::vector<float> zeros(buffer_free_size, 0.0f);
-                background_sound_buffer_.insert(background_sound_buffer_.end(), zeros.begin(), zeros.end());
+                for (int i = 0; i < buffer_free_size; ++i)
+                {
+                    bool success = background_sound_buffer_->try_enqueue(0.0f);
+                    if (!success)
+                    {
+                        break;
+                    }
+                }
             }
 
 

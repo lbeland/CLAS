@@ -577,6 +577,11 @@ snd_pcm_sframes_t StimulusController::write_with_recovery_(snd_pcm_t *pcm, const
 
 void StimulusController::audio_thread_main_()
 {
+    struct sched_param param;
+    param.sched_priority = 95;  // slightly below main (99) but above everything else
+    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) != 0)
+        LOG(WARNING) << "Failed to set audio thread RT priority: " << strerror(errno);
+
     int channels = audio_channels_();
     snd_pcm_sframes_t buffer_size = 1 * fs_audio_ * channels; // 1 second of audio buffer
     std::vector<float>   out_f(buffer_size);
@@ -593,6 +598,7 @@ void StimulusController::audio_thread_main_()
 
     while (audio_running_.load())
     {
+        // TimePoint start_time = Clock::now();
         {
             std::lock_guard<std::mutex> lock(audio_mutex_);
             local_pcm = pcm_;
@@ -605,11 +611,6 @@ void StimulusController::audio_thread_main_()
             frames = do_burst ? burst_frames_ : period_frames_;
         }
         float target_gain = do_burst ? gain_ : 0.0f;
-
-        // if (background_sound_buffer_.size() < frames * channels)
-        // {
-        //     LOG(WARNING) << name() << " Background sound buffer underrun: requested " << frames * channels << " samples, but only " << background_sound_buffer_.size() << " available";
-        // }
 
         if (frames > 0)
         {
@@ -755,8 +756,8 @@ void StimulusController::Process(ProcessingContext &context)
             {
                 // make sure each stimulus is minimum half an alpha cycle apart to avoid overlapping bursts
                 // double half_alpha_cycle = 1.0 / (2.0 * iaf_);
-                double max_dist = 1 / (iaf_ + iaf_ * 0.1); // 10% faster than IAF
-                distrib_interval = std::uniform_real_distribution<double>(max_dist, max_dist);
+                double min_dist = 1 / (iaf_ + iaf_ * 0.1); // 10% faster than IAF
+                distrib_interval = std::uniform_real_distribution<double>(min_dist, min_dist);
                 stim_dist_sec_ = distrib_interval(gen);
             }
             last_iaf_ = iaf_;

@@ -39,6 +39,10 @@ namespace
     return static_cast<int16_t>(v * 32767.0f + 0.5f);
 }
 
+[[gnu::always_inline]] inline int32_t float_to_s32(float v) {
+    return static_cast<int32_t>(v * 8388607.0f) << 8;
+}
+
 // double wrap_phase_rad(double radians)
 // {
 //     return std::fmod(radians + M_PI, 2.0 * M_PI) - M_PI;
@@ -71,6 +75,7 @@ StimulusController::StimulusController() : IProcessor(PRIORITY_HIGH)
     add_option("max_stim_dist_sec", max_stim_dist_sec_, "Maximum distance between stimuli in seconds.");
 
     add_option("use_background_sound", use_background_sound_, "Whether to play a continuous background sound (default: false).");
+    add_option("background_dB", background_dB_, "Sound level of signal over background in dB (default: 18).");
 
     iaf_state_ = create_follower_state<double>(
         "iaf", 10.0, Permission::NONE,
@@ -402,6 +407,10 @@ static snd_pcm_format_t parse_audio_format_(const std::string &s)
     {
         return SND_PCM_FORMAT_S16_LE;
     }
+    else if (s == "s32" || s == "S32" || s == "S32_LE" || s == "s32le" || s == "s32_le")
+    {
+        return SND_PCM_FORMAT_S32_LE;
+    }
     return SND_PCM_FORMAT_FLOAT_LE;
 }
 
@@ -411,6 +420,8 @@ static const char *format_name_(snd_pcm_format_t fmt)
     {
     case SND_PCM_FORMAT_S16_LE:
         return "S16_LE";
+    case SND_PCM_FORMAT_S32_LE:
+        return "S32_LE";
     case SND_PCM_FORMAT_FLOAT_LE:
         return "FLOAT_LE";
     default:
@@ -540,7 +551,7 @@ void StimulusController::stop_audio_() noexcept
     }
 }
 
-void StimulusController::write_with_recovery_(snd_pcm_t *pcm, const void *buf, snd_pcm_uframes_t frames)
+snd_pcm_sframes_t StimulusController::write_with_recovery_(snd_pcm_t *pcm, const void *buf, snd_pcm_uframes_t frames)
 {
     snd_pcm_sframes_t written = snd_pcm_writei(pcm, buf, frames);
     if (written == -EPIPE)
@@ -561,6 +572,7 @@ void StimulusController::write_with_recovery_(snd_pcm_t *pcm, const void *buf, s
     {
         LOG(WARNING) << name() << " ALSA write returned " << written << " frames, expected " << frames;
     }
+    return written;
 }
 
 void StimulusController::audio_thread_main_()
@@ -568,7 +580,8 @@ void StimulusController::audio_thread_main_()
     int channels = audio_channels_();
     snd_pcm_sframes_t buffer_size = 1 * fs_audio_ * channels; // 1 second of audio buffer
     std::vector<float>   out_f(buffer_size);
-    std::vector<int16_t> out_s(buffer_size);
+    std::vector<int16_t> out_i16(buffer_size);
+    std::vector<int32_t> out_i32(buffer_size);
     int queue_size_left = 0;
     int queue_size_max = 0;
     int queue_size_min = snd_pcm_avail(pcm_);
@@ -576,6 +589,7 @@ void StimulusController::audio_thread_main_()
     snd_pcm_t *local_pcm = nullptr;
     bool do_burst = false;
     snd_pcm_sframes_t frames = 0;
+    snd_pcm_sframes_t written = 0;
 
     while (audio_running_.load())
     {
@@ -620,7 +634,7 @@ void StimulusController::audio_thread_main_()
                     background_sound_buffer_->try_dequeue(bg);
                     out_i32[i] = float_to_s32(sound_buf_[i] * target_gain + bg);
                 }
-                write_with_recovery_(local_pcm, out_s.data(), frames);
+                written = write_with_recovery_(local_pcm, out_i32.data(), frames);
             }
             else
             {
@@ -631,7 +645,7 @@ void StimulusController::audio_thread_main_()
                     background_sound_buffer_->try_dequeue(bg);
                     out_f[i] = static_cast<float>(sound_buf_[i]) * target_gain + bg;
                 }
-                write_with_recovery_(local_pcm, out_f.data(), frames);
+                written = write_with_recovery_(local_pcm, out_f.data(), frames);
             }
         }
         // LOG(INFO) << name() << " Audio thread loop time: " << std::chrono::duration<double, std::milli>(Clock::now() - start_time).count() << " ms";

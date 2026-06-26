@@ -74,7 +74,7 @@ class StimulusController : public IProcessor {
 
     void build_audio_buffers_();
     bool start_audio_();
-    void write_with_recovery_(snd_pcm_t *pcm, const void *buf, snd_pcm_uframes_t frames);
+    snd_pcm_sframes_t write_with_recovery_(snd_pcm_t *pcm, const void *buf, snd_pcm_uframes_t frames);
     void stop_audio_() noexcept;
     void audio_thread_main_();
     bool set_hw_params_interleaved_(snd_pcm_t *pcm,
@@ -147,12 +147,13 @@ class StimulusController : public IProcessor {
 
 
     // Audio sample format: "float" (FLOAT_LE) or "s16" (S16_LE)
-    options::String audio_format_{"float"};
+    options::String audio_format_{"s32"};
 
     // Options for random stimulation with silent/skipped intervals
     options::Bool randomize_stim_onset_{false};
     options::Double min_stim_dist_sec_{0};
     options::Double max_stim_dist_sec_{-1};
     options::Bool use_background_sound_{false};
+    options::Int background_dB_{18};
 
 };

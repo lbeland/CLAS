@@ -32,6 +32,11 @@
 #include <complex>
 #include <cstdint>
 #include <random>
+#include <dirent.h>
+#include <signal.h>
+#include <unistd.h>
+#include <cstdio>
+#include <thread>
 
 namespace
 {
@@ -277,20 +282,31 @@ void StimulusController::Preprocess(ProcessingContext &context)
         for (float s : out_f)
             background_sound_buffer_->try_enqueue(s);
 
-        // Get power of background sound for gain normalization
+        // Get power and peak of background sound for gain normalization
         double power_b = 0.0;
+        float peak_bg = 0.0f;
         for (float sample : out_f)
         {
             power_b += sample * sample;
+            peak_bg = std::max(peak_bg, std::abs(sample));
         }
         power_b /= out_f.size();
-        // Stimulus shall be 30db above background sound
-        gain_ = std::pow(10.0, background_dB_() / 10.0) * power_b/power_s_;
+
+        // R = desired amplitude ratio signal/background that achieves the requested dB power ratio.
+        // Solving jointly: gain_ * peak_stim + bg_gain_ * peak_bg = 1.0  (no clipping)
+        //                  (gain_^2 * power_s_) / (bg_gain_^2 * power_b) = 10^(dB/10)  (dB target)
+        // gives: gain_ = R / (R + peak_bg),  bg_gain_ = 1 / (R + peak_bg)
+        // where R = sqrt(10^(dB/10) * power_b / power_s_).  peak_stim = 1 (normalised above).
+        double R = std::sqrt(std::pow(10.0, background_dB_() / 10.0) * power_b / power_s_);
+        gain_    = static_cast<float>(R / (R + peak_bg));
+        bg_gain_ = static_cast<float>(1.0 / (R + peak_bg));
+        LOG(INFO) << name() << " Signal gain: " << gain_ << ", background gain: " << bg_gain_;
 
     }
     else {
         // use stimulus amplitude as gain if no background sound
         gain_ = stim_amplitude_();
+        bg_gain_ = 0.0f;
         // fill background with zeros
         const int cap = 5 * (int)fs_audio_ * audio_channels_();
         for (int i = 0; i < cap; ++i)
@@ -677,7 +693,7 @@ void StimulusController::audio_thread_main_()
                     // gain_ += (target_gain - gain_) * 0.01; // 0.01f;
                     float bg = 0.0f;
                     background_sound_buffer_->try_dequeue(bg);
-                    out_i16[i] = float_to_s16_(sound_buf_[i] * target_gain + bg);
+                    out_i16[i] = float_to_s16_(sound_buf_[i] * target_gain + bg * bg_gain_);
                 }
                 written = write_with_recovery_(local_pcm, out_i16.data(), frames);
             }
@@ -688,7 +704,7 @@ void StimulusController::audio_thread_main_()
                     // gain_ += (target_gain - gain_) * 0.01; // 0.01f;
                     float bg = 0.0f;
                     background_sound_buffer_->try_dequeue(bg);
-                    out_i32[i] = float_to_s32(sound_buf_[i] * target_gain + bg);
+                    out_i32[i] = float_to_s32(sound_buf_[i] * target_gain + bg * bg_gain_);
                 }
                 written = write_with_recovery_(local_pcm, out_i32.data(), frames);
             }
@@ -699,7 +715,7 @@ void StimulusController::audio_thread_main_()
                     // gain_ += (target_gain - gain_) * 0.01; // 0.01f;
                     float bg = 0.0f;
                     background_sound_buffer_->try_dequeue(bg);
-                    out_f[i] = static_cast<float>(sound_buf_[i]) * target_gain + bg;
+                    out_f[i] = static_cast<float>(sound_buf_[i]) * target_gain + bg * bg_gain_;
                 }
                 written = write_with_recovery_(local_pcm, out_f.data(), frames);
             }

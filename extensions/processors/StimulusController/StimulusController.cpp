@@ -827,13 +827,16 @@ void StimulusController::Process(ProcessingContext &context)
 
         TimePoint now = Clock::now();
 
-        TimePoint sample_ts = data_in->source_timestamp();
-        if (now < sample_ts)
+        uint64_t hw_ts_us = data_in->hardware_timestamp(); // UTC µs of ADC capture
+        uint64_t sys_now_us = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+
+        if (sys_now_us < hw_ts_us)
         {
-            LOG(WARNING) << name() << " Current time is before sample timestamp (now: " << std::chrono::duration<double, std::milli>(now.time_since_epoch()).count()
-                         << " ms, sample_ts: " << std::chrono::duration<double, std::milli>(sample_ts.time_since_epoch()).count() << " ms).";
+            LOG(WARNING) << name() << " Current time is before hardware timestamp (sys_now: "
+                         << sys_now_us << " µs, hw_ts: " << hw_ts_us << " µs).";
         }
-        // data_out->set_source_timestamp(now);
         data_in_port_->slot(0)->ReleaseData();
 
         time_since_last_stim = std::chrono::duration<double>(now - last_stim_time_).count();
@@ -844,7 +847,7 @@ void StimulusController::Process(ProcessingContext &context)
             if (correct_latencies_())
             {
                 // System latency
-                delay_sec += std::chrono::duration<double>(now - sample_ts).count();
+                delay_sec += static_cast<double>(sys_now_us - hw_ts_us) / 1e6;
                 // Brain latency
                 delay_sec += audio_latency_s_() + erp_latency_s_();
             }
@@ -878,10 +881,9 @@ void StimulusController::Process(ProcessingContext &context)
             output_ = false;
         }
 
-        TimePoint timestamp = Clock::now();
         last_output_ = output_;
 
-        data_out->set_source_timestamp(timestamp);
+        data_out->set_source_timestamp( Clock::now());
         data_out->set_data_sample(0, 0, static_cast<double>(output_));
         data_out_port_->slot(0)->PublishData();
 

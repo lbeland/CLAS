@@ -114,7 +114,8 @@ void MultiChannelFilter::Process(ProcessingContext &context) {
                                       data_out->data());
 
       data_out->set_sample_timestamps(data_in->sample_timestamps());
-      data_out->CloneTimestamps(*data_in);
+      data_out->set_hardware_timestamp(data_in->hardware_timestamp());
+      data_out->set_source_timestamp(Clock::now());
 
       data_out_port_->slot(k)->PublishData();
       data_in_port_->slot(k)->ReleaseData();

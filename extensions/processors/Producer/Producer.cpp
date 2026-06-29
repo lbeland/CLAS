@@ -145,15 +145,19 @@ void Producer::Process(ProcessingContext &context)
 
     double carrier_phase = 0.0;
     double modulation_phase = 0.0;
-    TimePoint timestamp;
     uint64_t hardware_time_us = 0;
 
     const double carrier_step = 2.0 * M_PI * carrier_frequency_() / fs_();
     const double modulation_step = 2.0 * M_PI * modulation_frequency_() / fs_();
 
-    // Use wall-clock time as the reference for hardware timestamps
+    // Base time in steady_clock (same domain as source_timestamp / Clock::now()).
+    // The wallclock offset converts it to UTC µs for hardware_timestamp, matching SourceClient.
     uint64_t start_time = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
+        Clock::now().time_since_epoch()).count();
+    int64_t steady_to_wallclock_offset_us =
+        static_cast<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count()) -
+        static_cast<int64_t>(start_time);
 
     while (!context.terminated())
     {
@@ -182,25 +186,33 @@ void Producer::Process(ProcessingContext &context)
         current_iaf_ = static_cast<float>(state.inst_freq);
         iaf_state_->set(current_iaf_);
 
-        timestamp = Clock::now();
+        // hardware_time_us is in steady_clock µs; convert to wall-clock for hardware_timestamp
         hardware_time_us = start_time + (uint64_t)packet_count_ * 1000000ULL / fs_();
 
         std::fill(sample_vec.begin(), sample_vec.end(), static_cast<float>(state.value));
         data_out->set_data_sample(0, sample_vec);
-        data_out->set_sample_timestamp(0, hardware_time_us);
-        data_out->set_source_timestamp(timestamp);
-        data_out->set_hardware_timestamp(hardware_time_us);
+        data_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us);
+        data_out->set_source_timestamp(TimePoint(std::chrono::microseconds(hardware_time_us)));
+        data_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us);
         data_out_port_->slot(0)->PublishData();
 
         meta_out->set_data_sample(0, meta_data);
-        meta_out->set_sample_timestamp(0, hardware_time_us);
-        meta_out->set_source_timestamp(timestamp);
-        meta_out->set_hardware_timestamp(hardware_time_us);
+        meta_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us);
+        meta_out->set_source_timestamp(TimePoint(std::chrono::microseconds(hardware_time_us)));
+        meta_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us);
         meta_out_port_->slot(0)->PublishData();
 
         ++packet_count_;
 
-        custom_sleep_for(90);
+        // Sleep only for the time remaining until the next sample's scheduled deadline,
+        // so computation time doesn't accumulate as drift from the target sample rate.
+        uint64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            Clock::now().time_since_epoch()).count();
+        uint64_t next_time_us = start_time + (uint64_t)packet_count_ * 1000000ULL / fs_();
+        if (now_us < next_time_us)
+        {
+            custom_sleep_for(next_time_us - now_us);
+        }
 
         carrier_phase = WrapPhase(carrier_phase + carrier_step);
         modulation_phase = WrapPhase(modulation_phase + modulation_step);

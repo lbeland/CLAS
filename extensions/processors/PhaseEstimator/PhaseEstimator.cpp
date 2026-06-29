@@ -426,9 +426,11 @@ void PhaseEstimator::Process(ProcessingContext &context)
         sample = data_in->data_sample(0, 0);
 
         data_phase_out = data_out_port_->slot(0)->ClaimData(false);
-        data_phase_out->CloneTimestamps(*data_in);
+        data_phase_out->set_hardware_timestamp(data_in->hardware_timestamp());
+        data_phase_out->set_source_timestamp(Clock::now());
         data_real_out = data_out_port_->slot(1)->ClaimData(false);
-        data_real_out->CloneTimestamps(*data_in);
+        data_real_out->set_hardware_timestamp(data_in->hardware_timestamp());
+        data_real_out->set_source_timestamp(Clock::now());
 
         sample_window.push_back(sample);
 

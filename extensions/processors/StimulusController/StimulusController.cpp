@@ -309,6 +309,12 @@ void StimulusController::Preprocess(ProcessingContext &context)
 
     packet_count_ = 0;
     stimuli_count_ = 0;
+
+    if (!start_audio_())
+    {
+        LOG(ERROR) << name() << " failed to start audio playback (device: " << audio_device_() << ")";
+        throw std::runtime_error("Failed to start audio playback");
+    }
 }
 
 void StimulusController::build_audio_buffers_()
@@ -732,11 +738,6 @@ void StimulusController::audio_thread_main_()
 
 void StimulusController::Process(ProcessingContext &context)
 {
-    if (!start_audio_())
-    {
-        LOG(ERROR) << name() << " failed to start audio playback (device: " << audio_device_() << ")";
-        throw std::runtime_error("Failed to start audio playback");
-    }
 
     MultiChannelType<double>::Data *data_in;
     MultiChannelType<double>::Data *data_out;

@@ -1,22 +1,26 @@
 /*
- * pink_burst.cpp
+ * audio_gen.cpp
  *
  * Continuously streams silence via ALSA. Press ENTER to trigger a
  * 20 ms pink noise burst at any time. The audio thread picks up the
  * trigger at the next period boundary and plays the burst once.
  *
  * BUILD:
- *   g++ -O2 -o pink_burst pink_burst.cpp -lasound -lpthread
+ *   g++ -O2 -o audio_gen audio_gen.cpp -lasound -lpthread
  *
  * RUN:
- *   ./pink_burst
+ *   ./audio_gen
  *   Press ENTER to trigger a burst. Ctrl+C to quit.
  */
 
 #include <alsa/asoundlib.h>
+#include "lib/miniaudio/miniaudio.c"
+#include <alsa/asoundlib.h>
+#include <stdio.h>
 #include <pthread.h>
 #include <atomic>
 #include <cstdio>
+#include <string>
 #include <cstdlib>
 #include <cmath>
 #include <csignal>
@@ -25,13 +29,13 @@
 // ── Parameters ────────────────────────────────────────────────────────────────
 static const int   SAMPLE_RATE   = 44100;
 static const int   CHANNELS      = 2;
-static const int   BURST_MS      = 20;
-static const int   PERIOD_MS     = 5;    // audio thread wakeup interval (ms)
+static const float   BURST_MS      = 1000.0;
+static const float   PERIOD_MS     = 5;    // audio thread wakeup interval (ms)
 static const float AMPLITUDE     = 0.7f;
 static const int   NUM_OCTAVES   = 6;
 
-static const int BURST_FRAMES  = BURST_MS  * SAMPLE_RATE / 1000;  //  882
-static const int PERIOD_FRAMES = PERIOD_MS * SAMPLE_RATE / 1000;  //  220
+static const int BURST_FRAMES  = (int)(BURST_MS  * SAMPLE_RATE / 1000.0);  //  882
+static const int PERIOD_FRAMES = (int)(PERIOD_MS * SAMPLE_RATE / 1000);  //  220
 
 // ── Shared state ──────────────────────────────────────────────────────────────
 static std::atomic<bool> trigger_pending {false};  // main  → audio thread
@@ -41,21 +45,53 @@ static std::atomic<bool> running         {true};
 static std::vector<float> burst_buf;    // BURST_FRAMES  * 2 floats
 static std::vector<float> silence_buf;  // PERIOD_FRAMES * 2 floats (all zero)
 
+void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
+{
+    ma_decoder* pDecoder = (ma_decoder*)pDevice->pUserData;
+    if (pDecoder == NULL) {
+        return;
+    }
+
+    ma_data_source_read_pcm_frames(pDecoder, pOutput, frameCount, NULL);
+
+    (void)pInput;
+}
+
 static void build_buffers() {
     // Pink noise (Voss-McCartney)
-    float bands[NUM_OCTAVES] = {};
-    unsigned int counter = 0;
-    srand(42);
-    auto white = [] { return (float)rand() / RAND_MAX * 2.f - 1.f; };
+    // float bands[NUM_OCTAVES] = {};
+    // unsigned int counter = 0;
+    // srand(42);
+    // auto white = [] { return (float)rand() / RAND_MAX * 2.f - 1.f; };
+
+    // std::vector<float> mono(BURST_FRAMES);
+    // for (int i = 0; i < BURST_FRAMES; ++i) {
+    //     ++counter;
+    //     for (int b = 0; b < NUM_OCTAVES; ++b)
+    //         if ((counter >> b) & 1) bands[b] = white();
+    //     float sum = 0;
+    //     for (float v : bands) sum += v;
+    //     mono[i] = sum / NUM_OCTAVES;
+    // }
+
+    ma_result result;
+    ma_decoder decoder;
+
+    const char* file = "resources/sounds/background.mp3";
+
+    ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 1, 44100);
+    result = ma_decoder_init_file(file, &config, &decoder);
+    if (result != MA_SUCCESS) {
+        printf("Failed to initialize decoder for %s\n", file);
+    }
+    else {
+        printf("Successfully initialized decoder for %s\n", file);
+    }
 
     std::vector<float> mono(BURST_FRAMES);
-    for (int i = 0; i < BURST_FRAMES; ++i) {
-        ++counter;
-        for (int b = 0; b < NUM_OCTAVES; ++b)
-            if ((counter >> b) & 1) bands[b] = white();
-        float sum = 0;
-        for (float v : bands) sum += v;
-        mono[i] = sum / NUM_OCTAVES;
+    result = ma_decoder_read_pcm_frames(&decoder, mono.data(), BURST_FRAMES, NULL);
+    if (result != MA_SUCCESS) {
+        printf("Failed to read PCM frames for %s\n", file);
     }
 
     float peak = 0;
@@ -74,7 +110,7 @@ static void build_buffers() {
 // ── ALSA setup ────────────────────────────────────────────────────────────────
 static snd_pcm_t* open_alsa() {
     snd_pcm_t* pcm;
-    if (snd_pcm_open(&pcm, "hw:1,0", SND_PCM_STREAM_PLAYBACK, 0) < 0) {
+    if (snd_pcm_open(&pcm, "default", SND_PCM_STREAM_PLAYBACK, 0) < 0) {
         fprintf(stderr, "Cannot open audio device\n");
         exit(1);
     }
@@ -128,23 +164,84 @@ static void* audio_thread(void*) {
 // ── Signal handler ────────────────────────────────────────────────────────────
 static void on_sigint(int) { running = false; }
 
-// ── Main: trigger on ENTER (replace this with your real trigger source) ───────
-int main() {
-    signal(SIGINT, on_sigint);
-    build_buffers();
+// // ── Main: trigger on ENTER (replace this with your real trigger source) ───────
+// int main() {
 
-    pthread_t tid;
-    pthread_create(&tid, nullptr, audio_thread, nullptr);
+    
+//     signal(SIGINT, on_sigint);
+//     build_buffers();
 
-    printf("Ready. Press ENTER to trigger a burst. Ctrl+C to quit.\n");
+//     pthread_t tid;
+//     pthread_create(&tid, nullptr, audio_thread, nullptr);
 
-    while (running) {
-        int c = getchar();
-        if (c == '\n')
-            trigger_pending.store(true);
+//     printf("Ready. Press ENTER to trigger a burst. Ctrl+C to quit.\n");
+
+//     while (running) {
+//         int c = getchar();
+//         if (c == '\n')
+//             trigger_pending.store(true);
+//     }
+
+//     pthread_join(tid, nullptr);
+//     printf("Done.\n");
+//     return 0;
+// }
+
+int main(int argc, char** argv)
+{
+    ma_result result;
+    ma_decoder decoder;
+    ma_device_config deviceConfig;
+    ma_device device;
+
+    if (argc < 2) {
+        printf("No input file.\n");
+        return -1;
     }
 
-    pthread_join(tid, nullptr);
-    printf("Done.\n");
+    result = ma_decoder_init_file(argv[1], NULL, &decoder);
+    if (result != MA_SUCCESS) {
+        return -2;
+    }
+    ma_data_source_set_looping(&decoder, MA_TRUE);
+
+    deviceConfig = ma_device_config_init(ma_device_type_playback);
+    deviceConfig.playback.format   = decoder.outputFormat;
+    deviceConfig.playback.channels = decoder.outputChannels;
+    deviceConfig.sampleRate        = decoder.outputSampleRate;
+    deviceConfig.dataCallback      = data_callback;
+    deviceConfig.pUserData         = &decoder;
+
+    if (ma_device_init(NULL, &deviceConfig, &device) != MA_SUCCESS) {
+        printf("Failed to open playback device.\n");
+        ma_decoder_uninit(&decoder);
+        return -3;
+    }
+
+    if (ma_device_start(&device) != MA_SUCCESS) {
+        printf("Failed to start playback device.\n");
+        ma_device_uninit(&device);
+        ma_decoder_uninit(&decoder);
+        return -4;
+    }
+
+    printf("Press Enter to quit...");
+    getchar();
+    ma_device_stop(&device);
+
+    printf("Press Enter to continue...");
+    getchar();
+    if (ma_device_start(&device) != MA_SUCCESS) {
+        printf("Failed to start playback device.\n");
+        ma_device_uninit(&device);
+        ma_decoder_uninit(&decoder);
+        return -4;
+    }
+    printf("Press Enter to quit...");
+    getchar();
+
+    ma_device_uninit(&device);
+    ma_decoder_uninit(&decoder);
+
     return 0;
 }

@@ -52,7 +52,7 @@ def gen_filter(filter_params, fs, filter_name, output_folder):
     filename = f"{filter_name}_{fs}.txt"
     output_path = f"{output_folder}/{filename}"
 
-    print(f"Generating coefficients for global filter")
+    print(f"Generating coefficients for {filter_name} filter")
 
     for N, low_cutoff, high_cutoff, btype in filter_params:
         print(f"Adding filter: {N}, {btype}, {low_cutoff:.2f}-{high_cutoff:.2f}Hz")
@@ -140,14 +140,13 @@ if __name__ == "__main__":
     )
 
     sos2 = butter(
-        N=N,
-        Wn=[48 / (fs / 2), 52 / (fs / 2)],
+        N=4,
+        Wn=[30 / (fs / 2), 70 / (fs / 2)],
         btype="bandstop",
         output="sos",
     )
     
     plot_filter_response(np.vstack([sos1, sos2]), fs)
-    plot_filter_response(np.vstack([sos2, sos1]), fs)
 
     # # Bandstop
     # N = 1
@@ -164,4 +163,6 @@ if __name__ == "__main__":
     
     # plot_filter_response(sos, fs)
 
+    plt.xlim(0,100)
+    plt.savefig("test.png")
     plt.show()

@@ -8,7 +8,7 @@ from scipy.fft import fft, ifft, fftshift, ifftshift, next_fast_len
 # Signal parameters
 FS = 10_000   # sampling rate [Hz]
 F0 = 7.5      # cosine frequency [Hz]
-N = 40_100   # signal_length [samples] so that cycles do not fit in evenly
+N = 20_100   # signal_length [samples] so that cycles do not fit in evenly
 L = next_fast_len(N)
 
 # Build signal & true phase
@@ -146,7 +146,7 @@ ax.set_title("Phase error vs true phase")
 ax.legend(frameon=False, ncol=2)
 ax.grid(True, which="both", ls="--", lw=0.4, alpha=0.7)
 
-ax.set_ylim(-2, 2)
+# ax.set_ylim(-2, 2)
 
 fig.savefig("hilbert_calib_demo.png", dpi=150, bbox_inches="tight")
 plt.show()

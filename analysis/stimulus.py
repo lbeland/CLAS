@@ -74,7 +74,16 @@ def compute_reference_stimulus(
     wrapped_diff = np.arctan2(np.sin(diff), np.cos(diff))
 
     stim_ref = np.zeros_like(phase, dtype=float)
-    stim_ref[iaf_safe] = (np.abs(wrapped_diff[iaf_safe]) < stim_dur_rad[iaf_safe] / 2.0).astype(float)
+    last_stim_idx = 0
+    # Minimum needed distance between stim onset is 1 cycle of the current IAF + 10% buffer
+    for i in iaf_safe: 
+        min_dist_stim = 1 / (iaf[i] + iaf[i] * 0.1)
+        if np.abs(wrapped_diff[i]) < stim_dur_rad[i] / 2.0:
+            if (i - last_stim_idx) / fs >= min_dist_stim:
+                stim_ref[i] = 1
+                last_stim_idx = i
+        
+    # stim_ref[iaf_safe] = (np.abs(wrapped_diff[iaf_safe]) < stim_dur_rad[iaf_safe] / 2.0).astype(float)
 
     # Reset and rebuild with fixed duration per onset (matches real-time pipeline)
     rising   = get_edges(stim_ref, "rising")

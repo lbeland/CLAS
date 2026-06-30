@@ -7,6 +7,7 @@ import pytz
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import circmean, circstd
+from scipy.signal import spectrogram
 import mne
 
 from .stimulus import get_edges
@@ -55,7 +56,7 @@ def _circ_stats(phi_rad):
 # Error plots
 # ---------------------------------------------------------------------------
 
-def plot_errors(errors: list[dict], output_path: str = "error_analysis.png",
+def plot_errors(errors: list[dict], output_path: str = "error_analysis.svg",
                 time_range: tuple = None) -> None:
     """Plot error time series and polar histograms; save to output_path."""
     if not errors:
@@ -123,7 +124,7 @@ def plot_errors(errors: list[dict], output_path: str = "error_analysis.png",
 # IAF time series
 # ---------------------------------------------------------------------------
 
-def plot_iaf(ground_truth: dict, samples: dict, start_ts: float) -> None:
+def plot_iaf(ground_truth: dict, samples: dict, start_ts: float, output_path: str="iaf_timeseries.svg") -> None:
     """Plot estimated IAF over time with true IAF overlaid; adds error subplot when truth is known."""
     has_estimated = samples.get("IAFEstimator") is not None
     has_true      = ground_truth.get("true_inst_freq") is not None
@@ -180,7 +181,7 @@ def plot_iaf(ground_truth: dict, samples: dict, start_ts: float) -> None:
     ax.legend(handles + handles_r, labels + labels_r, frameon=True, fontsize=8)
 
     fig.tight_layout()
-    fig.savefig("iaf_timeseries.svg", dpi=300, bbox_inches="tight")
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +193,8 @@ def plot_spectrum(raw: np.ndarray, samples: dict, fs: float) -> None:
     freqs = np.fft.rfftfreq(len(raw), d=1 / fs)
 
     plt.figure(figsize=(8, 4))
-    plt.plot(freqs, np.abs(np.fft.rfft(raw)), label="Raw", alpha=0.7, color="blue")
+    X = np.abs(np.fft.rfft(raw))
+    plt.plot(freqs, X, label="Raw", alpha=0.7, color="blue")
 
     if samples.get("ecHTFilter") is not None:
         filt        = samples["ecHTFilter"]["y"]
@@ -200,11 +202,20 @@ def plot_spectrum(raw: np.ndarray, samples: dict, fs: float) -> None:
         plt.plot(freqs_filt, np.abs(np.fft.rfft(filt)),
                  label="Filtered", alpha=0.7, color="orange")
 
-    plt.xlim(0, 100)
+    plt.xlim(0, 20)
+    plt.ylim(0, X[np.argmin(np.abs(freqs-0.5))])
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Magnitude")
     plt.title("Spectrum")
     plt.legend(facecolor="white", frameon=True)
+    
+    plt.figure(figsize=(8, 4))
+    f, t, Sxx = spectrogram(raw, fs=fs, nperseg=int(fs*10))
+    plt.pcolormesh(t, f, np.log(Sxx), shading='nearest')
+    plt.colorbar(label='Intensity (log scale)')
+    plt.ylim(0, 50)
+    plt.ylabel('Frequency [Hz]')
+    plt.xlabel('Time [sec]')
 
 
 def plot_time_series(

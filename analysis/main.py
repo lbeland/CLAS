@@ -21,7 +21,7 @@ from analysis.plot   import write_edf, plot_errors, plot_spectrum, plot_time_ser
                             plot_iaf, get_erp_windows, plot_erp_latency
 
 
-def analyse_results(f0: float, results_dir: str, plot_path: str = "error_analysis.svg") -> None:
+def analyse_results(f0: float, results_dir: str) -> None:
     graph_files = glob.glob(os.path.join(results_dir, "*.yaml"))
     if not graph_files:
         print(f"Error: no graph config (.yaml) found in {results_dir}")
@@ -67,7 +67,7 @@ def analyse_results(f0: float, results_dir: str, plot_path: str = "error_analysi
 
     # 6. Offline Hilbert reference
     raw = ground_truth["raw"]
-    filtered, hilbert_phase = compute_hilbert_reference(raw, fs, f_low=f0 - 2.0, f_high=f0 + 2.0)
+    filtered, hilbert_phase = compute_hilbert_reference(raw, fs, f0)
 
     # 7. Compute errors
     start_ts = ground_truth["time"][0]
@@ -77,7 +77,7 @@ def analyse_results(f0: float, results_dir: str, plot_path: str = "error_analysi
     write_edf(edf_path, fs, ground_truth, samples, hilbert_phase, stim_ref, filtered)
 
     # 9. Plot errors
-    plot_errors(errors, output_path=plot_path)
+    plot_errors(errors)
 
     # 10. IAF time series
     plot_iaf(ground_truth, samples, start_ts)
@@ -86,8 +86,8 @@ def analyse_results(f0: float, results_dir: str, plot_path: str = "error_analysi
     plot_spectrum(raw, samples, fs)
 
     # 12. Plot time series
-    time_range = None  # set to e.g. (17, 18) to zoom in seconds
-    plot_time_series(ground_truth, samples, hilbert_phase, stim_ref, time_range=time_range)
+    time_range = None #(10, 20)  # set to e.g. (17, 18) to zoom in seconds
+    # plot_time_series(ground_truth, samples, hilbert_phase, stim_ref, time_range=time_range)
 
     plt.show()
 

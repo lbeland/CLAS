@@ -9,10 +9,12 @@ from .stimulus import StimulusConfig, compute_reference_stimulus, compute_stimul
 
 
 def compute_hilbert_reference(
-    raw: np.ndarray, fs: float, f_low: float = 4.0, f_high: float = 8.0
+    raw: np.ndarray, fs: float, f0: float
 ) -> tuple[np.ndarray, np.ndarray]:
     """Bandpass + Hilbert transform to produce an offline phase reference."""
-    sos      = butter(1, [f_low, f_high], btype="band", fs=fs, output="sos")
+    l_freq = max(0.1, f0 - f0/2)
+    h_freq = min(0.5*fs - 0.1, f0 + f0/2)
+    sos      = butter(1, [l_freq, h_freq], btype="band", fs=fs, output="sos")
     filtered = sosfiltfilt(sos, raw)
     return filtered, np.angle(hilbert(filtered))
 

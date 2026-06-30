@@ -100,9 +100,9 @@ def combine_simple(psd: np.ndarray, freq_bins: np.ndarray, config: dict) -> floa
 def estimate_iaf(raw: np.ndarray, fs: float) -> list:
     """Estimate IAF from the raw signal. Returns a list of per-window estimates."""
     config = {"alpha_band": (5, 18), "freq_range": (0.01, 30.0)}
-    window_samples = int(30 * fs)
 
-    if len(raw) / fs > 30:
+    if len(raw) / fs > 20:
+        window_samples = int(20 * fs)
         iaf = []
         for start in tqdm(range(0, len(raw) - window_samples, window_samples)):
             freqs, psd = welch(raw[start : start + window_samples], fs=fs, nperseg=int(fs * 10))

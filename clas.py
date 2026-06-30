@@ -41,11 +41,21 @@ def main():
     if not args.results_dir:
         args.results_dir = input("Enter the results directory: ")
 
+    output = f"{Path(args.results_dir).name}_{time.strftime('%Y%m%d_%H%M%S')}"
+    # Copy graph file to results directory for record-keeping
+    results_dir_path =  Path(RESULTS_DIR) / Path(output)
+
     # Load the Falcon configuration
-    with open(WORKSPACE_FALCON_CONFIG, "r") as f:
+    with open(WORKSPACE_FALCON_CONFIG, "r+") as f:
         config = yaml.safe_load(f)
         server_config = config.get("server_side_storage", {})
         resources_folder = server_config.get("resources", "")
+        # Set the logging path in the configuration to the results directory
+        config["logging"]["path"] = str(results_dir_path / f"{output}.log")
+        # Save the updated configuration back to the file
+        f.seek(0)
+        yaml.dump(config, f)
+        f.truncate()
 
     graph_path = os.path.join(resources_folder, "graphs", args.graph)
     print(f"Using graph file: {graph_path}")
@@ -89,12 +99,11 @@ def main():
         context = zmq.Context()
         socket = context.socket(zmq.REQ)
         socket.connect(f"tcp://127.0.0.1:{config['network']['port']}")
-        output = f"{Path(args.results_dir).name}_{time.strftime('%Y%m%d_%H%M%S')}"
         socket.send_multipart([b"graph", b"start", RESULTS_DIR.encode(), output.encode(), b""])
         socket.recv_multipart()
-        # Copy graph file to results directory for record-keeping
-        results_dir_path =  Path(RESULTS_DIR) / Path(output)
+
         results_dir_path.mkdir(parents=True, exist_ok=True)
+        # Copy the graph file to the results directory for record-keeping
         output_graph_path = results_dir_path / args.graph
         shutil.copy2(graph_path, output_graph_path)
 

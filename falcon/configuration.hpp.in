@@ -36,7 +36,7 @@ class FalconConfiguration : public Configuration {
     options::Bool testing_enabled{false};
     options::Bool graph_autostart{false};
     options::Int network_port{5555};
-    options::String logging_path{"./", options::isdir(true, true)};
+    options::String logging_path{""};
     options::Bool logging_screen_enabled{true};
     options::Bool logging_cloud_enabled{true};
     options::Int logging_cloud_port{5556};

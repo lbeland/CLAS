@@ -132,7 +132,7 @@ int main(int argc, char** argv) {
     std::string logpath = std::regex_replace(config.logging_path(), re, home);
 
     auto worker = g3::LogWorker::createLogWorker();
-    // auto defaultHandler = worker->addDefaultLogger("falcon", logpath);
+    worker->addSink(std::make_unique<FileSinkFixed>(logpath), &FileSinkFixed::ReceiveLogMessage);
 
     // initialize logging before creating additional loggers
     g3::initializeLogging(worker.get());

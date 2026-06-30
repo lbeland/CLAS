@@ -59,7 +59,7 @@ class RunContext : public StorageContext {
         struct stat info;
 
         // use default run group id if none given
-        run_group_id_ = run_group_id.empty() ? "default" : run_group_id;
+        run_group_id_ = run_group_id.empty() ? "results" : run_group_id;
 
         // add run group storage site
         add_storage_context("rungroup", storage_context("runroot") + run_group_id_);
@@ -103,8 +103,8 @@ class RunContext : public StorageContext {
         // create run destination folder
         if (mkdir(storage_context("runbase").c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) != 0) {
             if (errno == EEXIST) {
-                throw std::runtime_error("Run base folder already exists. (" +
-                                         storage_context("runbase") + ")");
+                LOG(WARNING) << "Run base folder already exists, reusing it. ("
+                             << storage_context("runbase") << ")";
             } else {
                 throw std::runtime_error("Cannot create run base folder " +
                                          storage_context("runbase"));

@@ -24,8 +24,8 @@ graph:
         filter:
           # file: filters://2_2.0_20.0_10000.txt
           N: [1, 8]
-          low_cutoff: [7, 40]
-          high_cutoff: [16, 60]
+          low_cutoff: [7, 30]
+          high_cutoff: [16, 70]
           btype: [bandpass, bandstop]
           name: selection
         n_messages: *n_messages
@@ -37,7 +37,8 @@ graph:
       class: ChannelSelector
       options:
         n_messages: *n_messages
-        channel_indices: [1,2]   # 1-based indices of channels to select
+        channel_indices: [1]   # 1-based indices of channels to select
+        rms_threshold_uv: 20
       advanced:
         buffer_sizes:
           ch_idx_out: 256
@@ -46,7 +47,7 @@ graph:
       class: ChannelReductor
       options:
         n_messages: *n_messages
-        default_channel_index: 2  # 1-based
+        default_channel_index: 1  # 1-based
       advanced:
         buffer_sizes:
           out: 256
@@ -76,7 +77,7 @@ graph:
         # kalman_estimator_std: 0.088
         kalman_iaf_std: 0.1
         kalman_full: true
-        f_min: 7.0
+        f_min: 5.0
         f_max: 16.0
       advanced:
         buffer_sizes:
@@ -109,7 +110,7 @@ graph:
         stim_dur_ms: 45
         stim_amplitude: 0.5
         stim_period_ms: 0.8
-        use_background_sound: true
+        use_background_sound: false
         background_dB: 30
       advanced:
         buffer_sizes:

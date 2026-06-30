@@ -16,16 +16,16 @@ graph:
         speed_factor: 1
       advanced:
         buffer_sizes:
-          out: 32
+          out: 1024
         thread_core: 6
     SelectionFilter:
       class: MultiChannelFilter
       options:
         filter:
           # file: filters://2_2.0_20.0_10000.txt
-          N: [1, 1]
-          low_cutoff: [5, 46]
-          high_cutoff: [18, 54]
+          N: [1, 4]
+          low_cutoff: [5, 30]
+          high_cutoff: [18, 70]
           btype: [bandpass, bandstop]
           name: selection
         n_messages: *n_messages
@@ -37,7 +37,8 @@ graph:
       class: ChannelSelector
       options:
         n_messages: *n_messages
-        channel_indices: [1]   # 1-based indices of channels to select
+        channel_indices: [30,9,1]   # 1-based indices of channels to select
+        rms_threshold_uv: 7000
       advanced:
         buffer_sizes:
           ch_idx_out: 256
@@ -94,7 +95,7 @@ graph:
         compensate_filter: true
       advanced:
         buffer_sizes:
-          out: 32
+          out: 1024
         thread_core: 19
     StimulusController:
       class: StimulusController
@@ -107,14 +108,14 @@ graph:
         audio_latency_s: 0.003
         erp_latency_s: 0
         stim_dur_ms: 45
-        stim_amplitude: 0.1
+        stim_amplitude: 1.0
         stim_period_ms: 1.0
         audio_device: "hw:1,0"
         use_background_sound: true
-        background_dB: 50
+        background_dB: 18
       advanced:
         buffer_sizes:
-          out: 32
+          out: 1048
         thread_core: 20
     Consumer:   # Only for measurement of latency/throughput
       class: Consumer

@@ -9,8 +9,7 @@ import shutil
 import yaml
 import zmq
 from gen_filter_coeff import gen_filter, gen_filter_ecHT
-from plot_results import plot_results
-from postprocess_results import analyse_results
+from analysis.main import analyse_results
 
 
 REPO_ROOT = Path(__file__).resolve().parent

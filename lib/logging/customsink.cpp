@@ -16,11 +16,24 @@
 // You should have received a copy of the GNU General Public License
 // along with falcon-core. If not, see <http://www.gnu.org/licenses/>.
 // ---------------------------------------------------------------------
+#include <filesystem>
 #include <iostream>
 #include <string>
 
 #include "../utilities/zmqutil.hpp"
 #include "customsink.hpp"
+
+FileSinkFixed::FileSinkFixed(const std::string& path) {
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+    _out.open(path, std::ios::trunc);
+    if (!_out.is_open()) {
+        std::cerr << "FileSinkFixed: cannot open log file: " << path << std::endl;
+    }
+}
+
+void FileSinkFixed::ReceiveLogMessage(g3::LogMessageMover message) {
+    _out << message.get().toString() << std::flush;
+}
 
 std::string ScreenSink::FormatMessage(const LEVELS& level, g3::LogMessage& msg) {
     if (level.value == DEBUG.value or level.value >= WARNING.value) {

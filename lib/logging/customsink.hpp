@@ -21,10 +21,24 @@
 #define CUSTOM_SINK_H
 
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <zmq.hpp>
 
 #include "g3log/g3log.hpp"
 #include "g3log/logmessage.hpp"
+
+class FileSinkFixed {
+   public:
+    explicit FileSinkFixed(const std::string& path);
+    void ReceiveLogMessage(g3::LogMessageMover message);
+
+   private:
+    std::ofstream _out;
+
+    FileSinkFixed& operator=(const FileSinkFixed&) = delete;
+    FileSinkFixed(const FileSinkFixed&) = delete;
+};
 
 /**
  *  Custom logger sending message through network with zmq

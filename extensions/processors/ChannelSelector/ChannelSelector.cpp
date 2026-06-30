@@ -31,6 +31,7 @@ ChannelSelector::ChannelSelector() : IProcessor(PRIORITY_HIGH)
     add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
     add_option("channel_indices", channel_indices_, "Comma-separated list of channel indices to select from (1-based).");
     add_option("rms_window_seconds", rms_window_seconds_, "Length of the weighted RMS window in seconds (recent samples get higher weights).");
+    add_option("rms_threshold_uv", rms_threshold_uv_, "RMS threshold in microvolts for switching channels (lower = more sensitive).");
 
     channel_state_ = create_broadcaster_state<unsigned int>(
         "ch_idx", current_channel_index_, Permission::NONE,

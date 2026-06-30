@@ -492,9 +492,69 @@ static const char *format_name_(snd_pcm_format_t fmt)
     }
 }
 
+void StimulusController::set_master_volume_(const std::string &card, long pct)
+{
+    snd_mixer_t *handle;
+    if (snd_mixer_open(&handle, 0) < 0)
+    {
+        LOG(WARNING) << name() << " Could not open ALSA mixer for card " << card;
+        return;
+    }
+    if (snd_mixer_attach(handle, card.c_str()) < 0 ||
+        snd_mixer_selem_register(handle, nullptr, nullptr) < 0 ||
+        snd_mixer_load(handle) < 0)
+    {
+        LOG(WARNING) << name() << " Could not load ALSA mixer for card " << card;
+        snd_mixer_close(handle);
+        return;
+    }
+
+    snd_mixer_selem_id_t *sid;
+    snd_mixer_selem_id_alloca(&sid);
+    snd_mixer_selem_id_set_index(sid, 0);
+    snd_mixer_selem_id_set_name(sid, "Master");
+
+    snd_mixer_elem_t *elem = snd_mixer_find_selem(handle, sid);
+    if (elem)
+    {
+        long readback = -1;
+        snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_FRONT_LEFT, &readback);
+        LOG(INFO) << name() << " Master volume: current=" << readback << " on card=" << card;
+
+        long min_v, max_v;
+        snd_mixer_selem_get_playback_volume_range(elem, &min_v, &max_v);
+        long vol = min_v + (max_v - min_v) * pct / 100;
+        int rc = snd_mixer_selem_set_playback_volume_all(elem, vol);
+        if (rc < 0)
+        {
+            LOG(WARNING) << name() << " Failed to set Master volume: " << snd_strerror(rc);
+        }
+        else
+        {
+            long readback = -1;
+            snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_FRONT_LEFT, &readback);
+            LOG(INFO) << name() << " Master volume: target=" << vol << " readback=" << readback
+                      << " range=[" << min_v << "," << max_v << "] card=" << card;
+        }
+    }
+    else
+    {
+        LOG(WARNING) << name() << " 'Master' mixer element not found on " << card;
+    }
+    snd_mixer_close(handle);
+}
+
 bool StimulusController::start_audio_()
 {
     stop_audio_();
+
+    // Derive card name from device string (e.g. "hw:1,0" -> "hw:1")
+    {
+        std::string dev = audio_device_();
+        auto comma = dev.rfind(',');
+        std::string card = (comma != std::string::npos) ? dev.substr(0, comma) : dev;
+        set_master_volume_(card, 50);
+    }
 
     const int channels = std::clamp(audio_channels_(), 1, 8);
     const snd_pcm_uframes_t period = static_cast<snd_pcm_uframes_t>(std::max(1, period_frames_));

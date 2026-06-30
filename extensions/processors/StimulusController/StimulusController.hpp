@@ -96,6 +96,7 @@ class StimulusController : public IProcessor {
     virtual bool compute_burst_params_(double iaf);
 
     void build_audio_buffers_();
+    void set_master_volume_(const std::string &card, long pct);
     bool start_audio_();
     snd_pcm_sframes_t write_with_recovery_(snd_pcm_t *pcm, const void *buf, snd_pcm_uframes_t frames);
     void stop_audio_() noexcept;

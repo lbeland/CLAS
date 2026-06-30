@@ -447,6 +447,7 @@ void IAFEstimator::Preprocess(ProcessingContext &context)
     kf_x_ = std::numeric_limits<double>::quiet_NaN();
     kf_P_ = kalman_full_() ? kf_R_ : std::sqrt(kf_Q_ * kf_R_);
     packet_count_ = 0;
+    invalid_count_ = 0;
 }
 
 void IAFEstimator::Process(ProcessingContext &context)
@@ -572,15 +573,16 @@ void IAFEstimator::Process(ProcessingContext &context)
             }
             else
             {
-                // Require consecutive valid estimates to trust estimation again after many invalids
-                invalid_count_ = std::min(invalid_count_ + 1, invalid_threshold_ + 10);
+                invalid_count_ = std::min(invalid_count_ + 1, invalid_threshold_ + 1);
                 current_iaf_ = std::numeric_limits<double>::quiet_NaN();
                 current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
             }
-
+            if (invalid_count_ == invalid_threshold_)
+            {
+                LOG(WARNING) << name() << " Packet " << packet_count_ << ": Too many consecutive invalid estimates, resetting IAF estimation.";
+            }
             if (invalid_count_ >= invalid_threshold_)
             {
-                LOG(WARNING) << name() << " Too many consecutive invalid estimates, resetting IAF estimation.";
                 kf_x_ = std::numeric_limits<double>::quiet_NaN();
                 kf_P_ = kalman_full_() ? kf_R_ : std::sqrt(kf_Q_ * kf_R_);
             }

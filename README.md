@@ -61,3 +61,14 @@ Create config file
 ```bash
 echo "options snd_hda_intel power_save=0" | sudo tee /etc/modprobe.d/audio_disable_powersave.conf
 ```
+
+## Isolate CPU Cores and keep busy spinning without interruption by OS
+sudo sysctl kernel.sched_rt_runtime_us=1000000
+sudo sysctl kernel.sched_rt_period_us=1000000 
+
+
+in /etc/default/grub
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash isolcpus=6,7,8,9,10,18,19,20,21,22 nohz_full=6,7,8,9,10,18,19,20,21,22 rcu_nocbs=6,7,8,9,10,18,19,20,21,22 irqaffinity=0-5,11,12-17,23
+
+## After executing the programm the sound on the PC may not work anymore because the program took over the sound card. To restart normal Pulsewire:
+systemctl --user restart pipewire.service

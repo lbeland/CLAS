@@ -172,98 +172,6 @@ void PhaseEstimator::CompleteStreamInfo()
     }
 }
 
-void PhaseEstimator::calibrate_gain(const int N)
-{
-    // Compute the MSE-optimal calibration gain for cecHT given the bandpass filter coefficients.
-    if (calibrate_())
-    {
-        const int L = n_fft_;
-        const int n = N - 1;
-        const double omega0 = 2.0 * M_PI * f0_ / fs_;
-
-        // Dirichlet kernel: D_N(alpha) = sin(N*alpha/2) / sin(alpha/2) * exp(i*alpha*(N-1)/2)
-        auto dirichlet_N = [N](double alpha) -> std::complex<double>
-        {
-            if (std::abs(alpha) < 1e-12)
-            {
-                return std::complex<double>(static_cast<double>(N), 0.0);
-            }
-            double numerator = std::sin(0.5 * N * alpha);
-            double denominator = std::sin(0.5 * alpha);
-            if (std::abs(denominator) < 1e-12)
-            {
-                return std::complex<double>(static_cast<double>(N), 0.0);
-            }
-            double phase_angle = alpha * (N - 1) * 0.5;
-            double mag = numerator / denominator;
-            return std::complex<double>(mag * std::cos(phase_angle), mag * std::sin(phase_angle));
-        };
-
-        std::complex<double> P_sum(0.0, 0.0);
-        std::complex<double> M_sum(0.0, 0.0);
-
-        for (int k = 0; k < L; ++k)
-        {
-            double omega_k = 2.0 * M_PI * k / L;
-
-            std::complex<double> D_plus = dirichlet_N(omega0 - omega_k);
-            std::complex<double> D_minus = dirichlet_N(-omega0 - omega_k);
-
-            std::complex<double> X_plus = 0.5 * D_plus;
-            std::complex<double> X_minus = 0.5 * D_minus;
-
-            // Hilbert multiplier: h[0]=1, h[Nyquist]=1 (even L), h[other positive]=2
-            double h_mult = 1.0;
-            if (k > 0 && k < (L / 2))
-            {
-                h_mult = 2.0;
-            }
-            else if (k == L / 2 && L % 2 == 0)
-            {
-                h_mult = 1.0;
-            }
-
-            std::complex<double> phase_exp(0.0, omega_k * n);
-            phase_exp = std::exp(phase_exp);
-
-            std::complex<double> coeff_k = std::complex<double>(
-                static_cast<double>(coeffs_[k].real()),
-                static_cast<double>(coeffs_[k].imag()));
-            std::complex<double> G = h_mult * coeff_k;
-
-            P_sum += G * X_plus * phase_exp;
-            M_sum += G * X_minus * phase_exp;
-        }
-
-        P_sum /= static_cast<double>(L);
-        M_sum /= static_cast<double>(L);
-
-        std::complex<double> phase_shift(0.0, -omega0 * n);
-        phase_shift = std::exp(phase_shift);
-        std::complex<double> Gplus = P_sum * phase_shift;
-        std::complex<double> Gminus = M_sum * phase_shift;
-
-        // C_opt = conj(Gplus) / (|Gplus|^2 + |Gminus|^2)
-        double denom = std::norm(Gplus) + std::norm(Gminus);
-        if (denom > 1e-12)
-        {
-            std::complex<double> C_opt = std::conj(Gplus) / denom;
-            c_gain_ = std::complex<double>(static_cast<double>(C_opt.real()),
-                                          static_cast<double>(C_opt.imag()));
-        }
-        else
-        {
-            c_gain_ = std::complex<double>(1.0, 0.0); // fallback to unity gain
-        }
-
-        LOG(DEBUG) << "Calibration gain for " << f0_ << " Hz set to: " << c_gain_.real() << " + " << c_gain_.imag() << "i";
-    }
-    else
-    {
-        c_gain_ = std::complex<double>(1.0, 0.0);
-    }
-}
-
 void PhaseEstimator::load_filter_coeffs(const StorageContext &context, double iaf)
 {
     if (!filter_def_()["file"])
@@ -301,6 +209,26 @@ void PhaseEstimator::load_filter_coeffs(const StorageContext &context, double ia
     if (header["type"] != "frequency response")
     {
         throw std::runtime_error("PhaseEstimator: Expected frequency response in file");
+    }
+
+    if (calibrate_())
+    {
+        auto real_it = header.find("calibration gain real");
+        auto imag_it = header.find("calibration gain imag");
+        if (real_it != header.end() && imag_it != header.end())
+        {
+            c_gain_ = std::complex<double>(std::stod(real_it->second), std::stod(imag_it->second));
+        }
+        else
+        {
+            LOG(WARNING) << name() << " Calibration requested but " << coeff_file_
+                         << " has no precomputed calibration gain; falling back to unity gain.";
+            c_gain_ = std::complex<double>(1.0, 0.0);
+        }
+    }
+    else
+    {
+        c_gain_ = std::complex<double>(1.0, 0.0);
     }
 
     double real = 0.0;
@@ -360,7 +288,6 @@ void PhaseEstimator::Prepare(GlobalContext &context)
     LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
     load_filter_coeffs(context, f0_);
-    calibrate_gain(window_size_);
 
     signal_in = fftwf_alloc_real(n_fft_);
     freq_half = fftwf_alloc_complex(n_fft_ / 2 + 1);
@@ -399,7 +326,6 @@ void PhaseEstimator::Preprocess(ProcessingContext &context)
     LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
     load_filter_coeffs(context, f0_);
-    calibrate_gain(window_size_);
 
     if (compensate_filter_())
     {
@@ -471,7 +397,6 @@ void PhaseEstimator::Process(ProcessingContext &context)
                     LOG(DEBUG) << name() << " Packet " << packet_count_ << ": IAF updated to " << f0_ << " Hz, window: " << window_size_ << ", FFT size: " << n_fft_;
 
                     load_filter_coeffs(context, f0_);
-                    calibrate_gain(window_size_);
 
                     if (old_n_fft != n_fft_)
                     {

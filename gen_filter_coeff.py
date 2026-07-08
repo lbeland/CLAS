@@ -1,15 +1,82 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.signal import butter, freqz_sos, bessel 
+from scipy.signal import butter, freqz_sos, bessel
 from scipy import fftpack
 import os
+
+
+def _dirichlet_kernel(alpha, N):
+    """Length-N Dirichlet kernel D_N(alpha) = sin(N*alpha/2)/sin(alpha/2) * exp(i*alpha*(N-1)/2)."""
+    alpha = np.asarray(alpha, dtype=float)
+    D = np.empty(alpha.shape, dtype=np.complex128)
+    small = np.abs(alpha) < 1e-12
+    D[small] = N
+    a = alpha[~small]
+    D[~small] = np.exp(1j * a * (N - 1) / 2) * np.sin(0.5 * N * a) / np.sin(0.5 * a)
+    return D
+
+
+def mse_optimal_calibration_gain(f0, fs, N, L, H):
+    """MSE-optimal complex calibration gain for cecHT endpoint correction.
+
+    Ports the closed-form derivation from ECHT._calibration in
+    IAF_Estimation/cecHT/phase.py so it can be precomputed here, offline,
+    instead of once per IAF update at runtime in PhaseEstimator.cpp.
+
+    Parameters
+    ----------
+    f0 : float
+        Target (center) frequency in Hz.
+    fs : float
+        Sample rate in Hz.
+    N : int
+        Number of time-domain samples the endpoint sits at (window length,
+        before FFT padding).
+    L : int
+        FFT length used for the bandpass frequency response `H`.
+    H : ndarray, shape (L,)
+        Bandpass filter frequency response on the natural (unshifted) DFT
+        bin grid, i.e. H[k] corresponds to omega_k = 2*pi*k/L.
+    """
+    k = np.arange(L)
+    omega_k = 2 * np.pi * k / L
+    omega0 = 2 * np.pi * f0 / fs
+    n = N - 1
+
+    # Hilbert analytic-signal multiplier: zero above Nyquist.
+    h = np.zeros(L, dtype=float)
+    h[0] = 1
+    if L % 2 == 0:
+        h[1:L // 2] = 2
+        h[L // 2] = 1
+    else:
+        h[1:(L + 1) // 2] = 2
+
+    G = h * H
+
+    X_plus = 0.5 * _dirichlet_kernel(omega0 - omega_k, N)
+    X_minus = 0.5 * _dirichlet_kernel(-omega0 - omega_k, N)
+    phase = np.exp(1j * omega_k * n)
+
+    P = (G * X_plus * phase).sum() / L
+    M = (G * X_minus * phase).sum() / L
+
+    Gplus = P * np.exp(-1j * omega0 * n)
+    Gminus = M * np.exp(-1j * omega0 * n)
+
+    denom = np.abs(Gplus) ** 2 + np.abs(Gminus) ** 2
+    if denom < 1e-12:
+        return 1 + 0j
+    return np.conj(Gplus) / denom
+
 
 def gen_filter_ecHT(filter_params, output_folder):
 
     sos_outputs = []
 
-    N, low_cutoff, high_cutoff, fs, length, btype = filter_params[0]
+    N, low_cutoff, high_cutoff, fs, length, btype, f0 = filter_params[0]
 
+    window_length = length  # time-domain sample count (the "N" in the Dirichlet-kernel sense), before FFT padding
     if length is not None:
         # Store frequency response of bandpass filter (for PhaseEstimator)
         length = fftpack.next_fast_len(length)
@@ -39,10 +106,14 @@ def gen_filter_ecHT(filter_params, output_folder):
         _, H = freqz_sos(sos, worN=filt_freq, fs=fs)
         coeffs = H[:, None]
 
+        calib_gain = mse_optimal_calibration_gain(f0=f0, fs=fs, N=window_length, L=length, H=H)
+
         with open(output_path, "w", encoding="utf-8") as f:
             f.write("##\n")
             f.write("# type = frequency response\n")
             f.write(f"# description = Frequency response of {btype} filter {low_cutoff:.2f}-{high_cutoff:.2f}Hz @ {fs}Hz ({length} samples)\n")
+            f.write(f"# calibration gain real = {calib_gain.real:.18f}\n")
+            f.write(f"# calibration gain imag = {calib_gain.imag:.18f}\n")
             f.write("# format = text\n")
             f.write("##\n")
 

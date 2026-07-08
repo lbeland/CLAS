@@ -14,7 +14,11 @@ def gen_filter_ecHT(filter_params, output_folder):
         # Store frequency response of bandpass filter (for PhaseEstimator)
         length = fftpack.next_fast_len(length)
 
-    filename = f"{N}_{low_cutoff:.2f}_{high_cutoff:.2f}_{fs}{'_' + str(length) if length is not None else ''}.txt"
+    # Nudge away from exact .xx5 boundaries before rounding to 2 decimals, so that
+    # tiny floating-point noise can't flip the rounding
+    # direction relative to the runtime C++ computation of the same filename.
+    tie_break_epsilon = 1e-9
+    filename = f"{N}_{low_cutoff + tie_break_epsilon:.2f}_{high_cutoff + tie_break_epsilon:.2f}_{fs}{'_' + str(length) if length is not None else ''}.txt"
     output_path = f"{output_folder}/{filename}"
     if os.path.exists(output_path):
         return

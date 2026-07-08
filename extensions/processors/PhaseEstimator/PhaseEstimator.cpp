@@ -273,8 +273,12 @@ void PhaseEstimator::load_filter_coeffs(const StorageContext &context, double ia
         double low_cutoff = iaf - bandwidth / 2.0;
         double high_cutoff = iaf + bandwidth / 2.0;
         int window_size = n_fft_;
+        // Nudge away from exact .xx5 boundaries before rounding to 2 decimals, so that
+        // tiny floating-point noise relative to the Python precompute script can't flip the rounding direction and produce
+        // a mismatched filename.
+        constexpr double tie_break_epsilon = 1e-9;
         std::string filename;
-        filename = std::to_string(N) + "_" + std::format("{:.2f}", low_cutoff) + "_" + std::format("{:.2f}", high_cutoff) + "_" + std::to_string(fs_) + "_" + std::to_string(window_size) + ".txt";
+        filename = std::to_string(N) + "_" + std::format("{:.2f}", low_cutoff + tie_break_epsilon) + "_" + std::format("{:.2f}", high_cutoff + tie_break_epsilon) + "_" + std::to_string(fs_) + "_" + std::to_string(window_size) + ".txt";
 
         coeff_file_ = context.resolve_path(filename, "filters");
     }

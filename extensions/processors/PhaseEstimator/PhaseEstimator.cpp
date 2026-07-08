@@ -348,11 +348,6 @@ void PhaseEstimator::Prepare(GlobalContext &context)
     const auto &p = info.parameters<MultiChannelType<float>::Parameters>();
     LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
     fs_ = p.sample_rate;
-}
-
-void PhaseEstimator::Preprocess(ProcessingContext &context)
-{
-    packet_count_ = 0;
 
     window_size_ = static_cast<int>(fs_ * (1.0 / f0_) * 2.0); // 2 cycles of the current IAF
     n_fft_ = static_cast<int>(good_size_real(window_size_));
@@ -362,11 +357,6 @@ void PhaseEstimator::Preprocess(ProcessingContext &context)
 
     load_filter_coeffs(context, f0_);
     calibrate_gain(window_size_);
-
-    if (compensate_filter_())
-    {
-        load_phase_shift(context, f0_);
-    }
 
     signal_in = fftwf_alloc_real(n_fft_);
     freq_half = fftwf_alloc_complex(n_fft_ / 2 + 1);
@@ -390,6 +380,28 @@ void PhaseEstimator::Preprocess(ProcessingContext &context)
             p_inv_ = fftwf_plan_dft_1d(n_fft_, freq, out, FFTW_BACKWARD, FFTW_PATIENT);
         }
     }
+}
+
+void PhaseEstimator::Preprocess(ProcessingContext &context)
+{
+    packet_count_ = 0;
+
+    f0_ = 10.0; // default IAF, will be updated from shared state
+
+    window_size_ = static_cast<int>(fs_ * (1.0 / f0_) * 2.0); // 2 cycles of the current IAF
+    n_fft_ = static_cast<int>(good_size_real(window_size_));
+    // Pre-size the circular buffer for the worst-case IAF (5 Hz → 2 cycles = 2/5 * fs samples)
+    sample_window.set_capacity(static_cast<int>(fs_ * (1.0 / 5.0) * 2.0));
+    LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
+
+    load_filter_coeffs(context, f0_);
+    calibrate_gain(window_size_);
+
+    if (compensate_filter_())
+    {
+        load_phase_shift(context, f0_);
+    }
+
 }
 
 void PhaseEstimator::Process(ProcessingContext &context)

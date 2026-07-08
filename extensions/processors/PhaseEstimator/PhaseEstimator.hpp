@@ -30,7 +30,6 @@ class PhaseEstimator : public IProcessor {
   public:
     PhaseEstimator();
 
-    void calibrate_gain(const int N);
     void load_filter_coeffs(const StorageContext &context, double iaf);
     void load_phase_shift(const StorageContext &context, double iaf);
 

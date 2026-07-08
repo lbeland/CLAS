@@ -27,6 +27,8 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <algorithm>
+#include <cstring>
 #include <fftw3.h>
 #include <complex>
 #include <dsp/fftw_planner_mutex.hpp>
@@ -107,39 +109,28 @@ namespace
     // Build the one-sided analytic spectrum (Hilbert transform in frequency domain)
     void construct_analytic_spectrum(int n_fft, const fftwf_complex *half, fftwf_complex *full)
     {
+        const bool even = (n_fft % 2 == 0);
+        const int nyquist = n_fft / 2;
+        // Last bin that gets doubled: the Nyquist bin itself is real and stays unscaled for even n_fft.
+        const int last_doubled = even ? nyquist - 1 : nyquist;
+
         full[0][0] = half[0][0];
         full[0][1] = half[0][1];
 
-        if (n_fft % 2 == 0)
-        {
-            for (int k = 1; k < n_fft / 2; ++k)
+        for (int k = 1; k <= last_doubled; ++k)
             {
-                full[k][0] = 2.0 * half[k][0];
-                full[k][1] = 2.0 * half[k][1];
+            full[k][0] = 2.0f * half[k][0];
+            full[k][1] = 2.0f * half[k][1];
             }
 
-            full[n_fft / 2][0] = half[n_fft / 2][0];
-            full[n_fft / 2][1] = half[n_fft / 2][1];
-
-            for (int k = n_fft / 2 + 1; k < n_fft; ++k)
-            {
-                full[k][0] = 0.0;
-                full[k][1] = 0.0;
-            }
-        }
-        else
+        if (even)
         {
-            for (int k = 1; k <= (n_fft - 1) / 2; ++k)
-            {
-                full[k][0] = 2.0 * half[k][0];
-                full[k][1] = 2.0 * half[k][1];
-            }
-            for (int k = (n_fft + 1) / 2; k < n_fft; ++k)
-            {
-                full[k][0] = 0.0;
-                full[k][1] = 0.0;
-            }
+            full[nyquist][0] = half[nyquist][0];
+            full[nyquist][1] = half[nyquist][1];
         }
+
+        const int zero_start = last_doubled + 1 + (even ? 1 : 0);
+        std::memset(full + zero_start, 0, (n_fft - zero_start) * sizeof(fftwf_complex));
     }
 
 } // namespace
@@ -512,15 +503,22 @@ void PhaseEstimator::Process(ProcessingContext &context)
         if (valid_iaf_ && (sample_window.size() >= static_cast<size_t>(window_size_)))
         {
             // Copy the most recent window_size_ samples into contiguous FFTW input; zero-pad
-            auto start = sample_window.end() - window_size_;
-            for (int i = 0; i < window_size_; ++i)
+            auto a1 = sample_window.array_one();
+            auto a2 = sample_window.array_two();
+            size_t skip = sample_window.size() - static_cast<size_t>(window_size_);
+            if (skip >= a1.second)
             {
-                signal_in[i] = start[i];
+                // Entire window lies within the second (wrapped) chunk
+                std::copy(a2.first + (skip - a1.second), a2.first + a2.second, signal_in);
             }
-            for (int i = window_size_; i < n_fft_; ++i)
+            else
             {
-                signal_in[i] = 0.0f;
+                // Window spans the boundary between the two chunks
+                size_t from_one = a1.second - skip;
+                std::copy(a1.first + skip, a1.first + a1.second, signal_in);
+                std::copy(a2.first, a2.first + a2.second, signal_in + from_one);
             }
+            std::fill(signal_in + window_size_, signal_in + n_fft_, 0.0f);
 
             fftwf_execute(p_);
 

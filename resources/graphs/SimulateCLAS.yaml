@@ -14,14 +14,14 @@ graph:
         nsamples: 1
         n_messages: *n_messages
         carrier_amplitude: 3
-        carrier_frequency: 11.34
-        modulation_type: "none"
-        modulation_amplitude: 0.8
-        modulation_frequency: 0.0165
+        carrier_frequency: 10.334
+        modulation_type: "phase"
+        modulation_amplitude: 0.5
+        modulation_frequency: 0.017
       advanced:
         buffer_sizes:
-          out: 256
-          meta_out: 256
+          out: 1024
+          meta_out: 1024
         thread_core: 6
         threadpriority: *threadpriority
     SelectionFilter:
@@ -29,15 +29,15 @@ graph:
       options:
         filter:
           # file: filters://2_2.0_20.0_10000.txt
-          N: [1, 1]
-          low_cutoff: [5, 46]
-          high_cutoff: [18, 54]
+          N: [1, 4]
+          low_cutoff: [7, 40]
+          high_cutoff: [16, 60]
           btype: [bandpass, bandstop]
           name: selection
         n_messages: *n_messages
       advanced:
         buffer_sizes:
-          out: 256
+          out: 1024
         thread_core: 7
         threadpriority: *threadpriority
     ChannelSelector:
@@ -47,7 +47,7 @@ graph:
         channel_indices: [1,2]   # 1-based indices of channels to select
       advanced:
         buffer_sizes:
-          ch_idx_out: 256
+          ch_idx_out: 1024
         thread_core: 8
         threadpriority: *threadpriority
     ChannelReductor:
@@ -57,7 +57,7 @@ graph:
         default_channel_index: 1  # 1-based
       advanced:
         buffer_sizes:
-          out: 256
+          out: 1024
         thread_core: 9
         threadpriority: *threadpriority
     ecHTFilter:
@@ -73,7 +73,7 @@ graph:
         n_messages: *n_messages
       advanced:
         buffer_sizes:
-          out: 256
+          out: 1024
         thread_core: 10
         threadpriority: *threadpriority
     IAFEstimator:
@@ -90,7 +90,7 @@ graph:
         f_max: 16.0
       advanced:
         buffer_sizes:
-          out: 256
+          out: 1024
         thread_core: 18
         threadpriority: *threadpriority
     PhaseEstimator:
@@ -105,7 +105,7 @@ graph:
         compensate_filter: true
       advanced:
         buffer_sizes:
-          out: 256
+          out: 1024
         thread_core: 19
         threadpriority: *threadpriority
     StimulusController:
@@ -115,13 +115,16 @@ graph:
         stim_onset_deg: 0
         stim_dur_unit: "deg"
         stim_dur_deg: 90
+        correct_latencies: false
         audio_latency_s: 0.0 #0.04
         erp_latency_s: 0
         stim_dur_ms: 25
         stim_amplitude: 0.5
+        use_background_sound: false
+        background_dB: 30
       advanced:
         buffer_sizes:
-          out: 256
+          out: 1024
         thread_core: 20
     Serializer(1-5):    # one serializers per output stream
       class: FileSerializer

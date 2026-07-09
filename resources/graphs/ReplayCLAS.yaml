@@ -9,7 +9,7 @@ graph:
       class: ReplaySourceClient
       options:
         fs: *fs
-        path: iafInterrupt_20260616_115736/  # replay from this run in _last_run_group or results
+        path: replay_eike_erp_20260619_114608/  # replay from this run in _last_run_group or results
         nchannels: 32
         nsamples: 1
         n_messages: *n_messages

@@ -59,7 +59,7 @@ graph:
           # file: filters://2_2.0_20.0_10000.txt
           N: [1, 1]
           low_cutoff: [5, 46]
-          high_cutoff: [20, 54]
+          high_cutoff: [16, 54]
           btype: [bandpass, bandstop]
           name: ecHTfilter
         n_messages: *n_messages

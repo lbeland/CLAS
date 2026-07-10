@@ -3,7 +3,7 @@ Individual alpha frequency (IAF) estimation.
 """
 
 import numpy as np
-from scipy.signal import welch, savgol_filter
+from scipy.signal import welch, savgol_filter, medfilt
 from scipy.stats import linregress
 from tqdm import tqdm
 from fooof import FOOOF
@@ -124,3 +124,31 @@ def estimate_iaf(raw: np.ndarray, fs: float) -> list:
 
     alpha_peaks = [p for p in fm.peak_params_ if 5 <= p[0] <= 18]
     return [max(alpha_peaks, key=lambda p: p[1])[0] if alpha_peaks else np.nan]
+
+def estimate_iaf_with_phase(hilbert_phase: np.ndarray, fs: float, f0: float) -> np.ndarray:
+    """
+    Estimate IAF from the instantaneous phase of the Hilbert transform.
+    Returns a time series of IAF estimates.
+    """
+    inst_freq = np.diff(np.unwrap(hilbert_phase), prepend=f0) * fs / (2 * np.pi)
+    # iaf_estimates = np.full(len(inst_freq), np.nan)
+
+    # # Use a moving window to estimate IAF
+    # window_size = int(fs * 0.5)  # 0.5-second window
+    # half_window = window_size // 2
+
+    # for i in range(half_window, len(inst_freq) - half_window):
+    #     window_freqs = inst_freq[i - half_window:i + half_window]
+    #     # Filter out unrealistic frequencies
+    #     valid_freqs = window_freqs[(window_freqs >= 5) & (window_freqs <= 18)]
+    #     if len(valid_freqs) > 0:
+    #         iaf_estimates[i] = np.median(valid_freqs)
+    #     else:
+    #         iaf_estimates[i] = f0  # fallback to default if no valid frequencies
+
+    # # Smooth estimates with median filter with length 10
+    # window_size = 5 * fs  # 0.4-second window
+    # window_size = int(window_size) | 1  # make it odd
+    # iaf_estimates = medfilt(iaf_estimates, kernel_size=window_size)
+
+    return inst_freq

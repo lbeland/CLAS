@@ -7,8 +7,10 @@ import os
 import numpy as np
 from pathlib import Path
 from collections import deque
+import matplotlib.pyplot as plt
 
 from .read_output import get_signal_data
+from .stimulus import get_edges
 
 RESULTS_DIR = "_last_run"
 
@@ -96,15 +98,15 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
             file = get_results_file(processor, slot=1, results_dir=results_dir)
             signal, time = get_signal_data(file, channel=list(range(8)), timestamps=timestamps)
             if signal is not None:
+                source_time = time["source_ts"]
                 time = time["hardware_ts"]
-                samples["SourceClient_AUX"] = {"x": time, "y": signal[:, 0] if signal.ndim > 1 else signal}
-
-            file = get_results_file(processor, slot=1, results_dir=results_dir)
+                samples["SourceClient_AUX"] = {"x": time, "y": signal[:, 0] if signal.ndim > 1 else signal, "source_ts": source_time}
             signal, time = get_signal_data(file, channel=8, timestamps=timestamps)
             if signal is not None:
+                source_time = time["source_ts"]
                 time = time["hardware_ts"]
                 binary = (signal > 0.5).astype(float)
-                samples["SourceClient_TRIGGER"] = {"x": time, "y": _trim_falling_edges(binary, fs, 11.0)}
+                samples["SourceClient_TRIGGER"] = {"x": time, "y": _trim_falling_edges(binary, fs, 11.0), "source_ts": source_time}
 
         elif processor == "PhaseEstimator":
             file = get_results_file(processor, slot=0, results_dir=results_dir)
@@ -263,7 +265,7 @@ def _get_source_ts(proc_name: str, samples: dict, ground_truth: dict):
     return data.get("source_ts") if data else None
 
 
-def print_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> None:
+def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> None:
     """Print a per-stage latency table derived from source_timestamps."""
     predecessors, topo_order = _parse_graph_structure(graph_config)
 
@@ -282,17 +284,18 @@ def print_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> No
                 return current
             current = predecessors.get(current)
         return None
+    
+    plt.figure(figsize=(15, 4))
 
     col = 22
     W   = col * 2 + 52
     print(f"\n{'─' * W}")
     print(f"  Pipeline latency analysis")
     print(f"{'─' * W}")
-    print(f"  {'From':<{col}} {'To':<{col}} {'Mean':>8} {'Median':>8} {'P95':>8} {'Max':>8} {'Idx':>8}  ms")
+    print(f"  {'From':<{col}} {'To':<{col}} {'Mean':>8} {'Median':>8} {'Std':>8} {'Max':>8} {'Idx':>8}  us")
     print(f"{'─' * W}")
 
     source_proc = next((p for p in topo_order if p in proc_ts), None)
-
     for proc in topo_order[1:]:
         ts_proc = proc_ts.get(proc)
         if ts_proc is None:
@@ -302,19 +305,66 @@ def print_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> No
             continue
         ts_ancestor = proc_ts[ancestor]
         n   = min(len(ts_ancestor), len(ts_proc))
-        lat = (ts_proc[:n] - ts_ancestor[:n]) / 1e3   # µs → ms
+        lat = (ts_proc[:n] - ts_ancestor[:n])
+        plt.plot(lat, alpha=0.5, label=f"{ancestor} → {proc}")
         print(f"  {ancestor:<{col}} {proc:<{col}} "
               f"{np.mean(lat):>8.2f} {np.median(lat):>8.2f} "
-              f"{np.percentile(lat, 95):>8.2f} {np.max(lat):>8.2f} {np.argmax(lat):>8}")
+              f"{np.std(lat):>8.2f} {np.max(lat):>8.2f} {np.argmax(lat):>8}")
 
     last_proc = next((p for p in reversed(topo_order) if p in proc_ts), None)
     if source_proc and last_proc and last_proc != source_proc:
         ts_start = proc_ts[source_proc]
         ts_end   = proc_ts[last_proc]
         n     = min(len(ts_start), len(ts_end))
-        total = (ts_end[:n] - ts_start[:n]) / 1e3
+        total = (ts_end[:n] - ts_start[:n])
+        plt.plot(total, alpha=0.5, label=f"{source_proc} → {last_proc}", color="black", lw=2)
         print(f"{'─' * W}")
         print(f"  {'TOTAL  ' + source_proc:<{col}} {last_proc:<{col}} "
               f"{np.mean(total):>8.2f} {np.median(total):>8.2f} "
-              f"{np.percentile(total, 95):>8.2f} {np.max(total):>8.2f} {np.argmax(total):>8}")
+              f"{np.std(total):>8.2f} {np.max(total):>8.2f} {np.argmax(total):>8}")
     print(f"{'─' * W}\n")
+
+    plt.legend(loc="upper left", fontsize=9)
+    plt.xlabel("Sample Index")
+    plt.ylabel("Latency (us)")
+
+    # Latency between computed stimulus onset (StimulusController) and the
+    # recorded trigger onset (SourceClient_TRIGGER), matched edge-by-edge.
+    if "StimulusController" in samples and "SourceClient_TRIGGER" in samples:
+        plt.figure(figsize=(15, 4))
+        stim = samples["StimulusController"]
+        trig = samples["SourceClient_TRIGGER"]
+
+        stim_edges = get_edges((stim["y"] > 0.5).astype(float), "rising")
+        trig_edges = get_edges((trig["y"] > 0.5).astype(float), "rising")
+
+        if len(stim_edges) == 0 or len(trig_edges) == 0:
+            print("Not enough stimulus/trigger edges for onset latency analysis.")
+        elif stim.get("source_ts") is None or trig.get("source_ts") is None:
+            print("Missing source_ts for stimulus/trigger onset latency analysis.")
+        else:
+            if len(stim_edges) != len(trig_edges):
+                print(f"Warning: stimulus/trigger edge count mismatch — "
+                      f"stim={len(stim_edges)}, trigger={len(trig_edges)}. Matching by nearest index.")
+
+            stim_source_ts = stim["source_ts"]
+            trig_source_ts = trig["source_ts"]
+            latency_ms = np.array([
+                (trig_source_ts[i] - stim_source_ts[stim_edges[int(np.argmin(np.abs(stim_edges - i)))]])
+                for i in trig_edges
+            ]) / 1e3
+
+            plt.plot(latency_ms)
+            plt.xlabel("Stimulus index")
+            plt.ylabel("Latency (ms)")
+            plt.title("StimulusController → SourceClient_TRIGGER onset latency")
+
+            print(f" Audio onset latency (ms)")
+            print(f"{'─' * W}")
+            print(f"  {'StimulusController':<{col}} {'SourceClient_TRIGGER':<{col}} "
+                  f"{np.mean(latency_ms):>8.2f} {np.median(latency_ms):>8.2f} "
+                  f"{np.std(latency_ms):>8.2f} {np.max(latency_ms):>8.2f} {np.argmax(latency_ms):>8}")
+            print(f"{'─' * W}\n")
+
+
+

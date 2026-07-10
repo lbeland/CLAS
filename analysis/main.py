@@ -14,8 +14,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from analysis.loader import load_processor_signals, print_latencies, extract_ground_truth
-from analysis.iaf    import estimate_iaf
+from analysis.loader import load_processor_signals, analyse_latencies, extract_ground_truth
+from analysis.iaf    import estimate_iaf, estimate_iaf_with_phase
 from analysis.core   import compute_hilbert_reference, compute_errors
 from analysis.plot   import write_edf, plot_errors, plot_spectrum, plot_time_series, \
                             plot_iaf, get_erp_windows, plot_erp_latency
@@ -50,7 +50,7 @@ def analyse_results(f0: float, results_dir: str) -> None:
         return
 
     # 3. Pipeline latency analysis
-    print_latencies(samples, ground_truth, graph_config)
+    analyse_latencies(samples, ground_truth, graph_config)
 
     # 4. ERPCLAS-specific: ERP average plot
     if os.path.basename(graph_file) == "ERPCLAS.yaml":
@@ -69,6 +69,8 @@ def analyse_results(f0: float, results_dir: str) -> None:
     raw = ground_truth["raw"]
     filtered, hilbert_phase = compute_hilbert_reference(raw, fs, f0)
 
+    iaf_continuous = estimate_iaf_with_phase(hilbert_phase, fs, f0)
+
     # 7. Compute errors
     start_ts = ground_truth["time"][0]
     errors, stim_ref = compute_errors(samples, ground_truth, hilbert_phase, start_ts, fs, graph_config)
@@ -80,7 +82,7 @@ def analyse_results(f0: float, results_dir: str) -> None:
     plot_errors(errors)
 
     # 10. IAF time series
-    plot_iaf(ground_truth, samples, start_ts)
+    plot_iaf(ground_truth, iaf_continuous, samples, start_ts)
 
     # 11. Plot spectrum
     plot_spectrum(raw, samples, fs)
@@ -93,4 +95,4 @@ def analyse_results(f0: float, results_dir: str) -> None:
 
 
 if __name__ == "__main__":
-    analyse_results(f0=10, results_dir="_last_run")
+    analyse_results(f0=10, results_dir="results/simu_0.9f0_staticf0_20260709_093408")

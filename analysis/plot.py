@@ -56,14 +56,14 @@ def _circ_stats(phi_rad):
 # Error plots
 # ---------------------------------------------------------------------------
 
-def plot_errors(errors: list[dict], output_path: str = "error_analysis.svg",
-                time_range: tuple = None) -> None:
+def plot_errors(errors: list[dict], time_range: tuple = None) -> None:
     """Plot error time series and polar histograms; save to output_path."""
     if not errors:
         print("No errors to plot.")
         return
 
-    ax_ts      = plt.figure(figsize=(10, 5)).add_subplot(111)
+    fig_time      = plt.figure(figsize=(10, 5))
+    ax_ts         = fig_time.add_subplot(111)
     fig_polars = plt.figure(figsize=(3 * len(errors), 3.5))
     fig_polars.suptitle("Error distributions", fontsize=12)
     ax_polars  = [fig_polars.add_subplot(1, len(errors), i + 1, projection="polar")
@@ -116,15 +116,15 @@ def plot_errors(errors: list[dict], output_path: str = "error_analysis.svg",
     if time_range is not None:
         ax_ts.set_xlim(time_range)
 
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    print(f"Error plot saved: {output_path}")
+    fig_time.savefig("error_timeseries.png", dpi=300, bbox_inches="tight")
+    fig_polars.savefig("error_distributions.png", dpi=300, bbox_inches="tight")
 
 
 # ---------------------------------------------------------------------------
 # IAF time series
 # ---------------------------------------------------------------------------
 
-def plot_iaf(ground_truth: dict, samples: dict, start_ts: float, output_path: str="iaf_timeseries.svg") -> None:
+def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, start_ts: float, output_path: str="iaf_timeseries.png") -> None:
     """Plot estimated IAF over time with true IAF overlaid; adds error subplot when truth is known."""
     has_estimated = samples.get("IAFEstimator") is not None
     has_true      = ground_truth.get("true_inst_freq") is not None
@@ -138,17 +138,19 @@ def plot_iaf(ground_truth: dict, samples: dict, start_ts: float, output_path: st
                               height_ratios=[2, 1] if show_error else [1])
     ax     = axes[0] if show_error else axes
     ax_err = axes[1] if show_error else None
-    ax_r   = ax.twinx()
+    ax_r = None
 
-    true_iaf_aligned = None   # reused for error computation
-
+    time_s = (ground_truth["time"] - start_ts) / 1e6
     if has_true:
-        time_s = (ground_truth["time"] - start_ts) / 1e6
         ax.plot(time_s, ground_truth["true_inst_freq"],
                 linewidth=1.5, alpha=0.8, label="True IAF")
         if ground_truth.get("true_amplitude") is not None:
+            ax_r   = ax.twinx()
             ax_r.plot(time_s, ground_truth["true_amplitude"],
                       linestyle="--", linewidth=1.2, alpha=0.6, color="tab:gray", label="True amplitude")
+            ax_r.set_ylabel("Amplitude", color="tab:gray")
+    else:
+        ax.plot(time_s, iaf_continuous, linewidth=1.5, alpha=0.8, label="Estimated IAF (Hilbert)")
 
     if has_estimated:
         x_est   = (samples["IAFEstimator"]["x"] - start_ts) / 1e6
@@ -171,13 +173,13 @@ def plot_iaf(ground_truth: dict, samples: dict, start_ts: float, output_path: st
     ax.set_ylabel("Frequency (Hz)")
     if not show_error:
         ax.set_xlabel("Time (s)")
-    ax_r.set_ylabel("Amplitude", color="tab:gray")
+
     ax.set_title("Individual Alpha Frequency")
     ax.yaxis.get_major_formatter().set_useOffset(False)
     ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
     handles, labels     = ax.get_legend_handles_labels()
-    handles_r, labels_r = ax_r.get_legend_handles_labels()
+    handles_r, labels_r = ax_r.get_legend_handles_labels() if ax_r is not None else ([], [])
     ax.legend(handles + handles_r, labels + labels_r, frameon=True, fontsize=8)
 
     fig.tight_layout()
@@ -209,13 +211,13 @@ def plot_spectrum(raw: np.ndarray, samples: dict, fs: float) -> None:
     plt.title("Spectrum")
     plt.legend(facecolor="white", frameon=True)
     
-    plt.figure(figsize=(8, 4))
-    f, t, Sxx = spectrogram(raw, fs=fs, nperseg=int(fs*10))
-    plt.pcolormesh(t, f, np.log(Sxx), shading='nearest')
-    plt.colorbar(label='Intensity (log scale)')
-    plt.ylim(0, 50)
-    plt.ylabel('Frequency [Hz]')
-    plt.xlabel('Time [sec]')
+    # plt.figure(figsize=(8, 4))
+    # f, t, Sxx = spectrogram(raw, fs=fs, nperseg=int(fs*10))
+    # plt.pcolormesh(t, f, np.log(Sxx), shading='nearest')
+    # plt.colorbar(label='Intensity (log scale)')
+    # plt.ylim(0, 50)
+    # plt.ylabel('Frequency [Hz]')
+    # plt.xlabel('Time [sec]')
 
 
 def plot_time_series(
@@ -282,7 +284,7 @@ def plot_time_series(
     for ax in axes:
         ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
-    plt.savefig("time_series.svg", dpi=300, bbox_inches="tight")
+    plt.savefig("time_series.png", dpi=300, bbox_inches="tight")
 
 
 # ---------------------------------------------------------------------------

@@ -12,9 +12,7 @@ def compute_hilbert_reference(
     raw: np.ndarray, fs: float, f0: float
 ) -> tuple[np.ndarray, np.ndarray]:
     """Bandpass + Hilbert transform to produce an offline phase reference."""
-    l_freq = max(0.1, f0 - f0/2)
-    h_freq = min(0.5*fs - 0.1, f0 + f0/2)
-    sos      = butter(1, [l_freq, h_freq], btype="band", fs=fs, output="sos")
+    sos      = butter(4, [6.0, 16.0], btype="band", fs=fs, output="sos")
     filtered = sosfiltfilt(sos, raw)
     return filtered, np.angle(hilbert(filtered))
 

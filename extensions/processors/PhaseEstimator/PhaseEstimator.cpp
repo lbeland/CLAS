@@ -118,10 +118,10 @@ namespace
         full[0][1] = half[0][1];
 
         for (int k = 1; k <= last_doubled; ++k)
-            {
+        {
             full[k][0] = 2.0f * half[k][0];
             full[k][1] = 2.0f * half[k][1];
-            }
+        }
 
         if (even)
         {
@@ -176,8 +176,9 @@ void PhaseEstimator::load_filter_coeffs(const StorageContext &context, double ia
 {
     if (!filter_def_()["file"])
     {
-        int N = filter_def_()["N"].as<int>(1);
-        double bandwidth = filter_def_()["bandwidth"].as<double>(4.0);
+        int N = 1;
+        // double bandwidth = filter_def_()["bandwidth"].as<double>(4.0);
+        double bandwidth = 0.9 * iaf; // 90% of IAF as bandwidth
         double low_cutoff = iaf - bandwidth / 2.0;
         double high_cutoff = iaf + bandwidth / 2.0;
         int window_size = n_fft_;

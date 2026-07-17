@@ -83,7 +83,8 @@ def main():
                 filter_config = processor_config.get("options", {}).get("filter", {})
                 if "file" not in filter_config:
                     for iaf in np.arange(4.9,18.1,0.1):
-                        bandwidth = filter_config.get("bandwidth", 4)
+                        # bandwidth = filter_config.get("bandwidth", 4)
+                        bandwidth = 0.9 * iaf
                         filter_length = int(2.0 * fs/iaf)    # 2 cycles of iaf frequency
                         params = [(1, iaf-bandwidth/2, iaf+bandwidth/2, fs, filter_length, "bandpass", iaf)]
                         gen_filter_ecHT(params, output_folder=os.path.join(resources_folder, "filters"))

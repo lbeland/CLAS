@@ -141,15 +141,14 @@ namespace
     {
         PeakFitResult result;
 
-        // Subtract 1.0: convert from relative power to excess power above the aperiodic fit
-        double amplitude = seed.peak_value - 1.0;
+        double amplitude = seed.peak_value;
         if (amplitude <= 0.0)
         {
             return result;
         }
 
         // FWHM-based sigma estimate
-        double half_max = amplitude / 2.0 + 1.0;
+        double half_max = amplitude / 2.0;
         int left_half_bin = seed.bin;
         while (left_half_bin > 0 && smoothed_power[left_half_bin] > half_max)
         {
@@ -180,9 +179,9 @@ namespace
         double ss_h1 = 0.0;
         for (int k = f_min_bin; k <= f_max_bin; ++k)
         {
-            double centered = power[k] - 1.0;
+            double centered = power[k];
             ss_h0 += (centered * centered);
-            double resid = power[k] - 1.0 - gauss[k];
+            double resid = power[k] - gauss[k];
             ss_h1 += (resid * resid);
         }
 
@@ -221,72 +220,68 @@ namespace
         return {slope, intercept, r_squared};
     }
 
-    void power_safe(std::vector<double> &power)
+    void power_log(std::vector<double> &power)
     {
         // Clamp to smallest positive value so log operations never see zero
         for (double &p : power)
         {
-            p = std::max(p, std::numeric_limits<double>::denorm_min());
+            p = std::log10(std::max(p, std::numeric_limits<double>::denorm_min()));
         }
     }
 
-    std::vector<double> get_aperiodic(const std::vector<double> &safe_power, const std::vector<double> &freqs)
+    std::vector<double> get_aperiodic(const std::vector<double> &log_power, const std::vector<double> &freqs)
     {
-        size_t N = safe_power.size();
+        size_t N = log_power.size();
 
         // Ignore DC bin
         std::vector<double> log_freqs(N - 1);
-        std::vector<double> log_power(N - 1);
+        std::vector<double> log_power_noDC(N - 1);
         for (size_t k = 1; k < N; ++k)
         {
             log_freqs[k - 1] = std::log10(freqs[k]);
-            log_power[k - 1] = std::log10(safe_power[k]);
+            log_power_noDC[k - 1] = log_power[k];
         }
 
-        LinearFitResult fit = linear_regression(log_freqs, log_power);
+        LinearFitResult fit = linear_regression(log_freqs, log_power_noDC);
 
-        std::vector<double> power_flat(N);
+        std::vector<double> power_flat(N-1);
         std::vector<double> aperiodic(N);
-
-        for (size_t k = 1; k < N; ++k)
+        for (size_t k = 0; k < N - 1; ++k)
         {
-            double aperiodic_fit = fit.slope * log_freqs[k - 1] + fit.intercept;
-            power_flat[k] = safe_power[k] / std::pow(10, aperiodic_fit);
+            double aperiodic_fit = fit.slope * log_freqs[k] + fit.intercept;
+            power_flat[k] = log_power_noDC[k] - aperiodic_fit;
         }
-        // Set DC bin to same as first non-DC bin to avoid an artificial rise/fall
-        power_flat[0] = power_flat[1];
 
         std::vector<double> log_freqs_select;
         std::vector<double> log_power_select;
         log_freqs_select.reserve(N - 1);
         log_power_select.reserve(N - 1);
-        for (size_t k = 1; k < N; ++k)
+        for (size_t k = 0; k < N - 1; ++k)
         {
             // Exclude bins above the aperiodic fit to avoid bias from oscillatory peaks
-            if (power_flat[k] <= 1.0)
+            if (power_flat[k] <= 0.0)
             {
-                log_freqs_select.push_back(log_freqs[k - 1]);
-                log_power_select.push_back(log_power[k - 1]);
+                log_freqs_select.push_back(log_freqs[k]);
+                log_power_select.push_back(log_power_noDC[k]);
             }
         }
         fit = linear_regression(log_freqs_select, log_power_select);
         for (size_t k = 1; k < N; ++k)
         {
-            aperiodic[k] = std::pow(10, fit.slope * log_freqs[k - 1] + fit.intercept);
+            aperiodic[k] = fit.slope * log_freqs[k-1] + fit.intercept;
         }
+        aperiodic[0] = log_power[0]; // DC bin is not used in the fit, so just copy the original value to subtract it perfectly
 
         return aperiodic;
     }
 
-    std::vector<double> remove_aperiodic(const std::vector<double> &aperiodic, std::vector<double> &safe_power)
+    void power_flat(const std::vector<double> &aperiodic, std::vector<double> &log_power)
     {
-        size_t N = safe_power.size();
-        for (size_t k = 1; k < N; ++k)
+        size_t N = log_power.size();
+        for (size_t k = 0; k < N; ++k)
         {
-            safe_power[k] /= aperiodic[k];
+            log_power[k] -= aperiodic[k];
         }
-        safe_power[0] = safe_power[1];
-        return safe_power;
     }
 
     std::vector<double> savgol_filter(gram_sg::SavitzkyGolayFilter savgol, const std::vector<double> &power)
@@ -508,15 +503,14 @@ void IAFEstimator::Process(ProcessingContext &context)
             {
                 power[k] = (pow(freq_half[k][0], 2) + pow(freq_half[k][1], 2)) / (n_fft_ * fs_);
             }
-            power_safe(power);
+            power_log(power);
 
             std::vector<double> aperiodic = get_aperiodic(power, freqs_);
 
-            std::vector<double> power_flat(max_analyze_bin_);
-            power_flat = remove_aperiodic(aperiodic, power);
+            power_flat(aperiodic, power);
 
             std::vector<double> power_smooth(max_analyze_bin_);
-            power_smooth = savgol_filter(savgol_, power_flat);
+            power_smooth = savgol_filter(savgol_, power);
 
             PeakSeed seed = find_peak_seed(power_smooth, f_min_bin_, f_max_bin_, freq_resolution_, true);
             PeakFitResult peak = fit_gaussian_peak(power_smooth, seed, freq_resolution_);
@@ -529,7 +523,7 @@ void IAFEstimator::Process(ProcessingContext &context)
             }
             else
             {
-                peak.valid = bic_test(power_flat, freqs_, gauss, peak, 0, freqs_.size() - 1);
+                peak.valid = bic_test(power, freqs_, gauss, peak, 0, freqs_.size() - 1);
             }
 
             // Kalman predict: uncertainty grows between updates
@@ -550,16 +544,20 @@ void IAFEstimator::Process(ProcessingContext &context)
                 {
                     if (kalman_full_())
                     {
+                        double signal_power = 0.0;
+                        double noise_power = 0.0;
                         // Compute SNR from Gaussian peak power within ±2σ
                         for (int k = 0; k < max_analyze_bin_; ++k)
                         {
                             if (std::abs(freqs_[k] - peak.iaf_hz) <= 2 * peak.sigma_hz)
                             {
-                                SNR_ += gauss[k];
+                                double aperiodic_lin = std::pow(10, aperiodic[k]);
+                                double gauss_lin = std::pow(10, gauss[k]) - 1.0;
+                                signal_power += aperiodic_lin * gauss_lin;
+                                noise_power += aperiodic_lin;
                             }
                         }
-                        SNR_ = std::max(SNR_, 1e-5);
-                        SNR_ = std::min(SNR_, 1e2);
+                        SNR_ = signal_power / std::max(noise_power, std::numeric_limits<double>::denorm_min());
 
                         double R_n = current_gauss_width_ * current_gauss_width_ / (2 * SNR_);
                         kalman_update(peak.iaf_hz, R_n);
@@ -591,7 +589,7 @@ void IAFEstimator::Process(ProcessingContext &context)
             TimePoint end_time = Clock::now();
             if (packet_count_ % static_cast<int>(fs_) == 0)
             {
-                LOG(INFO) << name() << " Packet " << packet_count_ << " (" << invalid_count_ << " invalid): Estimated IAF = " << current_iaf_ << " Hz (sigma: " << current_gauss_width_ << "), KF estimate: " << kf_x_ << " Hz (R=" << kf_R_ << ", SNR=" << SNR_ << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
+                LOG(INFO) << name() << " Packet " << packet_count_ << " (" << invalid_count_ << " invalid): Estimated IAF = " << current_iaf_ << " Hz (sigma: " << current_gauss_width_ << "), KF estimate: " << kf_x_ << " Hz (R=" << kf_R_ << ", SNR(dB)=" << 20 * std::log10(SNR_) << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
             }
         }
         data_out->set_data(kf_x_);

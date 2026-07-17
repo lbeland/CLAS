@@ -125,6 +125,7 @@ void ChannelSelector::Process(ProcessingContext &context)
         {
             break;
         }
+        uint64_t hw_ts = data_in->hardware_timestamp();
 
         // Update EMA for all selected channels so no channel goes stale
         for (unsigned int channel_idx : selected_channels_)
@@ -132,6 +133,8 @@ void ChannelSelector::Process(ProcessingContext &context)
             const double s = static_cast<double>(data_in->data_sample(0, channel_idx));
             ema_[channel_idx] = ema_mu_ * ema_[channel_idx] + (1.0 - ema_mu_) * s * s;
         }
+
+        data_in_port_->slot(0)->ReleaseData();
 
         // Compare squared EMA to squared threshold (avoids sqrt every packet)
         if (ema_[current_channel_index_] <= rms_thresh_uv * rms_thresh_uv)
@@ -156,10 +159,9 @@ void ChannelSelector::Process(ProcessingContext &context)
 
         idx_out = idx_out_port_->slot(0)->ClaimData(false);
         idx_out->set_data(current_channel_index_ + 1); // convert back to 1-based index
-        idx_out->set_hardware_timestamp(data_in->hardware_timestamp());
+        idx_out->set_hardware_timestamp(hw_ts);
         idx_out->set_source_timestamp(Clock::now());
 
-        data_in_port_->slot(0)->ReleaseData();
         idx_out_port_->slot(0)->PublishData();
 
         packet_count_++;

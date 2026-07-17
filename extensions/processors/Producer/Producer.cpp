@@ -159,6 +159,11 @@ void Producer::Process(ProcessingContext &context)
             std::chrono::system_clock::now().time_since_epoch()).count()) -
         static_cast<int64_t>(start_time);
 
+    // Expected wall-clock gap between consecutive packets, used only to pace emission.
+    const double inter_packet_ns = (static_cast<double>(nsamples_()) / fs_()) * 1e9;
+
+    last_emit_time_ = Clock::now();
+
     while (!context.terminated())
     {
         if (n_messages_() != -1 && packet_count_ >= n_messages_())
@@ -166,8 +171,14 @@ void Producer::Process(ProcessingContext &context)
             break;
         }
 
-        data_out = data_out_port_->slot(0)->ClaimData(false);
-        meta_out = meta_out_port_->slot(0)->ClaimData(false);
+        const TimePoint target_emit_time =
+            last_emit_time_ + std::chrono::nanoseconds(static_cast<int64_t>(inter_packet_ns));
+        const TimePoint now = Clock::now();
+        if (target_emit_time > now)
+        {
+            custom_sleep_for(std::chrono::duration_cast<std::chrono::microseconds>(
+                target_emit_time - now).count());
+        }
 
         SignalState state = ComputeSignalState(
             carrier_phase,
@@ -190,12 +201,16 @@ void Producer::Process(ProcessingContext &context)
         hardware_time_us = start_time + (uint64_t)packet_count_ * 1000000ULL / fs_();
 
         std::fill(sample_vec.begin(), sample_vec.end(), static_cast<float>(state.value));
+
+        data_out = data_out_port_->slot(0)->ClaimData(false);
+
         data_out->set_data_sample(0, sample_vec);
         data_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us);
         data_out->set_source_timestamp(TimePoint(std::chrono::microseconds(hardware_time_us)));
         data_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us);
         data_out_port_->slot(0)->PublishData();
 
+        meta_out = meta_out_port_->slot(0)->ClaimData(false);
         meta_out->set_data_sample(0, meta_data);
         meta_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us);
         meta_out->set_source_timestamp(TimePoint(std::chrono::microseconds(hardware_time_us)));
@@ -204,15 +219,9 @@ void Producer::Process(ProcessingContext &context)
 
         ++packet_count_;
 
-        // Sleep only for the time remaining until the next sample's scheduled deadline,
-        // so computation time doesn't accumulate as drift from the target sample rate.
-        uint64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(
-            Clock::now().time_since_epoch()).count();
-        uint64_t next_time_us = start_time + (uint64_t)packet_count_ * 1000000ULL / fs_();
-        if (now_us < next_time_us)
-        {
-            custom_sleep_for(next_time_us - now_us);
-        }
+        // Re-anchor from the actual emit time (not the fixed schedule), so the next
+        // iteration's pacing reflects reality rather than trying to catch up.
+        last_emit_time_ = Clock::now();
 
         carrier_phase = WrapPhase(carrier_phase + carrier_step);
         modulation_phase = WrapPhase(modulation_phase + modulation_step);

@@ -944,12 +944,12 @@ void StimulusController::Process(ProcessingContext &context)
 
         last_output_ = output_;
 
-        data_out->set_source_timestamp( Clock::now());
+        data_out->set_source_timestamp(Clock::now());
         data_out->set_data_sample(0, 0, static_cast<double>(output_));
         data_out_port_->slot(0)->PublishData();
 
         packet_count_++;
-        if (packet_count_ % (int)fs_ == 0)
+        if (packet_count_ % (int)(1*fs_) == 0)
         {
             // Each second, load fill background buffer again until full
             const int total_cap = 5 * (int)fs_audio_ * audio_channels_();

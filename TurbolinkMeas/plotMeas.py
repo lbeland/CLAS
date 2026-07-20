@@ -32,6 +32,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from scipy.stats import linregress
 
 ROOT = sys.path[0]  # directory of this script, used as default path for jitter.csv
 
@@ -121,11 +122,17 @@ def plot_data(sample_counter, jitter_us, inter_sample_us):
     plt.figure()
     ax1 = plt.subplot(2, 1, 1)
     ax1.plot(sample_counter-sample_counter[0], inter_sample_us, marker=".", linestyle="none", alpha=0.5)
+    linear_fit = linregress(sample_counter, inter_sample_us)
+    lin = linear_fit.intercept + linear_fit.slope * sample_counter
+    ax1.plot(sample_counter-sample_counter[0], lin)
     plt.xlabel("Sample Counter")
     plt.ylabel("Inter-sample Interval (us)")
     plt.grid(True)
     ax2 = plt.subplot(2, 1, 2, sharex=ax1)
     ax2.plot(sample_counter-sample_counter[0], jitter_us, marker=".", linestyle="none", alpha=0.5)
+    linear_fit = linregress(sample_counter, jitter_us)
+    lin = linear_fit.intercept + linear_fit.slope * sample_counter
+    ax2.plot(sample_counter-sample_counter[0], lin)
     plt.xlabel("Sample Counter")
     plt.ylabel("Jitter (us)")
     plt.grid(True)

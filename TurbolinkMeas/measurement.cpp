@@ -17,6 +17,7 @@
 #include <iomanip>
 
 constexpr std::size_t FRAME_SIZE = 172;
+constexpr std::size_t NUM_PACKAGING = 1;
 constexpr std::size_t NUM_AUX = 8;
 constexpr std::size_t NUM_EEG = 32;
 
@@ -47,24 +48,35 @@ float read_f32_le(const std::uint8_t* p) {
     return bits_to_float(bits);
 }
 
-bool parse_frame(const std::uint8_t* buf, std::size_t len, Frame& out) {
-    if (len != FRAME_SIZE) {
+bool parse_packet(const std::uint8_t* buf, std::size_t len, std::array<Frame, NUM_PACKAGING>& out) {
+    if (len != FRAME_SIZE * NUM_PACKAGING) {
         return false;
     }
 
-    out.token = read_u32_le(buf + 0);
-    out.sample_counter = read_u32_le(buf + 4);
-    out.trigger_bits = read_u32_le(buf + 8);
+    for (std::size_t p = 0; p < NUM_PACKAGING; ++p) {
+        const std::uint8_t* frame_buf = buf + p * FRAME_SIZE;
+        Frame& out_frame = out[p];
 
-    for (std::size_t i = 0; i < NUM_AUX; ++i) {
-        out.aux[i] = read_f32_le(buf + 12 + 4 * i);
-    }
+        out_frame.token = read_u32_le(frame_buf + 0);
+        out_frame.sample_counter = read_u32_le(frame_buf + 4);
+        out_frame.trigger_bits = read_u32_le(frame_buf + 8);
 
-    for (std::size_t i = 0; i < NUM_EEG; ++i) {
-        out.eeg[i] = read_f32_le(buf + 44 + 4 * i);
+        for (std::size_t i = 0; i < NUM_AUX; ++i) {
+            out_frame.aux[i] = read_f32_le(frame_buf + 12 + 4 * i);
+        }
+
+        for (std::size_t i = 0; i < NUM_EEG; ++i) {
+            out_frame.eeg[i] = read_f32_le(frame_buf + 44 + 4 * i);
+        }
     }
 
     return true;
+}
+
+static double diff_ns(const timespec& start, const timespec& end) {
+    double sec_diff = static_cast<double>(end.tv_sec - start.tv_sec);
+    double nsec_diff = static_cast<double>(end.tv_nsec - start.tv_nsec);
+    return sec_diff * 1e9 + nsec_diff;
 }
 
 int main() {
@@ -79,29 +91,28 @@ int main() {
     addr.sin_port = htons(25000);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    if (bind(sockfd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        perror("bind");
-        close(sockfd);
-        return 1;
-    }
-
-    // No connect to specific sender because IP is broadcast
-
-    std::cout << "Listening on UDP port 25000 \n";
-
+    static_assert(FRAME_SIZE * NUM_PACKAGING <= 2048, "buffer too small for NUM_PACKAGING");
     std::array<std::uint8_t, 2048> buffer{};
 
-    const double freq = 500.0; // Hz, nominal device sample rate
+    const double freq = 10000.0; // Hz, nominal device sample rate
 
-    const int n_packets = static_cast<int>(10 * freq); // ~10 seconds worth of packets
+    const int n_samples = static_cast<int>(5 * 60 * freq);
 
-    // Use vectors (not a large stack array) and only ever access [0, count)
+    // One entry per UDP packet (not per sample): we only timestamp once per
+    // recvfrom call, so for NUM_PACKAGING > 1 there is only one real
+    // observation per packet. Logging one entry per sample would duplicate
+    // that timestamp NUM_PACKAGING times, which distorts the inter-arrival
+    // variance/max/percentiles in the analysis below (many artificial 0us
+    // gaps plus spikes at packet boundaries) even though the mean would
+    // still work out right due to telescoping.
     std::vector<std::chrono::steady_clock::time_point> receive_times;
     std::vector<uint32_t> sample_counters;
-    receive_times.reserve(n_packets);
-    sample_counters.reserve(n_packets);
+    const int n_packets_expected = static_cast<int>(n_samples / NUM_PACKAGING) + 1;
+    receive_times.reserve(n_packets_expected);
+    sample_counters.reserve(n_packets_expected);
 
-    int count = 0;
+    int count = 0; // number of individual samples decoded (NUM_PACKAGING per network packet)
+    int net_packet_count = 0; // number of UDP packets received
     ssize_t len = 0;
     sockaddr_in sender{};
     socklen_t sender_len = sizeof(sender);
@@ -111,7 +122,16 @@ int main() {
     uint64_t missed_total = 0;
     uint64_t max_gap = 0;
 
-    while (count < n_packets) {
+    // No connect to specific sender because IP is broadcast
+    if (bind(sockfd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        perror("bind");
+        close(sockfd);
+        return 1;
+    }
+
+    auto start_time = std::chrono::steady_clock::now();
+
+    while (count < n_samples) {
 
         len = recvfrom(sockfd, buffer.data(), buffer.size(), 0,
                         reinterpret_cast<sockaddr*>(&sender), &sender_len);
@@ -122,39 +142,59 @@ int main() {
             break;
         }
 
-        Frame frame{};
-        if (!parse_frame(buffer.data(), static_cast<std::size_t>(len), frame)) {
+        std::array<Frame, NUM_PACKAGING> frames{};
+        if (!parse_packet(buffer.data(), static_cast<std::size_t>(len), frames)) {
             std::cerr << "Unexpected packet size: " << len << " bytes\n";
             continue;
         }
+        net_packet_count++;
 
-        if (!have_last_counter) {
-            last_counter = frame.sample_counter - 1;
-            have_last_counter = true;
+        // A single UDP packet carries NUM_PACKAGING samples back-to-back.
+        // Check every sample's counter for continuity (a gap can occur at any
+        // sample boundary, not just packet boundaries), but only log one
+        // (timestamp, sample_counter) pair for the whole packet below.
+        for (const Frame& frame : frames) {
+            if (!have_last_counter) {
+                last_counter = frame.sample_counter - 1;
+                have_last_counter = true;
+            }
+
+            uint32_t expected = last_counter + 1;
+            if (frame.sample_counter != expected) {
+                uint64_t gap = static_cast<uint64_t>(frame.sample_counter) - static_cast<uint64_t>(expected) + 1;
+                std::cerr << "Warning: Missed packet(s). Last counter: " << last_counter
+                          << ", current: " << frame.sample_counter
+                          << " (" << gap << " missed)\n";
+                missed_total += gap;
+                max_gap = std::max(max_gap, gap);
+            }
+            last_counter = frame.sample_counter;
+            count++;
         }
 
-        uint32_t expected = last_counter + 1;
-        if (frame.sample_counter != expected) {
-            uint64_t gap = static_cast<uint64_t>(frame.sample_counter) - static_cast<uint64_t>(expected) + 1;
-            std::cerr << "Warning: Missed packet(s). Last counter: " << last_counter
-                      << ", current: " << frame.sample_counter
-                      << " (" << gap << " missed)\n";
-            missed_total += gap;
-            max_gap = std::max(max_gap, gap);
-        }
-        last_counter = frame.sample_counter;
-
+        // Tag the packet with the last sample's counter: that's the most
+        // recently captured sample as of this packet's arrival.
         receive_times.push_back(timestamp);
-        sample_counters.push_back(frame.sample_counter);
-        count++;
+        sample_counters.push_back(frames.back().sample_counter);
+        // auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - timestamp).count();
+        // if (elapsed > 10) {
+        //     std::cerr << "Warning: Processing took" << elapsed << " microseconds\n";
+        // }
     }
+    auto end_time = std::chrono::steady_clock::now();
 
-    std::cout << "\nReceived " << count << " packets.\n";
-    std::cout << "Missed (interpolated) packets: " << missed_total
-              << " (max single gap: " << max_gap << ")\n";
+    std::cout << "\nReceived " << count << " samples ("
+    << net_packet_count << " UDP packets, " << NUM_PACKAGING << " samples/packet) in "
+    << std::fixed << std::setprecision(3)
+    << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count()) / 1000.0
+    << "ms.\n"
+    << "Estimated fs: " << std::fixed << std::setprecision(4) << static_cast<double>(count) / std::chrono::duration_cast<std::chrono::duration<double>>(end_time - start_time).count()
+    << "\n";
+
+    std::cout << "Missed packets: " << missed_total << ")\n";
     close(sockfd);
 
-    if (count < 2) {
+    if (receive_times.size() < 2) {
         std::cerr << "Not enough packets received for analysis.\n";
         return 1;
     }
@@ -163,6 +203,9 @@ int main() {
     // Legacy metric: raw inter-arrival periods.
     // Kept for comparison, but note this measures *changes* in jitter
     // between consecutive packets, not absolute per-packet jitter.
+    // Operates on one entry per UDP packet (see receive_times/sample_counters
+    // above), so for NUM_PACKAGING > 1 this reflects the packet arrival
+    // period, not the underlying per-sample period.
     // ------------------------------------------------------------------
     double sum_diff = 0.0;
     double max_diff = 0.0;
@@ -188,7 +231,9 @@ int main() {
     double std_period_ns = std::sqrt(std::fmax(0.0, variance_ns2));
 
     std::cout << "\n--- Inter-arrival period (legacy) ---";
-    printf("\n Average receive period (us): %.3f", avg_period_ns * 1e-3);
+    printf("\n Average receive period (us): %.5f", avg_period_ns * 1e-3);
+    printf("\n Estimated packet rate: %.4f Hz (%.4f Hz at %zu samples/packet)",
+           1e9 / avg_period_ns, (1e9 / avg_period_ns) * NUM_PACKAGING, NUM_PACKAGING);
     printf("\n Max receive period (us): %.3f, idx: %zu", max_diff * 1e-3, max_idx);
     printf("\n Std receive period (us): %.3f\n", std_period_ns * 1e-3);
 
@@ -297,7 +342,15 @@ int main() {
         }
         out << "sample_counter,jitter_us,inter_sample_us\n";
         for (std::size_t i = 0; i < n; ++i) {
-            out << sample_counters[i] << "," << jitter[i] << "," << inter_sample_us[i] << "\n";
+            // inter_sample_us has one fewer element than jitter/sample_counters
+            // (there's no "diff to next sample" for the last sample received).
+            out << sample_counters[i] << "," << jitter[i] << ",";
+            if (i < inter_sample_us.size()) {
+                out << inter_sample_us[i];
+            } else {
+                out << "";
+            }
+            out << "\n";
         }
         out.close();
         std::cout << "Per-packet jitter saved to jitter_" << (int)freq << ".csv\n";

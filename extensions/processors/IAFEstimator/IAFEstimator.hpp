@@ -21,7 +21,7 @@
 #include "iprocessor.hpp"
 #include "scalardata/scalardata.hpp"
 #include "multichanneldata/multichanneldata.hpp"
-#include <gram_savitzky_golay/gram_savitzky_golay.h>
+#include <dsp/gram_savitzky_golay.hpp>
 #include <dsp/filter.hpp>
 #include <boost/circular_buffer.hpp>
 #include <complex>
@@ -82,7 +82,7 @@ class IAFEstimator : public IProcessor {
     int invalid_threshold_ = 0;
 
     boost::circular_buffer<float> sample_window{1}; // resized in Prepare
-    gram_sg::SavitzkyGolayFilter savgol_;
+    std::vector<double> savgol_weights_; // Savitzky-Golay smoothing weights, evaluated at t=0 (see Prepare)
 
     // FFTW resources (allocated in Prepare, freed in Unprepare)
     fftwf_plan    fft_plan_ = nullptr;

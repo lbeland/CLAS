@@ -284,11 +284,11 @@ namespace
         }
     }
 
-    std::vector<double> savgol_filter(gram_sg::SavitzkyGolayFilter savgol, const std::vector<double> &power)
+    std::vector<double> savgol_filter(const std::vector<double> &weights, const std::vector<double> &power)
     {
         std::vector<double> filtered(power.size());
 
-        int window_size = savgol.config().window_size();
+        int window_size = weights.size();
         int half_window_size = window_size / 2;
 
         // Pad with nearest value (mode=nearest)
@@ -296,15 +296,14 @@ namespace
         data.insert(data.begin(), half_window_size, data.front());
         data.insert(data.end(), half_window_size, data.back());
 
-        std::vector<double> window;
         for (int i = 0; i < power.size(); i++)
         {
-            for (int j = i; j < i + window_size; ++j)
+            double res = 0.0;
+            for (int j = 0; j < window_size; ++j)
             {
-                window.push_back(data[j]);
+                res += weights[j] * data[i + j];
             }
-            filtered[i] = savgol.filter(window);
-            window.clear();
+            filtered[i] = res;
         }
 
         return filtered;
@@ -403,8 +402,7 @@ void IAFEstimator::Prepare(GlobalContext &context)
     }
     int m = savgol_window_length / 2;
     LOG(INFO) << name() << " Savitzky-Golay filter length: " << savgol_window_length << ", polynomial order: " << savgol_polyorder << ", m: " << m;
-    gram_sg::SavitzkyGolayFilterConfig sg_conf(m, 0, savgol_polyorder, 0);
-    savgol_ = gram_sg::SavitzkyGolayFilter(sg_conf);
+    savgol_weights_ = gram_sg::compute_weights(m, 0, savgol_polyorder, 0);
 
     f_min_bin_ = std::floor(f_min_() / freq_resolution_);
     f_max_bin_ = std::ceil(f_max_() / freq_resolution_);
@@ -510,7 +508,7 @@ void IAFEstimator::Process(ProcessingContext &context)
             power_flat(aperiodic, power);
 
             std::vector<double> power_smooth(max_analyze_bin_);
-            power_smooth = savgol_filter(savgol_, power);
+            power_smooth = savgol_filter(savgol_weights_, power);
 
             PeakSeed seed = find_peak_seed(power_smooth, f_min_bin_, f_max_bin_, freq_resolution_, true);
             PeakFitResult peak = fit_gaussian_peak(power_smooth, seed, freq_resolution_);

@@ -1,3 +1,2 @@
-find_package(gram_savitzky_golay REQUIRED)
 ADD_LIBRARY(StimulusController "StimulusController.cpp")
 TARGET_LINK_LIBRARIES(StimulusController utilities asound)

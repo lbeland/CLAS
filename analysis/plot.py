@@ -65,6 +65,7 @@ def plot_errors(errors: list[dict], time_range: tuple = None,title=None) -> None
     fig_time      = plt.figure(figsize=(10, 5))
     fig_time.suptitle(f"Error time series - {title if title else ''}", fontsize=12)
     ax_ts         = fig_time.add_subplot(111)
+    ax_ts_twin = ax_ts.twinx()  # Twin axis for amplitude if needed
     fig_polars = plt.figure(figsize=(3 * len(errors), 3.5))
     fig_polars.suptitle(f"Error distributions - {title if title else ''}", fontsize=12)
     ax_polars  = [fig_polars.add_subplot(1, len(errors), i + 1, projection="polar")
@@ -90,8 +91,12 @@ def plot_errors(errors: list[dict], time_range: tuple = None,title=None) -> None
         ls    = err.get("linestyle", "-")
         vals  = err["values"]
 
-        ax_ts.plot(err["time_s"], vals, linestyle=ls, linewidth=1.2, color=color,
+        if err["unit"] == "degrees":
+            ax_ts.plot(err["time_s"], vals, linestyle=ls, linewidth=1.2, color=color,
                    label=f"{err['label']} ({err['unit']})", alpha=0.85)
+        else:
+            ax_ts_twin.plot(err["time_s"], vals, linestyle=ls, linewidth=1.2, color=color,
+                       label=f"{err['label']} ({err['unit']})", alpha=0.85)
 
         if np.nansum(np.abs(vals)) == 0:
             continue
@@ -110,9 +115,14 @@ def plot_errors(errors: list[dict], time_range: tuple = None,title=None) -> None
         )
         ax_polars[i].set_title(err["label"], fontsize=10)
 
+    # Take legend entries from both axes and combine them
+    handles_ts, labels_ts = ax_ts.get_legend_handles_labels()
+    handles_twin, labels_twin = ax_ts_twin.get_legend_handles_labels()
     ax_ts.set_xlabel("Time (s)")
     ax_ts.set_ylabel("Error")
-    ax_ts.legend(frameon=True, fontsize=8, loc="upper right")
+    ax_ts_twin.set_ylabel("Error (Hz)")
+    # Set one global legend with all entries
+    ax_ts.legend(handles_ts + handles_twin, labels_ts + labels_twin, frameon=True, fontsize=8, loc="upper right")
     ax_ts.set_title("Error over time")
     if time_range is not None:
         ax_ts.set_xlim(time_range)

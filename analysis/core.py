@@ -31,7 +31,6 @@ def compute_hilbert_reference(
     sos      = butter(4, [6.0, 16.0], btype="band", fs=fs, output="sos")
     filtered = sosfiltfilt(sos, raw_white if aperiodic_params is not None else raw)
 
-    filtered = raw_white if aperiodic_params is not None else raw
     return filtered, np.angle(hilbert(filtered))
 
 

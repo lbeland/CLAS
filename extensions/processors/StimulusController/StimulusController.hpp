@@ -128,6 +128,7 @@ class StimulusController : public IProcessor {
 
     std::unique_ptr<moodycamel::ReaderWriterQueue<float>> background_sound_buffer_;
     float gain_ = 0.0;
+    float smoothed_gain_ = 0.0;   // per-sample ramped gain, chases gain_/0 in the audio thread
     float bg_gain_ = 1.0;   // background scale factor, reduced when stimulus would cause clipping
     float power_s_ = 0.0;   // power of the stimulus signal (for gain normalization)
     std::vector<double> sound_buf_;

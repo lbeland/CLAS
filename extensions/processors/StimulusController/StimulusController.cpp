@@ -332,7 +332,7 @@ void StimulusController::build_audio_buffers_()
     // Pink noise (Voss-McCartney)
     // Seed is fixed for reproducibility: every burst sounds identical, which is
     // intentional for controlled stimulation. Remove the seed for random bursts.
-    std::mt19937 rng(42);
+    std::mt19937 rng(420);  //random
     std::uniform_real_distribution<double> dist(-1.0, 1.0);
     auto white_noise = [&]
     { return dist(rng); };
@@ -726,6 +726,10 @@ void StimulusController::audio_thread_main_()
     bool do_burst = false;
     snd_pcm_sframes_t frames = 0;
     snd_pcm_sframes_t written = 0;
+    // One-pole gain smoother: time constant chosen so a 0<->target_gain
+    // transition ramps over ~5 ms instead of stepping (avoids clicks).
+    constexpr float kGainRampMs = 5.0f;
+    const float gain_ramp_alpha_ = 1.0f - std::exp(-1.0f / (kGainRampMs * 0.001f * static_cast<float>(fs_audio_)));
 
     while (audio_running_.load())
     {
@@ -749,11 +753,10 @@ void StimulusController::audio_thread_main_()
             {
                 for (int i = 0; i < frames * channels; ++i)
                 {
-                    // gain_ is directly set to target, change 1 to a smaller value for smoothing
-                    // gain_ += (target_gain - gain_) * 0.01; // 0.01f;
+                    smoothed_gain_ += (target_gain - smoothed_gain_) * gain_ramp_alpha_;
                     float bg = 0.0f;
                     background_sound_buffer_->try_dequeue(bg);
-                    out_i16[i] = float_to_s16_(sound_buf_[i] * target_gain + bg * bg_gain_);
+                    out_i16[i] = float_to_s16_(sound_buf_[i] * smoothed_gain_ + bg * bg_gain_);
                 }
                 written = write_with_recovery_(local_pcm, out_i16.data(), frames);
             }
@@ -761,10 +764,10 @@ void StimulusController::audio_thread_main_()
             {
                 for (int i = 0; i < frames * channels; ++i)
                 {
-                    // gain_ += (target_gain - gain_) * 0.01; // 0.01f;
+                    smoothed_gain_ += (target_gain - smoothed_gain_) * gain_ramp_alpha_;
                     float bg = 0.0f;
                     background_sound_buffer_->try_dequeue(bg);
-                    out_i32[i] = float_to_s32(sound_buf_[i] * target_gain + bg * bg_gain_);
+                    out_i32[i] = float_to_s32(sound_buf_[i] * smoothed_gain_ + bg * bg_gain_);
                 }
                 written = write_with_recovery_(local_pcm, out_i32.data(), frames);
             }
@@ -772,10 +775,10 @@ void StimulusController::audio_thread_main_()
             {
                 for (int i = 0; i < frames * channels; ++i)
                 {
-                    // gain_ += (target_gain - gain_) * 0.01; // 0.01f;
+                    smoothed_gain_ += (target_gain - smoothed_gain_) * gain_ramp_alpha_;
                     float bg = 0.0f;
                     background_sound_buffer_->try_dequeue(bg);
-                    out_f[i] = static_cast<float>(sound_buf_[i]) * target_gain + bg * bg_gain_;
+                    out_f[i] = static_cast<float>(sound_buf_[i]) * smoothed_gain_ + bg * bg_gain_;
                 }
                 written = write_with_recovery_(local_pcm, out_f.data(), frames);
             }

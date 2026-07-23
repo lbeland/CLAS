@@ -45,7 +45,7 @@ N_WORKERS = 5
 # Only compare combine_simple's behavior under each strategy -- fooof and
 # other algorithms don't depend on approve_peak, so running them N_strategies
 # times would just waste compute on identical results.
-def run_algorithms_combine_simple_only(psd, psd_welch, freq_bins, freq_bins_welch, config):
+def run_algorithms_combine_simple_only(psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, freq_mt, config):
     return {
         "combine_simple": IAF_tests.combine_simple(psd, freq_bins, config),
     }
@@ -58,7 +58,7 @@ def build_conditions():
         "freq_range":           (0.01, 30.0),
         "alpha_band":           (5, 18),
         "pink_ax_r2":           0.9,
-        "aperiodic_ref_power":  1.0,
+        "aperiodic_ref_power_db": 0.0,
         "f_rotation":           1.0,
         "aperiodic_ref_freq":   5.0,
     }
@@ -67,12 +67,9 @@ def build_conditions():
         "carrier_freq":         14.0,
         "carrier_waveform":     "gaussian",
         "aperiodic_exponent":   2.0,
-        "has_aperiodic":        True,
         "n_peaks":              1,
         "peak_bw":              0.5,
-        "peak_snr_db":          10.0,
-        "noise_type":           "white",
-        "noise_snr_db":         -20.0,
+        "peak_snr_db":          20.0,
         "window_length_sec":    10,
     }
     default_no_peak = {**default_with_peak, "n_peaks": 0}
@@ -81,18 +78,16 @@ def build_conditions():
 
     sweeps_with_peak = {
         "window_length_sec":    [5, 10, 20],
-        "peak_snr_db":          [20, 10, 3, 0, -3],
-        "peak_bw":              [0.1, 0.5, 1.0, 2.0],
-        "aperiodic_exponent":   [1, 2, 3],
-        "has_aperiodic":        [True, False],
+        "peak_snr_db":          [50, 20, 10, 0],
+        "peak_bw":              [0.1, 0.5, 1.0, 2.0, 4.0],
+        "aperiodic_exponent":   [0, 1, 2, 3],
         "carrier_freq":         cf,
         "carrier_waveform":     ["gaussian", "sine", "burst"],
         "n_peaks":              [1, 2, 3],
     }
     sweeps_no_peak = {
         "window_length_sec":    [5, 10, 20],
-        "aperiodic_exponent":   [1, 2, 3],
-        "has_aperiodic":        [True, False],
+        "aperiodic_exponent":   [0, 1, 2, 3],
     }
 
     seen = set()
@@ -181,7 +176,6 @@ def main():
                 "peak_snr_db": config["peak_snr_db"],
                 "carrier_waveform": config["carrier_waveform"],
                 "aperiodic_exponent": config["aperiodic_exponent"],
-                "has_aperiodic": config["has_aperiodic"],
                 "fp": data["fp"], "fn": data["fn"], "n": data["n"],
                 "mae": data["mae"], "rmse": data["rmse"],
             }

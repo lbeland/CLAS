@@ -2,6 +2,7 @@ import math
 import socket
 import struct
 import time
+from datetime import datetime, timezone
 import zmq
 from scipy.signal import hilbert
 import matplotlib.pyplot as plt
@@ -43,7 +44,7 @@ def client_simulate(n_samples=-1):
     # Signal parameters
     carrier_signal = {'amplitude': 3.0, 'frequency': 8}
 
-    sample_rate = 10000.0
+    sample_rate = 1000.0
     dt = 1.0 / sample_rate
     t = 0.0
 
@@ -54,11 +55,11 @@ def client_simulate(n_samples=-1):
     print(f"Sending structured packets to {UDP_IP}:{UDP_PORT}")
 
     # ZeroMQ 
-    serialization_rate_hz = 100.0
-    serialization_interval = sample_rate / serialization_rate_hz
-    zmq_socket = zmq.Context().socket(zmq.PUB)
-    zmq_socket.bind("tcp://localhost:5555")
-    print("ZeroMQ publisher bound to tcp://localhost:5555")
+    # serialization_rate_hz = 100.0
+    # serialization_interval = sample_rate / serialization_rate_hz
+    # zmq_socket = zmq.Context().socket(zmq.PUB)
+    # zmq_socket.bind("tcp://localhost:5555")
+    # print("ZeroMQ publisher bound to tcp://localhost:5555")
 
     sample_counter = 0
 
@@ -91,7 +92,8 @@ def client_simulate(n_samples=-1):
             for ch in range(32):
                 eeg.append(value)
 
-            storage.append((t, value, amplitude, theta, inst_freq))
+            source_ts = datetime.now().replace(tzinfo=timezone.utc).timestamp()
+            storage.append((t, value, amplitude, theta, inst_freq, source_ts))
 
             # eeg[9] *= 10    # Make channel 9 stand out for testing
 
@@ -112,13 +114,13 @@ def client_simulate(n_samples=-1):
             udp_sock.sendto(packet_udp, (UDP_IP, UDP_PORT))
 
             # ZMQ only sends sample counter and current phase
-            if sample_counter % serialization_interval == 0:
-                packet_zmq = struct.pack(
-                    "<If",      # sample_counter, current_phase
-                    sample_counter,
-                    theta
-                )            
-                zmq_socket.send(packet_zmq)
+            # if sample_counter % serialization_interval == 0:
+            #     packet_zmq = struct.pack(
+            #         "<If",      # sample_counter, current_phase
+            #         sample_counter,
+            #         theta
+            #     )            
+            #     zmq_socket.send(packet_zmq)
 
             # Advance time + counter
             t += dt
@@ -130,7 +132,7 @@ def client_simulate(n_samples=-1):
     except KeyboardInterrupt:
         print("Simulation interrupted by user")
     finally:
-        np.save("simulated_signal.npy", np.array(storage, dtype=[("time", "f4"), ("value", "f4"), ("amplitude", "f4"), ("phase", "f4"), ("inst_freq", "f4")]))
+        np.save("simulated_signal.npy", np.array(storage, dtype=[("time", "f4"), ("value", "f4"), ("amplitude", "f4"), ("phase", "f4"), ("inst_freq", "f4"), ("source_ts", "f8")]))
 
 
 def main():

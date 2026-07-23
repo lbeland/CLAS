@@ -171,7 +171,7 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
         fig = plt.figure(figsize=(15, 6))
         # Split figure into left (1/3) and right (2/3)
         gs = gridspec.GridSpec(1, 2, figure=fig,
-                               width_ratios=[1, 2.5], wspace=0.2, hspace=0.1)
+                               width_ratios=[1, 2.5], wspace=0.1, hspace=0.1)
  
         # Split left column into top (timeseries) and bottom (spectrum)
         gs_left = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs[0],
@@ -210,6 +210,8 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
     # --- Box plot panel ---
     # x_order = ["stupid_max", "parabolic_max", "fooof","philistine","combine"]
     x_order = ["stupid_max", "fooof","philistine","combine_complex","combine_simple"]
+    # x_order = ["stupid_max", "fooof","philistine","combine_simple", "simple_mt"]
+
     hue_order = sorted(df[hue].unique()) if hue is not None else None
     sns.boxplot(data=df, x=x, y=y, hue=hue, ax=ax_box, gap=0.1,
                 order=x_order, hue_order=hue_order,
@@ -343,26 +345,20 @@ def plot_facet_line(df, x, y="mae", hue="algorithm",
 if __name__ == "__main__":
     HDF_PATH = BASE_FOLDER / "iaf_results.h5"
     df_metrics = load_metrics(HDF_PATH)  # fast, always load this
-    default_filter = {
-        "carrier_freq":         14.0,
+    default_filter =  {
+        "carrier_freq":         10.32,
         # Peak shape in frequency domain
         "carrier_waveform":     "gaussian",   # "gaussian" | "sine" | "burst"
         # Aperiodic component
         "aperiodic_exponent":   2.0,          # β — slope of 1/f^β
-        "has_aperiodic":        True,
         # Peak(s)
         "n_peaks":              1,
         "peak_bw":              0.5,          # Gaussian σ in Hz
         # KEY PARAM: peak power relative to aperiodic floor at aperiodic_ref_freq
         "peak_snr_db":          10.0,
-        # Noise
-        "noise_type":           "white",       # "None" | "white" | "pink"
-        # Noise PSD relative to power at carrier_freq
-        "noise_snr_db":         -20.0,
         # Analysis
         "window_length_sec":    10,
     }
-
     error_label = "error"
 
     # Each plot loads only what it needs
@@ -434,26 +430,11 @@ if __name__ == "__main__":
 
     plot_box(
         load_samples_for_plot(HDF_PATH, df_metrics,
-                              **params_excluding(default_filter, "has_aperiodic")),
-        HDF_PATH,
-        x="algorithm", y=error_label, hue="has_aperiodic",
-        title="Effect of Aperiodic Component\n"
-    )
-
-    plot_box(
-        load_samples_for_plot(HDF_PATH, df_metrics,
                               **params_excluding(default_filter, "aperiodic_exponent")),
         HDF_PATH,
         x="algorithm", y=error_label, hue="aperiodic_exponent",
         title="Effect of Aperiodic Exponent\n"
     )
-
-    # # Print detection rates for specific conditions
-    # print_detection_table(df_metrics, window_length_sec=5, noise_type="None", noise_snr_db=0, mod_freq=0, mod_amp=0.5, carrier_freq=10.0, 
-    #                       n_peaks=0,has_aperiodic=True, carrier_waveform="delta")
-    # print_detection_table(df_metrics, window_length_sec=5, noise_type="white", noise_snr_db=-5, mod_freq=0, mod_amp=0.5, carrier_freq=10.0, n_peaks=1,
-    #                       has_aperiodic=True, carrier_waveform="delta")
-
 
     # # --- Example: Plot error distribution over all conditions ---
     # plot_box(df_metrics, x="algorithm", y="mae", hue="noise_type",
@@ -483,4 +464,4 @@ if __name__ == "__main__":
     # print(high_error[["algorithm", error_label] + [col for col in df_metrics.columns if col not in ['condition_id', 'algorithm', error_label,"fs", "signal_length_sec", "freq_range", "alpha_band",
     #     "SG_window", "SG_poly", "pink_ax_r2"]]])
 
-    plt.show()
+    # plt.show()

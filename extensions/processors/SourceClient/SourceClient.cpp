@@ -86,6 +86,7 @@ SourceClient::SourceClient() : IProcessor(PRIORITY_HIGH)
     add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
     add_option("store_aux", store_aux_, "Whether to forward auxiliary (AUX + trigger) data.");
     add_option("calib_packets", calib_packets_, "Number of packets used for initial start-time calibration.");
+    add_option("recal_interval_s", recal_interval_s_, "Interval (s) between online true-fs re-estimation refits.");
 }
 
 void SourceClient::CreatePorts()
@@ -134,6 +135,70 @@ void SourceClient::Preprocess(ProcessingContext &context)
     }
 
     LOG(INFO) << name() << " Listening on UDP port " << PORT;
+}
+
+uint64_t SourceClient::hardware_time_us_(uint64_t sample_counter) const
+{
+    return anchor_time_us_ + static_cast<uint64_t>(
+        static_cast<double>(sample_counter - anchor_n_) * 1e6 / fs_eff_);
+}
+
+// Feeds one real (not interpolated) packet observation into the current
+// tumbling window, and refits fs_eff_ once recal_interval_s_ has elapsed.
+void SourceClient::recalibrate_fs_(uint64_t sample_counter, int64_t ts_us)
+{
+    if (recal_count_ == 0)
+    {
+        recal_block_start_n_ = sample_counter;
+        recal_block_start_ts_us_ = ts_us;
+        recal_next_refit_ts_us_ = ts_us + static_cast<int64_t>(recal_interval_s_() * 1e6);
+    }
+
+    const double x = static_cast<double>(sample_counter - recal_block_start_n_);
+    const double y = static_cast<double>(ts_us - recal_block_start_ts_us_);
+
+    // Welford's online covariance update.
+    ++recal_count_;
+    const double dx = x - recal_mean_x_;
+    recal_mean_x_ += dx / static_cast<double>(recal_count_);
+    recal_mean_y_ += (y - recal_mean_y_) / static_cast<double>(recal_count_);
+    recal_cov_xy_ += dx * (y - recal_mean_y_);
+    recal_var_x_ += dx * (x - recal_mean_x_);
+
+    if (ts_us < recal_next_refit_ts_us_)
+        return;
+
+    if (recal_count_ >= 2 && recal_var_x_ > 0.0)
+    {
+        const double slope_us_per_sample = recal_cov_xy_ / recal_var_x_;
+        const double new_fs_eff = 1e6 / slope_us_per_sample;
+
+        // Real crystal drift is ppm-scale; reject anything further off nominal
+        // as a bad fit (e.g. from a packet-loss burst) instead of adopting it.
+        const double nominal_fs = fs_();
+        if (std::isfinite(new_fs_eff) && std::abs(new_fs_eff - nominal_fs) < 0.005 * nominal_fs)
+        {
+            anchor_time_us_ = hardware_time_us_(sample_counter);
+            anchor_n_ = sample_counter;
+            fs_eff_ = new_fs_eff;
+            LOG(INFO) << name() << " fs refit: effective sample rate = " << fs_eff_
+                      << " Hz (nominal " << nominal_fs << " Hz)";
+        }
+        else
+        {
+            LOG(WARNING) << name() << " Rejected implausible fs refit: " << new_fs_eff
+                         << " Hz (nominal " << nominal_fs << " Hz); keeping fs_eff_=" << fs_eff_;
+        }
+    }
+
+    recal_count_ = 0;
+    recal_mean_x_ = 0.0;
+    recal_mean_y_ = 0.0;
+    recal_cov_xy_ = 0.0;
+    recal_var_x_ = 0.0;
+    recal_block_start_n_ = sample_counter;
+    recal_block_start_ts_us_ = ts_us;
+    recal_next_refit_ts_us_ = ts_us + static_cast<int64_t>(recal_interval_s_() * 1e6);
 }
 
 void SourceClient::Process(ProcessingContext &context)
@@ -255,7 +320,13 @@ void SourceClient::Process(ProcessingContext &context)
         }
     }
 
-    const uint64_t start_time = start_time_us_;
+    // Anchor the continuous fs-recalibration mapping at the calibration result.
+    // start_time_us_ is defined at relative sample 0 (see calibration loop
+    // above), so the anchor must be n=0, not the current sample_counter.
+    anchor_time_us_ = start_time_us_;
+    anchor_n_ = 0;
+    fs_eff_ = fs_();
+    recal_count_ = 0;
 
     while (!context.terminated())
     {
@@ -292,14 +363,14 @@ void SourceClient::Process(ProcessingContext &context)
         if (((pkt.sample_counter - first_sample_counter) > sample_counter + 1))
         {
             int missed = (pkt.sample_counter - first_sample_counter) - sample_counter;
-            LOG(ERROR) << name() << " Missed " << missed << " packet(s). Last counter: " << sample_counter << ", current: " << pkt.sample_counter - first_sample_counter;
+            LOG(WARNING) << name() << " Missed " << missed << " packet(s). Last counter: " << sample_counter << ", current: " << pkt.sample_counter - first_sample_counter;
 
             int virt_sample_counter = sample_counter;
             std::vector<MultiChannelType<float>::Data *> data_out_vec = data_slot->ClaimDataN(missed, false);
             for (auto &data_out : data_out_vec)
             {
                 virt_sample_counter++;
-                hardware_time_us = start_time + (uint64_t)virt_sample_counter * 1000000ULL / fs_();
+                hardware_time_us = hardware_time_us_(virt_sample_counter);
                 const uint64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
                     timestamp.time_since_epoch()).count();
                 if (hardware_time_us > ts_us)
@@ -321,7 +392,7 @@ void SourceClient::Process(ProcessingContext &context)
                 for (auto &aux_out : aux_out_vec)
                 {
                     virt_sample_counter++;
-                    hardware_time_us = start_time + (uint64_t)virt_sample_counter * 1000000ULL / fs_();
+                    hardware_time_us = hardware_time_us_(virt_sample_counter);
                     const uint64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
                         timestamp.time_since_epoch()).count();
                     if (hardware_time_us > ts_us)
@@ -345,9 +416,11 @@ void SourceClient::Process(ProcessingContext &context)
 
         TimePoint after_parsing = Clock::now();
 
-        hardware_time_us = start_time + (uint64_t)sample_counter * 1000000ULL / fs_();
         const uint64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
             timestamp.time_since_epoch()).count();
+        recalibrate_fs_(sample_counter, static_cast<int64_t>(ts_us));
+
+        hardware_time_us = hardware_time_us_(sample_counter);
         if (hardware_time_us > ts_us)
         {
             // Calibration floor was set too high for this packet; clamp to now.
@@ -365,7 +438,9 @@ void SourceClient::Process(ProcessingContext &context)
         std::copy(pkt.eeg.begin(), pkt.eeg.begin() + nchannels_(), eeg_vec.begin());
         data_out->set_data_sample(0, eeg_vec);
         data_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us_);
-        data_out->set_source_timestamp(micros_to_timepoint(hardware_time_us));
+        // data_out->set_source_timestamp(micros_to_timepoint(hardware_time_us));
+        data_out->set_source_timestamp(Clock::now());
+
         data_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us_);
 
         TimePoint after_set_eeg = Clock::now();
@@ -374,7 +449,8 @@ void SourceClient::Process(ProcessingContext &context)
 
         // AUX + trigger channel
         aux_out = aux_slot->ClaimData(true);
-        aux_out->set_source_timestamp(micros_to_timepoint(hardware_time_us));
+        // aux_out->set_source_timestamp(micros_to_timepoint(hardware_time_us));
+        aux_out->set_source_timestamp(Clock::now());
         aux_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us_);
         if (store_aux)
         {

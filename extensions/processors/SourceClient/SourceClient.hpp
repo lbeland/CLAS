@@ -58,7 +58,9 @@ class SourceClient : public IProcessor {
     options::Bool store_aux_{true};
     // Number of packets used for initial start-time calibration.
     // At 10 kHz, 1000 packets ≈ 100 ms of startup delay.
-    options::Int calib_packets_{1000};
+    options::Int calib_packets_{10000};
+    // Interval between online true-fs re-estimation refits.
+    options::Double recal_interval_s_{5.0};
 
     // Runtime state
     int sock_ = -1;
@@ -74,4 +76,25 @@ class SourceClient : public IProcessor {
     // Sampled once during calibration to allow post-hoc conversion from
     // steady-clock hardware timestamps back to wall-clock time.
     int64_t steady_to_wallclock_offset_us_ = 0;
+
+    // hardware_time_us(n) = anchor_time_us_ + (n - anchor_n_) * 1e6 / fs_eff_.
+    // fs_eff_ is re-estimated every recal_interval_s_ to track crystal drift;
+    // anchor moves forward at each refit so the mapping stays continuous.
+    double fs_eff_ = 0.0;
+    uint64_t anchor_n_ = 0;
+    uint64_t anchor_time_us_ = 0;
+
+    // Tumbling-window online regression (Welford's incremental covariance),
+    // O(1) per sample, no raw-sample storage needed.
+    uint64_t recal_block_start_n_ = 0;
+    int64_t recal_block_start_ts_us_ = 0;
+    int64_t recal_next_refit_ts_us_ = 0;
+    uint64_t recal_count_ = 0;
+    double recal_mean_x_ = 0.0;
+    double recal_mean_y_ = 0.0;
+    double recal_cov_xy_ = 0.0;
+    double recal_var_x_ = 0.0;
+
+    uint64_t hardware_time_us_(uint64_t sample_counter) const;
+    void recalibrate_fs_(uint64_t sample_counter, int64_t ts_us);
 };

@@ -6,7 +6,7 @@ import numpy as np
 from scipy.signal import welch, savgol_filter, medfilt
 from scipy.stats import linregress
 from tqdm import tqdm
-from fooof import FOOOF
+# from fooof import FOOOF
 
 
 def gaussian_peak(freqs, amp, center, width):
@@ -35,66 +35,90 @@ def bic_peak_test_simple(
     return (bic_h0 - bic_h1) > 0, bic_h0 - bic_h1
 
 
-def combine_simple(psd: np.ndarray, freq_bins: np.ndarray, config: dict) -> float:
-    """Fit aperiodic component and return PAF; returns np.nan if no clear peak."""
+def combine_simple(psd, freq_bins, config):
     band = (freq_bins >= config["freq_range"][0]) & (freq_bins <= config["freq_range"][1])
     psd_band = psd[band]
-    freqs    = freq_bins[band]
+    freqs = freq_bins[band]
 
     resolution = freqs[1] - freqs[0]
-    win = max(int(2.5 / resolution) | 1, 5)   # odd, at least 5
-    polyorder = 3
-    if polyorder >= win:
-        win = polyorder + 2
+    sav_gol_window_length = int(2.5 / resolution)
+    if sav_gol_window_length % 2 == 0:
+        sav_gol_window_length += 1
 
-    eps      = np.nextafter(0, 1)
+    sav_gol_polyorder = 3
+    if sav_gol_polyorder >= sav_gol_window_length:
+        sav_gol_window_length = sav_gol_polyorder + 2
+
+    eps = np.nextafter(0, 1)  # Smallest positive float
     psd_safe = np.maximum(psd_band, eps)
-
     slope, intercept, _, _, _ = linregress(np.log10(freqs), np.log10(psd_safe))
-    aperiodic = np.log10(freqs) * slope + intercept
-    psd_flat  = psd_safe / np.power(10, aperiodic)
+    aperiodic_simple = np.log10(freqs) * slope + intercept  # log10-scale
+    # psd_flat = psd_safe / np.power(10, aperiodic_simple)  # ratio: 1.0 = on fit
+    psd_flat = np.log10(psd_safe) - aperiodic_simple  # log10 ratio: 0.0 = on fit
 
-    # Re-fit using only sub-peak samples to reduce peak influence
-    mask = psd_flat <= 1.0
-    if mask.sum() >= 2:
-        slope, intercept, _, _, _ = linregress(np.log10(freqs[mask]), np.log10(psd_safe[mask]))
-        aperiodic = np.log10(freqs) * slope + intercept
-        psd_flat  = psd_safe / np.power(10, aperiodic)
+    # Select only samples that are exactly on (1) or below the perfect fit
+    ratio_threshold = 0.0 # 1.0
+    mask = psd_flat <= ratio_threshold
+    freqs_refit = freqs[mask]
+    psd_refit = psd_safe[mask]
+    # Re-fit using only the selected samples to ignore peak oscillations
+    slope, intercept, _, _, _ = linregress(np.log10(freqs_refit), np.log10(psd_refit))
+    aperiodic_simple = np.log10(freqs) * slope + intercept  # log10-scale
+    # psd_flat = psd_safe / np.power(10, aperiodic_simple)
+    psd_flat = np.log10(psd_safe) - aperiodic_simple  # log10 ratio: 0.0 = on fit
 
-    psd_smooth = savgol_filter(psd_flat, window_length=win, polyorder=polyorder)
+    psd_smooth = savgol_filter(psd_flat, window_length=sav_gol_window_length, polyorder=sav_gol_polyorder)
 
-    fmin, fmax = config["alpha_band"]
-    alpha_band     = (freqs >= fmin) & (freqs <= fmax)
-    psd_alpha      = psd_smooth[alpha_band]
-    max_bin        = np.argmax(psd_alpha)
-    paf            = freqs[alpha_band][max_bin]
+    fmin, fmax = config["alpha_band"][0], config["alpha_band"][1]
 
-    # Parabolic interpolation for sub-bin accuracy
-    if 0 < max_bin < psd_alpha.size - 1:
-        y1, y2, y3 = psd_alpha[max_bin - 1], psd_alpha[max_bin], psd_alpha[max_bin + 1]
-        denom = y1 - 2 * y2 + y3
+    alpha_band = (freqs >= fmin) & (freqs <= fmax)
+
+    psd_alpha_band = psd_smooth[alpha_band]
+    fit_freqs = freqs[alpha_band]
+
+    max_bin = np.argmax(psd_alpha_band)
+    paf = freqs[alpha_band][max_bin]
+
+    if 0 < max_bin < (psd_alpha_band.size - 1):
+        y1, y2, y3 = psd_alpha_band[max_bin - 1], psd_alpha_band[max_bin], psd_alpha_band[max_bin + 1]
+        denom = (y1 - 2 * y2 + y3)
         if denom != 0:
-            paf += 0.5 * (y1 - y3) / denom * resolution
+            delta = 0.5 * (y1 - y3) / denom
+            paf += delta * resolution
 
-    floor_value = 1.0
-    amp_guess   = psd_alpha[max_bin] - floor_value
-    center_guess = freqs[alpha_band][max_bin]
-    half_max     = amp_guess / 2 + floor_value
-    g_max_bin    = max_bin + np.where(alpha_band)[0][0]
 
-    left_idx  = np.where(psd_smooth[:g_max_bin] < half_max)[0]
-    left_idx  = left_idx[-1]  if len(left_idx)  > 0 else g_max_bin
-    right_idx = np.where(psd_smooth[alpha_band][g_max_bin:] < half_max)[0]
-    right_idx = right_idx[0] + g_max_bin if len(right_idx) > 0 else g_max_bin
+    floor_value = 0 #1
 
-    fwhm      = max((right_idx - left_idx) * resolution, resolution)
+    amp_guess = psd_smooth[alpha_band][max_bin] - floor_value
+    center_guess = fit_freqs[max_bin]
+
+    half_max = amp_guess / 2 + floor_value
+    global_max_bin = max_bin + np.where(alpha_band)[0][0]
+    left_idx = np.where(psd_smooth[:global_max_bin] < half_max)[0]
+    if len(left_idx) > 0:
+        left_idx = left_idx[-1]
+    else:
+        left_idx = global_max_bin
+    right_idx = np.where(psd_smooth[alpha_band][global_max_bin:] < half_max)[0]
+    if len(right_idx) > 0:
+        right_idx = right_idx[0] + global_max_bin
+    else:
+        right_idx = global_max_bin
+    fwhm = max((right_idx-left_idx) * resolution, resolution)
     std_gauss = fwhm / (2 * np.sqrt(2 * np.log(2)))
     if std_gauss > 2:
-        return np.nan
+        # print(std_gauss)
+        return np.nan, [np.nan, np.nan]
+    popt = [amp_guess, center_guess, std_gauss]
 
-    gauss  = gaussian_peak(freqs, amp_guess, center_guess, std_gauss) + floor_value
-    approved, _ = bic_peak_test_simple(freqs, psd_flat, gauss, freqs[0], freqs[-1], floor_value)
-    return paf if approved else np.nan
+    gaussian = gaussian_peak(freqs, *popt) + floor_value
+    
+    peak_approved = bic_peak_test_simple(freqs, psd_flat, gaussian, fmin, fmax, floor_value)
+
+    if not peak_approved:
+        return np.nan, [np.nan, np.nan]
+
+    return paf, [slope, intercept]
 
 
 def estimate_iaf(raw: np.ndarray, fs: float) -> list:
@@ -103,27 +127,24 @@ def estimate_iaf(raw: np.ndarray, fs: float) -> list:
 
     if len(raw) / fs > 20:
         window_samples = int(20 * fs)
-        iaf = []
-        for start in tqdm(range(0, len(raw) - window_samples, window_samples)):
+        starts = list(range(0, len(raw) - window_samples, window_samples))
+        last_start = len(raw) - window_samples
+        if not starts or starts[-1] != last_start:
+            starts.append(last_start)  # cover the trailing remainder instead of dropping it
+        iaf_windowed = []
+        aperiodic_params_windowed = []
+        for start in tqdm(starts):
             freqs, psd = welch(raw[start : start + window_samples], fs=fs, nperseg=int(fs * 10))
-            iaf.append(combine_simple(psd, freqs, config))
-        return iaf
-
-    # Short recording: use FOOOF on the whole signal
-    freqs, psd = welch(raw, fs=fs, nperseg=int(fs * 10))
-    fm = FOOOF(peak_width_limits=[0.1, 7.0], min_peak_height=0.001,
-               peak_threshold=2., max_n_peaks=10, aperiodic_mode="fixed", verbose=False)
-    try:
-        fm.fit(freqs, psd)
-    except Exception as e:
-        print(f"FOOOF fitting error: {e}")
-        return [np.nan]
-
-    if fm.n_peaks_ == 0:
-        return [np.nan]
-
-    alpha_peaks = [p for p in fm.peak_params_ if 5 <= p[0] <= 18]
-    return [max(alpha_peaks, key=lambda p: p[1])[0] if alpha_peaks else np.nan]
+            iaf, aperiodic_params = combine_simple(psd, freqs, config)
+            iaf_windowed.append(iaf)
+            aperiodic_params_windowed.append(aperiodic_params)
+        return iaf_windowed, np.mean(np.array(aperiodic_params_windowed), axis=0)  # Return mean aperiodic params across windows
+    
+    else:
+        freqs, psd = welch(raw, fs=fs, nperseg=int(fs * 10))
+        iaf, aperiodic_params = combine_simple(psd, freqs, config)
+        return [iaf], np.array(aperiodic_params)
+        
 
 def estimate_iaf_with_phase(hilbert_phase: np.ndarray, fs: float, f0: float) -> np.ndarray:
     """

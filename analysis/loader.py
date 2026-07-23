@@ -138,6 +138,10 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
     assert len(set(first_timestamps)) == 1 or len(set(first_timestamps)) == 0, \
         "Mismatched timestamps across processors"
 
+    if len(samples) == 0:
+        print("No processor signals found in results directory.")
+        return {}
+    
     min_lengths = min(len(samples[key]["x"]) for key in samples)
     for key in samples:
         samples[key]["x"] = samples[key]["x"][:min_lengths]
@@ -306,7 +310,7 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
         ts_ancestor = proc_ts[ancestor]
         n   = min(len(ts_ancestor), len(ts_proc))
         lat = (ts_proc[:n] - ts_ancestor[:n])
-        plt.plot(lat, alpha=0.5, label=f"{ancestor} → {proc}")
+        plt.plot(lat, alpha=0.5, linewidth=0.5, label=f"{ancestor} → {proc}")
         print(f"  {ancestor:<{col}} {proc:<{col}} "
               f"{np.mean(lat):>8.2f} {np.median(lat):>8.2f} "
               f"{np.std(lat):>8.2f} {np.max(lat):>8.2f} {np.argmax(lat):>8}")
@@ -317,7 +321,7 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
         ts_end   = proc_ts[last_proc]
         n     = min(len(ts_start), len(ts_end))
         total = (ts_end[:n] - ts_start[:n])
-        plt.plot(total, alpha=0.5, label=f"{source_proc} → {last_proc}", color="black", lw=2)
+        plt.plot(total, alpha=0.5, linewidth=0.5, label=f"{source_proc} → {last_proc}", color="black")
         print(f"{'─' * W}")
         print(f"  {'TOTAL  ' + source_proc:<{col}} {last_proc:<{col}} "
               f"{np.mean(total):>8.2f} {np.median(total):>8.2f} "
@@ -327,6 +331,8 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
     plt.legend(loc="upper left", fontsize=9)
     plt.xlabel("Sample Index")
     plt.ylabel("Latency (us)")
+    plt.ylim(0, 1000)
+    plt.savefig("latency_analysis.png", dpi=300, bbox_inches="tight")
 
     # Latency between computed stimulus onset (StimulusController) and the
     # recorded trigger onset (SourceClient_TRIGGER), matched edge-by-edge.

@@ -56,16 +56,17 @@ def _circ_stats(phi_rad):
 # Error plots
 # ---------------------------------------------------------------------------
 
-def plot_errors(errors: list[dict], time_range: tuple = None) -> None:
+def plot_errors(errors: list[dict], time_range: tuple = None,title=None) -> None:
     """Plot error time series and polar histograms; save to output_path."""
     if not errors:
         print("No errors to plot.")
         return
 
     fig_time      = plt.figure(figsize=(10, 5))
+    fig_time.suptitle(f"Error time series - {title if title else ''}", fontsize=12)
     ax_ts         = fig_time.add_subplot(111)
     fig_polars = plt.figure(figsize=(3 * len(errors), 3.5))
-    fig_polars.suptitle("Error distributions", fontsize=12)
+    fig_polars.suptitle(f"Error distributions - {title if title else ''}", fontsize=12)
     ax_polars  = [fig_polars.add_subplot(1, len(errors), i + 1, projection="polar")
                   for i in range(len(errors))]
 
@@ -77,7 +78,7 @@ def plot_errors(errors: list[dict], time_range: tuple = None) -> None:
 
     hists = []
     for err in errors:
-        vals = err["values"][~np.isnan(err["values"])]
+        vals = err["values"][~np.isnan(err["values"])][int(0.2*len(err["values"])):int(0.8*len(err["values"]))]  # exclude first and last 20% to avoid edge effects
         hists.append(np.histogram(vals, bins=bins)[0] / max(1, vals.size) * 100)
 
     r_max   = max(h.max() for h in hists) * 1.05
@@ -182,6 +183,8 @@ def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, star
     handles_r, labels_r = ax_r.get_legend_handles_labels() if ax_r is not None else ([], [])
     ax.legend(handles + handles_r, labels + labels_r, frameon=True, fontsize=8)
 
+    ax.set_ylim(0,50)
+
     fig.tight_layout()
     fig.savefig(output_path, dpi=300, bbox_inches="tight")
 
@@ -205,7 +208,7 @@ def plot_spectrum(raw: np.ndarray, samples: dict, fs: float) -> None:
                  label="Filtered", alpha=0.7, color="orange")
 
     plt.xlim(0, 20)
-    plt.ylim(0, X[np.argmin(np.abs(freqs-0.5))])
+    plt.ylim(0, X[np.argmin(np.abs(freqs-10))]*5)
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Magnitude")
     plt.title("Spectrum")

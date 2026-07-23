@@ -10,6 +10,7 @@ import sys
 import yaml
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.signal import butter, lfilter, sosfiltfilt
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -58,7 +59,7 @@ def analyse_results(f0: float, results_dir: str) -> None:
         plot_erp_latency(windows, fs)
 
     # 5. Estimate IAF offline on the full recording
-    iaf = estimate_iaf(ground_truth["raw"], fs)
+    iaf, aperiodic_params = estimate_iaf(ground_truth["raw"], fs)
     if np.all(~np.isfinite(iaf)):
         print("Could not estimate IAF from ground truth; using default f0 =", f0)
     else:
@@ -67,19 +68,22 @@ def analyse_results(f0: float, results_dir: str) -> None:
 
     # 6. Offline Hilbert reference
     raw = ground_truth["raw"]
-    filtered, hilbert_phase = compute_hilbert_reference(raw, fs, f0)
+    # filtered2, hilbert_phase2 = compute_hilbert_reference(raw, fs, f0, aperiodic_params=aperiodic_params)
+    filtered, hilbert_phase = compute_hilbert_reference(raw, fs, f0)  # without aperiodic params
 
     iaf_continuous = estimate_iaf_with_phase(hilbert_phase, fs, f0)
 
     # 7. Compute errors
     start_ts = ground_truth["time"][0]
     errors, stim_ref = compute_errors(samples, ground_truth, hilbert_phase, start_ts, fs, graph_config)
+    # errors2, stim_ref2 = compute_errors(samples, ground_truth, hilbert_phase2, start_ts, fs, graph_config)
 
     # 8. Export to EDF
     write_edf(edf_path, fs, ground_truth, samples, hilbert_phase, stim_ref, filtered)
 
     # 9. Plot errors
     plot_errors(errors)
+    # plot_errors(errors2, title="Without aperiodic params")
 
     # 10. IAF time series
     plot_iaf(ground_truth, iaf_continuous, samples, start_ts)
@@ -95,4 +99,4 @@ def analyse_results(f0: float, results_dir: str) -> None:
 
 
 if __name__ == "__main__":
-    analyse_results(f0=10, results_dir="results/simu_0.9f0_staticf0_20260709_093408")
+    analyse_results(f0=10, results_dir="_last_run")

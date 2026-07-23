@@ -164,6 +164,12 @@ def get_signal_data(path, channel=0, timestamps=False):
     if timestamps:
         source_ts = _extract_field(payload, layout, record_size, n_records, "source_ts")
         hardware_ts = _extract_field(payload, layout, record_size, n_records, "hardware_ts")
+        # Signed so downstream subtractions (latency diffs) don't wrap around on
+        # negative results; microsecond epoch counts fit int64 comfortably.
+        if source_ts is not None:
+            source_ts = source_ts.astype(np.int64)
+        if hardware_ts is not None:
+            hardware_ts = hardware_ts.astype(np.int64)
         # Keep the return value extensible: callers can pull what they need.
         ts = {
             "source_ts": source_ts,

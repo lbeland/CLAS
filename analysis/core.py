@@ -9,11 +9,29 @@ from .stimulus import StimulusConfig, compute_reference_stimulus, compute_stimul
 
 
 def compute_hilbert_reference(
-    raw: np.ndarray, fs: float, f0: float
+    raw: np.ndarray, fs: float, f0: float, aperiodic_params: np.ndarray | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
     """Bandpass + Hilbert transform to produce an offline phase reference."""
+    if aperiodic_params is not None:
+        # Use aperiodic parameters to adjust the bandpass filter
+        slope, intercept = aperiodic_params
+        n = len(raw)
+        freqs = np.fft.rfftfreq(n, d=1/fs)
+        X = np.fft.rfft(raw)
+
+        # Aperiodic power model L(f) = f^-chi * 10^b
+        L = np.zeros_like(freqs)
+        L[1:] = freqs[1:] ** (slope) * 10**intercept  # skip f=0
+
+        X_white = X.copy()
+        X_white[1:] = X[1:] / np.sqrt(L[1:])
+
+        raw_white = np.fft.irfft(X_white, n=n)
+
     sos      = butter(4, [6.0, 16.0], btype="band", fs=fs, output="sos")
-    filtered = sosfiltfilt(sos, raw)
+    filtered = sosfiltfilt(sos, raw_white if aperiodic_params is not None else raw)
+
+    filtered = raw_white if aperiodic_params is not None else raw
     return filtered, np.angle(hilbert(filtered))
 
 

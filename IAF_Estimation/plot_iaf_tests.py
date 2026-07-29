@@ -41,9 +41,11 @@ def load_samples_for_plot(hdf_path, df_metrics, **filter_kwargs):
     """
     Filter conditions first, then load only matching samples from HDF5.
     Much more efficient than loading everything and filtering after.
+    Each condition's estimates/errors span all its seeds (nan where a
+    seed had no estimate/error), so this explodes to one row per seed.
     """
     df_filtered = filter_df(df_metrics, **filter_kwargs)
-    
+
     rows = []
     with h5py.File(hdf_path, "r") as hf:
         for _, row in df_filtered.iterrows():
@@ -51,8 +53,6 @@ def load_samples_for_plot(hdf_path, df_metrics, **filter_kwargs):
             algo = row["algorithm"]
             try:
                 errors = hf[f"conditions/{cond_id}/{algo}/errors"][:]
-                if len(errors) == 0:
-                    errors = np.array([np.nan])  # To ensure we still get a row for this condition
                 estimates = hf[f"conditions/{cond_id}/{algo}/estimates"][:]
                 row_dict = row.to_dict()
                 for err, est in zip(errors, estimates):
@@ -165,13 +165,13 @@ def plot_line(df, x, y="mae", hue="algorithm",
     plt.tight_layout()
 
 def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
-             title=None, freq_max=30):
+             title=None, freq_max=30, save_name=None):
  
     if hue is not None:
         fig = plt.figure(figsize=(15, 6))
         # Split figure into left (1/3) and right (2/3)
         gs = gridspec.GridSpec(1, 2, figure=fig,
-                               width_ratios=[1, 2.5], wspace=0.1, hspace=0.1)
+                               width_ratios=[1, 4], wspace=0.1, hspace=0.1)
  
         # Split left column into top (timeseries) and bottom (spectrum)
         gs_left = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs[0],
@@ -197,7 +197,7 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
         spectra = load_spectra_by_hue(hdf_path, df, hue)
         for (hue_val, (freq_bins, mean_psd)), color in zip(spectra.items(), palette):
             mask = freq_bins <= freq_max
-            ax_spec.semilogy(freq_bins[mask], mean_psd[mask],
+            ax_spec.semilogy(freq_bins[mask][1:], mean_psd[mask][1:],
                          color=color, linewidth=1.4, alpha=0.85, label=str(hue_val))
         ax_spec.set_xlabel("Frequency (Hz)")
         ax_spec.set_ylabel("log(Power)")
@@ -209,7 +209,7 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
  
     # --- Box plot panel ---
     # x_order = ["stupid_max", "parabolic_max", "fooof","philistine","combine"]
-    x_order = ["stupid_max", "fooof","philistine","combine_complex","combine_simple"]
+    x_order = ["stupid_max", "fooof","philistine", "combine_complex","combine_simple"]
     # x_order = ["stupid_max", "fooof","philistine","combine_simple", "simple_mt"]
 
     hue_order = sorted(df[hue].unique()) if hue is not None else None
@@ -239,12 +239,12 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
     xtick_pos = {x_val: i for i, x_val in enumerate(x_order)}
  
     if hue is not None:
-        # fp/fn/n are stored once per (condition_id, algorithm) and broadcast onto
-        # every sample row of that condition. Multiple condition_ids (noise
-        # realizations) share the same (x, hue) combo, so the true fail rate for
-        # a box must pool fp/fn/n across all of those condition_ids first
-        # (drop duplicate condition_id rows so each contributes once), THEN
-        # divide -- not average the per-condition fail_rates.
+        # fp/fn/n are stored once per (condition_id, algorithm), already
+        # pooled over every seed of that condition, and broadcast onto
+        # every exploded sample row. Multiple condition_ids can share the
+        # same (x, hue) combo, so the true fail rate must dedupe back to
+        # one row per condition_id first, THEN sum fp/fn/n and divide --
+        # not average the per-condition fail_rates.
         per_condition = df.drop_duplicates(subset=[x, hue, "condition_id"])
         pooled = per_condition.groupby([x, hue])[["fp", "fn", "n"]].sum()
         grouped = (pooled["fp"] + pooled["fn"]) / pooled["n"] * 100
@@ -313,7 +313,7 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
         )
                 
     ax_box.set_xlabel(x)
-    ax_box.set_ylabel(y)
+    ax_box.set_ylabel(y + "[Hz]")
     ax_box.set_title(title if title else f"{y} distribution",fontdict={"fontsize": 18})
     
     # Adjust layout to make room for bottom legend (only when hue is present)
@@ -322,7 +322,8 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
     else:
         fig.subplots_adjust(left=0.06, right=0.98)
 
-    plt.savefig(f"{BASE_FOLDER}/plots/{hue}.svg", dpi=300, bbox_inches="tight")
+    plt.savefig(f"{BASE_FOLDER}/plots/{save_name or hue}.svg", dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
 def plot_bar(df, x="algorithm", y="mae", agg="mean", hue=None, title=None):
     plt.figure(figsize=(8, 5))
@@ -346,9 +347,9 @@ if __name__ == "__main__":
     HDF_PATH = BASE_FOLDER / "iaf_results.h5"
     df_metrics = load_metrics(HDF_PATH)  # fast, always load this
     default_filter =  {
-        "carrier_freq":         10.32,
+        "peak_freq":            10.32,
         # Peak shape in frequency domain
-        "carrier_waveform":     "gaussian",   # "gaussian" | "sine" | "burst"
+        "stationarity":         "constant",   # "constant" | "burst"
         # Aperiodic component
         "aperiodic_exponent":   2.0,          # β — slope of 1/f^β
         # Peak(s)
@@ -358,105 +359,128 @@ if __name__ == "__main__":
         "peak_snr_db":          10.0,
         # Analysis
         "window_length_sec":    10,
+        "noise_lv":             0.5,          # Std dev of the per-bin log10-power noise (gen_noise)
     }
     error_label = "error"
 
-    # Each plot loads only what it needs
+    # trial_source distinguishes the OFAT base sweep (always window_length_sec
+    # == default) from the window-length comparison group (nested sub-windows
+    # of one shared parent signal per condition/seed). Restricting to the
+    # latter means wl5/wl10/wl20 are all strictly matched to the same
+    # underlying signal instances -- without it, window_length_sec == default
+    # (10s) would silently mix in unrelated "base" trials (different signal
+    # draws entirely), which is why its example window/spectrum wouldn't
+    # visually nest inside the 5s/20s ones the way it should.
+    has_trial_source = "trial_source" in df_metrics.columns
+    window_length_sweep_filter = params_excluding(default_filter, "window_length_sec")
+    if has_trial_source:
+        window_length_sweep_filter["trial_source"] = "window_length_sweep"
+
+    # Window length is its own cross-cutting sweep (evaluated against every
+    # condition below, sharing a parent signal per condition/seed -- see
+    # IAF_tests.py's process_window_length_condition), not a value fixed by
+    # default_filter. This one plot compares directly across window
+    # lengths; everything else below is repeated separately PER window
+    # length so "effect of peak SNR" etc. can be seen at each one.
     plot_box(
-        load_samples_for_plot(HDF_PATH, df_metrics,
-                              **params_excluding(default_filter, "window_length_sec")),
+        load_samples_for_plot(HDF_PATH, df_metrics, **window_length_sweep_filter),
         HDF_PATH,
         x="algorithm", y=error_label, hue="window_length_sec",
         title="Effect of Window Length\n"
     )
 
+    window_lengths_sec = sorted(df_metrics["window_length_sec"].unique())
 
-    plot_box(
-        load_samples_for_plot(HDF_PATH, df_metrics,
-                              **params_excluding(default_filter, "carrier_freq")),
-        HDF_PATH,
-        x="algorithm", y=error_label, hue="carrier_freq",
-        title="Effect of Carrier Frequency\n"
-    )
+    for window_length_sec in window_lengths_sec:
+        wl_filter = {**default_filter, "window_length_sec": window_length_sec}
+        if has_trial_source:
+            wl_filter["trial_source"] = "window_length_sweep"
+        suffix = f" (window={window_length_sec}s)"
+        prefix = f"wl{window_length_sec}"
 
-    plot_box(
-        load_samples_for_plot(HDF_PATH, df_metrics,
-                              **params_excluding(default_filter, "peak_snr_db")),
-        HDF_PATH,
-        x="algorithm", y=error_label, hue="peak_snr_db",
-        title="Effect of Peak SNR\n"
-    )
-    
+        plot_box(
+            load_samples_for_plot(HDF_PATH, df_metrics,
+                                  **params_excluding(wl_filter, "peak_freq")),
+            HDF_PATH,
+            x="algorithm", y=error_label, hue="peak_freq",
+            title=f"Effect of Peak Frequency{suffix}\n",
+            save_name=f"{prefix}_peak_freq",
+        )
 
-    plot_box(
-        load_samples_for_plot(HDF_PATH, df_metrics,
-                              **params_excluding(default_filter, "carrier_waveform")),
-        HDF_PATH,
-        x="algorithm", y=error_label, hue="carrier_waveform",
-        title="Effect of Carrier Waveform\n"
-    )
+        plot_box(
+            load_samples_for_plot(HDF_PATH, df_metrics,
+                                  **params_excluding(wl_filter, "peak_snr_db")),
+            HDF_PATH,
+            x="algorithm", y=error_label, hue="peak_snr_db",
+            title=f"Effect of Peak SNR{suffix}\n",
+            save_name=f"{prefix}_peak_snr_db",
+        )
 
-    # plot_box(
-    #     load_samples_for_plot(HDF_PATH, df_metrics,
-    #                           **params_excluding(default_filter, "mod_freq")),
-    #     HDF_PATH,
-    #     x="algorithm", y=error_label, hue="mod_freq",
-    #     title="Effect of Modulation Frequency\n"
-    # )
+        plot_box(
+            load_samples_for_plot(HDF_PATH, df_metrics,
+                                  **params_excluding(wl_filter, "noise_lv")),
+            HDF_PATH,
+            x="algorithm", y=error_label, hue="noise_lv",
+            title=f"Effect of Noise Level{suffix}\n",
+            save_name=f"{prefix}_noise_lv",
+        )
 
-    # plot_box(
-    #     load_samples_for_plot(HDF_PATH, df_metrics,
-    #                           **params_excluding({**default_filter.copy(), "mod_freq": 0.01}, "mod_amp")),
-    #     HDF_PATH,
-    #     x="algorithm", y=error_label, hue="mod_amp",
-    #     title="Effect of Modulation Amplitude\n"
-    # )
+        plot_box(
+            load_samples_for_plot(HDF_PATH, df_metrics,
+                                  **params_excluding(wl_filter, "stationarity")),
+            HDF_PATH,
+            x="algorithm", y=error_label, hue="stationarity",
+            title=f"Effect of Stationarity{suffix}\n",
+            save_name=f"{prefix}_stationarity",
+        )
 
-    plot_box(
-        load_samples_for_plot(HDF_PATH, df_metrics,
-                              **params_excluding(default_filter, "peak_bw")),
-        HDF_PATH,
-        x="algorithm", y=error_label, hue="peak_bw",
-        title="Effect of Peak Bandwidth\n"
-    )
+        plot_box(
+            load_samples_for_plot(HDF_PATH, df_metrics,
+                                  **params_excluding(wl_filter, "peak_bw")),
+            HDF_PATH,
+            x="algorithm", y=error_label, hue="peak_bw",
+            title=f"Effect of Peak Bandwidth{suffix}\n",
+            save_name=f"{prefix}_peak_bw",
+        )
 
-    plot_box(
-        load_samples_for_plot(HDF_PATH, df_metrics,
-                              **params_excluding(default_filter, "n_peaks")),
-        HDF_PATH,
-        x="algorithm", y=error_label, hue="n_peaks",
-        title="Effect of Number of Peaks\n"
-    )
+        plot_box(
+            load_samples_for_plot(HDF_PATH, df_metrics,
+                                  **params_excluding(wl_filter, "n_peaks")),
+            HDF_PATH,
+            x="algorithm", y=error_label, hue="n_peaks",
+            title=f"Effect of Number of Peaks{suffix}\n",
+            save_name=f"{prefix}_n_peaks",
+        )
 
-    plot_box(
-        load_samples_for_plot(HDF_PATH, df_metrics,
-                              **params_excluding(default_filter, "aperiodic_exponent")),
-        HDF_PATH,
-        x="algorithm", y=error_label, hue="aperiodic_exponent",
-        title="Effect of Aperiodic Exponent\n"
-    )
+        plot_box(
+            load_samples_for_plot(HDF_PATH, df_metrics,
+                                  **params_excluding(wl_filter, "aperiodic_exponent")),
+            HDF_PATH,
+            x="algorithm", y=error_label, hue="aperiodic_exponent",
+            title=f"Effect of Aperiodic Exponent{suffix}\n",
+            save_name=f"{prefix}_aperiodic_exponent",
+        )
 
-    # # --- Example: Plot error distribution over all conditions ---
-    # plot_box(df_metrics, x="algorithm", y="mae", hue="noise_type",
-    #     title="MAE distribution across Noise Types")
-    # plot_box(df_metrics, x="algorithm", y="mae", hue="noise_level",
-    #     title="MAE distribution across Noise Levels")
-    # plot_box(df_metrics, x="algorithm", y="mae", hue="mod_freq",
-    #     title="MAE distribution across Modulation Frequencies")
-    # plot_box(df_metrics, x="algorithm", y="mae", hue="mod_amp",
-    #     title="MAE distribution across Modulation Amplitudes")
-    # plot_box(df_metrics, x="algorithm", y="mae", hue="carrier_freq",
-    #     title="MAE distribution across IAF Frequencies")
-    
-    plot_box(load_samples_for_plot(HDF_PATH, df_metrics), HDF_PATH, x="algorithm", y=error_label, title="Error distribution across all conditions"),
+        # All (non-window-length) conditions pooled, at this window length.
+        pooled_filter = {"window_length_sec": window_length_sec}
+        if has_trial_source:
+            pooled_filter["trial_source"] = "window_length_sweep"
 
-    # Print mean and std of MAE for each algorithm
-    summary = (df_metrics.groupby("algorithm")["mae"]
-               .agg(["median","mean", "std"])
-               .mul(1000)  # Convert to mHz for readability
-               .round(2))
-    print("\n=== MAE Summary (in mHz) ===")
-    print(summary.to_string())
+        plot_box(
+            load_samples_for_plot(HDF_PATH, df_metrics, **pooled_filter),
+            HDF_PATH,
+            x="algorithm", y=error_label,
+            title=f"Error distribution across all conditions{suffix}",
+            save_name=f"{prefix}_all_conditions",
+        )
+
+        summary = (filter_df(df_metrics, **pooled_filter)
+                   .groupby("algorithm")["mae"]
+                   .agg(["median", "mean", "std"])
+                   .mul(1000)  # Convert to mHz for readability
+                   .round(2))
+        print(f"\n=== MAE Summary (in mHz), window_length_sec={window_length_sec} ===")
+        print(summary.to_string())
 
     # # Print Conditions where " + error_label.upper() + " > 4Hz for any algorithm
     # high_error = df_metrics[df_metrics[error_label] > 4]

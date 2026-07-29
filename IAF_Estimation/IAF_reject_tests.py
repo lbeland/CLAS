@@ -25,7 +25,7 @@ from tqdm import tqdm
 import h5py
 
 import IAF_tests
-from IAF_tests import process_condition
+from IAF_tests import process_condition, save_conditions_latex_table
 from approve_peak_variants import build_strategy_registry
 
 # tqdm spins up a background "monitor" thread the first time it's used, and
@@ -39,13 +39,13 @@ from approve_peak_variants import build_strategy_registry
 tqdm.monitor_interval = 0
 
 BASE_FOLDER = Path(".")
-N_SEEDS = 5
+N_SEEDS = 20
 N_WORKERS = 5
 
 # Only compare combine_simple's behavior under each strategy -- fooof and
 # other algorithms don't depend on approve_peak, so running them N_strategies
 # times would just waste compute on identical results.
-def run_algorithms_combine_simple_only(psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, freq_mt, config):
+def run_algorithms_combine_simple_only(window, psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, freq_mt, config):
     return {
         "combine_simple": IAF_tests.combine_simple(psd, freq_bins, config),
     }
@@ -54,40 +54,36 @@ def run_algorithms_combine_simple_only(psd, psd_welch, psd_mt, freq_bins, freq_b
 def build_conditions():
     fixed = {
         "fs":                   10000.0,
-        "signal_length_sec":    30,
         "freq_range":           (0.01, 30.0),
         "alpha_band":           (5, 18),
         "pink_ax_r2":           0.9,
         "aperiodic_ref_power_db": 0.0,
         "f_rotation":           1.0,
-        "aperiodic_ref_freq":   5.0,
     }
 
     default_with_peak = {
-        "carrier_freq":         14.0,
-        "carrier_waveform":     "gaussian",
+        "peak_freq":            14.0,
+        "stationarity":         "constant",   # "constant" | "burst"
         "aperiodic_exponent":   2.0,
         "n_peaks":              1,
         "peak_bw":              0.5,
         "peak_snr_db":          20.0,
         "window_length_sec":    10,
+        "noise_lv":             0.2,          # Std dev of the per-bin log10-power noise (gen_noise)
     }
     default_no_peak = {**default_with_peak, "n_peaks": 0}
 
-    cf = [value + 0.1 * idx for idx, value in enumerate(np.arange(6, 16))]
-
     sweeps_with_peak = {
-        "window_length_sec":    [5, 10, 20],
-        "peak_snr_db":          [50, 20, 10, 0],
+        "peak_snr_db":           [0, 5, 10],
         "peak_bw":              [0.1, 0.5, 1.0, 2.0, 4.0],
         "aperiodic_exponent":   [0, 1, 2, 3],
-        "carrier_freq":         cf,
-        "carrier_waveform":     ["gaussian", "sine", "burst"],
-        "n_peaks":              [1, 2, 3],
+        "peak_freq":            sorted([6,8,12,14] + [default_with_peak["peak_freq"]]),
+        "stationarity":         ["constant", "burst"],
+        "noise_lv":             [0, 0.2, 1.0],
     }
     sweeps_no_peak = {
-        "window_length_sec":    [5, 10, 20],
         "aperiodic_exponent":   [0, 1, 2, 3],
+        "noise_lv":             [0, 0.2, 1.0],
     }
 
     seen = set()
@@ -98,6 +94,10 @@ def build_conditions():
         for param, values in sweeps.items():
             for val in values:
                 config = {**fixed, **default, param: val}
+                # Generate each signal at exactly window_length_sec -- one
+                # signal == one window == one trial, no sliding (see
+                # IAF_tests.run_window_analysis).
+                config["signal_length_sec"] = config["window_length_sec"]
                 key = tuple(sorted(config.items(), key=lambda kv: str(kv)))
                 if key not in seen:
                     seen.add(key)
@@ -113,32 +113,6 @@ def init_worker(strategy_name):
     registry = build_strategy_registry()
     IAF_tests.approve_peak = registry[strategy_name]
     IAF_tests.run_algorithms = run_algorithms_combine_simple_only
-
-
-def pooled_metrics_per_condition_group(df_metrics, group_cols):
-    """Pool fp/fn/n across seeds (condition_id) for each group, instead of
-    averaging per-seed fail_rate. mae/rmse use the per-seed abs error
-    samples re-pooled too (weighted by n_errors, not by seed count)."""
-    rows = []
-    for key, group in df_metrics.groupby(group_cols):
-        fp = group["fp"].sum()
-        fn = group["fn"].sum()
-        n  = group["n"].sum()
-        # mae/rmse were computed per-seed over that seed's tp+fp samples;
-        # re-derive a pooled mae from the stored per-seed mean * count when
-        # available, falling back to NaN-aware averaging otherwise.
-        mae_vals = group["mae"].dropna()
-        rmse_vals = group["rmse"].dropna()
-        row = dict(zip(group_cols, key if isinstance(key, tuple) else (key,)))
-        row.update({
-            "fp": fp, "fn": fn, "n": n,
-            "fail_rate": (fp + fn) / n if n > 0 else np.nan,
-            "mae":  mae_vals.mean()  if len(mae_vals)  else np.nan,
-            "rmse": rmse_vals.mean() if len(rmse_vals) else np.nan,
-            "n_seeds": len(group),
-        })
-        rows.append(row)
-    return pd.DataFrame(rows)
 
 
 def main():
@@ -166,20 +140,31 @@ def main():
                 desc=strategy_name,
             ))
 
-        for cond_idx, config, gt, algo_results, _ in results:
-            data = algo_results["combine_simple"]
-            row = {
+        # Pool every seed of the same condition before scoring -- fp/fn/mae/
+        # rmse are only meaningful pooled over all seeds, not per single
+        # trial (see IAF_tests.compute_pooled_metrics).
+        pooled = {}
+        for cond_idx, config, gt, estimates_per_algo, _ in results:
+            condition_key = tuple(sorted(config.items(), key=lambda kv: str(kv)))
+            samples = pooled.setdefault(condition_key, {"est": [], "gt": [], "config": config,
+                                                          "condition_id": cond_idx // N_SEEDS})
+            samples["est"].append(float(estimates_per_algo["combine_simple"]))
+            samples["gt"].append(gt)
+
+        for samples in pooled.values():
+            config = samples["config"]
+            metrics = IAF_tests.compute_pooled_metrics(samples["est"], samples["gt"])
+            all_rows.append({
                 "strategy": strategy_name,
-                "condition_id": cond_idx,
+                "condition_id": samples["condition_id"],
                 "n_peaks": config["n_peaks"],
                 "window_length_sec": config["window_length_sec"],
                 "peak_snr_db": config["peak_snr_db"],
-                "carrier_waveform": config["carrier_waveform"],
+                "stationarity": config["stationarity"],
                 "aperiodic_exponent": config["aperiodic_exponent"],
-                "fp": data["fp"], "fn": data["fn"], "n": data["n"],
-                "mae": data["mae"], "rmse": data["rmse"],
-            }
-            all_rows.append(row)
+                "fp": metrics["fp"], "fn": metrics["fn"], "n": metrics["n"],
+                "mae": metrics["mae"], "rmse": metrics["rmse"],
+            })
 
     df = pd.DataFrame(all_rows)
     df.to_csv(BASE_FOLDER / "strategy_comparison_raw.csv", index=False)

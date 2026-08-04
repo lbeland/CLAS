@@ -88,10 +88,12 @@ int sigterm_alsa_device_holders_(const std::string &dev)
 }
 
 [[gnu::always_inline]] inline int16_t float_to_s16_(float v) {
+    v = std::clamp(v, -1.0f, 1.0f);
     return static_cast<int16_t>(v * 32767.0f + 0.5f);
 }
 
 [[gnu::always_inline]] inline int32_t float_to_s32(float v) {
+    v = std::clamp(v, -1.0f, 1.0f);
     return static_cast<int32_t>(v * 8388607.0f) << 8;
 }
 }
@@ -317,6 +319,66 @@ void StimulusController::Preprocess(ProcessingContext &context)
     }
 }
 
+
+// Voss-McCartney algorithm (Downey, ThinkDSP)
+std::vector<double> voss(int nrows, int ncols, std::mt19937 &rng)
+{
+    const double NaN = std::numeric_limits<double>::quiet_NaN();
+
+    std::vector<std::vector<double>> array(
+        static_cast<size_t>(nrows),
+        std::vector<double>(static_cast<size_t>(ncols), NaN));
+
+    std::uniform_real_distribution<double> unif01(-1.0, 1.0);
+    std::uniform_int_distribution<int> row_dist(0, nrows - 1);
+
+    std::geometric_distribution<int> geom(0.5);
+
+    // First row: one random value per column
+    for (int c = 0; c < ncols; ++c)
+        array[0][c] = unif01(rng);
+
+    // First column: one random value per row
+    for (int r = 0; r < nrows; ++r)
+        array[r][0] = unif01(rng);
+
+    // n = nrows scattered updates at random (row, col) positions
+    const int n = nrows;
+    for (int i = 0; i < n; ++i)
+    {
+        int col = geom(rng) + 1;
+        if (col >= ncols)
+            col = 0;
+        int row = row_dist(rng);
+        array[row][col] = unif01(rng); // last write wins on duplicate (row, col)
+    }
+
+    // Forward-fill each column: propagate the last valid value downward
+    for (int c = 0; c < ncols; ++c)
+    {
+        double last = array[0][c]; // row 0 is fully populated, always valid
+        for (int r = 1; r < nrows; ++r)
+        {
+            if (std::isnan(array[r][c]))
+                array[r][c] = last;
+            else
+                last = array[r][c];
+        }
+    }
+
+    // Row-wise sum across all columns
+    std::vector<double> total(static_cast<size_t>(nrows), 0.0);
+    for (int r = 0; r < nrows; ++r)
+    {
+        double s = 0.0;
+        for (int c = 0; c < ncols; ++c)
+            s += array[r][c];
+        total[static_cast<size_t>(r)] = s;
+    }
+
+    return total;
+}
+
 void StimulusController::build_audio_buffers_()
 {
     const int channels = std::clamp(audio_channels_(), 1, 8);
@@ -329,35 +391,10 @@ void StimulusController::build_audio_buffers_()
     //           << " frames (" << (static_cast<double>(burst_frames_) / fs_audio_ * 1000.0) << " ms)"
     //           << ", period=" << period_frames_ << " frames";
 
-    // Pink noise (Voss-McCartney)
-    // Seed is fixed for reproducibility: every burst sounds identical, which is
-    // intentional for controlled stimulation. Remove the seed for random bursts.
-    std::mt19937 rng(420);  //random
-    std::uniform_real_distribution<double> dist(-1.0, 1.0);
-    auto white_noise = [&]
-    { return dist(rng); };
-
-    std::vector<double> bands(static_cast<size_t>(num_octaves), 0.0);
-    unsigned int counter = 0;
     int burst_frames_precompute =(int)(burst_precompute_ms_ * fs_audio_ / 1000.0);
 
-    std::vector<double> mono(static_cast<size_t>(burst_frames_precompute));
-    for (int i = 0; i < burst_frames_precompute; ++i)
-    {
-        ++counter;
-        for (int b = 0; b < num_octaves; ++b)
-        {
-            if ((counter >> b) & 1U)
-            {
-                bands[static_cast<size_t>(b)] = white_noise();
-            }
-        }
-        double sum = 0.0;
-        for (double v : bands)
-            sum += v;
-        mono[static_cast<size_t>(i)] = sum / static_cast<double>(num_octaves);
-    }
-
+    std::mt19937 rng(1); // fixed seed, as in your original code
+    std::vector<double> mono = voss(burst_frames_precompute, num_octaves, rng);
     double peak = 0.0;
     power_s_ = 0.0;
     for (double v : mono)
@@ -370,6 +407,25 @@ void StimulusController::build_audio_buffers_()
         power_s_ += v * v;
     }
     power_s_ /= mono.size();
+
+    // One-off debug dump for offline inspection (waveform + spectrum) in Python.
+    // See extensions/processors/StimulusController/plot_burst_buffer.py
+    static bool burst_buffer_dumped = false;
+    if (!burst_buffer_dumped)
+    {
+        burst_buffer_dumped = true;
+        std::ofstream dbg("results/burst_buffer_debug.txt");
+        if (dbg.good())
+        {
+            dbg << "# fs_audio=" << fs_audio_ << " num_octaves=" << num_octaves << "\n";
+            for (double v : mono)
+                dbg << v << "\n";
+        }
+        else
+        {
+            LOG(WARNING) << name() << " Could not open results/burst_buffer_debug.txt for burst buffer debug dump";
+        }
+    }
 
     sound_buf_.assign(static_cast<size_t>(burst_frames_precompute * channels), 0.0);
     for (int i = 0; i < burst_frames_precompute; ++i)
@@ -553,7 +609,7 @@ bool StimulusController::start_audio_()
         std::string dev = audio_device_();
         auto comma = dev.rfind(',');
         std::string card = (comma != std::string::npos) ? dev.substr(0, comma) : dev;
-        set_master_volume_(card, 50);
+        set_master_volume_(card, 80);
     }
 
     const int channels = std::clamp(audio_channels_(), 1, 8);
@@ -728,8 +784,8 @@ void StimulusController::audio_thread_main_()
     snd_pcm_sframes_t written = 0;
     // One-pole gain smoother: time constant chosen so a 0<->target_gain
     // transition ramps over ~5 ms instead of stepping (avoids clicks).
-    constexpr float kGainRampMs = 5.0f;
-    const float gain_ramp_alpha_ = 1.0f - std::exp(-1.0f / (kGainRampMs * 0.001f * static_cast<float>(fs_audio_)));
+    constexpr float kGainRampMs = 2.0f;
+    const float gain_ramp_alpha_ = 1.0f; // - std::exp(-1.0f / (kGainRampMs * 0.001f * static_cast<float>(fs_audio_)));
 
     while (audio_running_.load())
     {

@@ -1,7 +1,7 @@
 graph:
   name: CLAS
   defaults:
-    n_messages: &n_messages 300000
+    n_messages: &n_messages 600000
     window_size: &window_size 100000
     fs: &fs 10000
     threadpriority: &threadpriority 100
@@ -15,8 +15,8 @@ graph:
         n_messages: *n_messages
         carrier_amplitude: 3
         carrier_frequency: 10.334
-        modulation_type: "phase"
-        modulation_amplitude: 0.5
+        modulation_type: "amplitude"
+        modulation_amplitude: 2
         modulation_frequency: 0.017
       advanced:
         buffer_sizes:
@@ -119,8 +119,9 @@ graph:
         audio_latency_s: 0.0 #0.04
         erp_latency_s: 0
         stim_dur_ms: 25
+        stim_period_ms: 1
         stim_amplitude: 0.5
-        use_background_sound: false
+        use_background_sound: true
         background_dB: 30
       advanced:
         buffer_sizes:
@@ -135,7 +136,7 @@ graph:
         format: FULL
         n_messages: *n_messages
       advanced:
-        thread_core: [21,22,23]
+        thread_core: [21,22]
   connections:
   - Producer.out.0 = SelectionFilter.in
   - Producer.out.0 = ChannelReductor.in

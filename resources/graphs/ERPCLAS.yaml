@@ -33,7 +33,7 @@ graph:
           # file: filters://2_2.0_20.0_10000.txt
           N: [1, 1]
           low_cutoff: [5, 46]
-          high_cutoff: [15, 54]
+          high_cutoff: [16, 54]
           btype: [bandpass, bandstop]
           name: ecHTfilter
         n_messages: *n_messages
@@ -51,7 +51,7 @@ graph:
         # kalman_estimator_std: 0.088
         kalman_iaf_std: 0.1
         kalman_full: true
-        f_min: 5.0
+        f_min: 7.0
         f_max: 16.0
       advanced:
         buffer_sizes:
@@ -96,7 +96,7 @@ graph:
       advanced:
         buffer_sizes:
           out: 1048
-        thread_core: [21,22,23]
+        thread_core: [20,21,22]
     
   connections:
   # - SourceClient.out.0 = SelectionFilter.in

@@ -9,7 +9,7 @@ graph:
       class: ReplaySourceClient
       options:
         fs: *fs
-        path: replay_eike_erp_20260619_114608/  # replay from this run in _last_run_group or results
+        path: iafInterrupt_20260616_115736/  # replay from this run in _last_run_group or results
         nchannels: 32
         nsamples: 1
         n_messages: *n_messages
@@ -24,7 +24,7 @@ graph:
         filter:
           # file: filters://2_2.0_20.0_10000.txt
           N: [1, 4]
-          low_cutoff: [5, 30]
+          low_cutoff: [7, 30]
           high_cutoff: [18, 70]
           btype: [bandpass, bandstop]
           name: selection
@@ -37,7 +37,7 @@ graph:
       class: ChannelSelector
       options:
         n_messages: *n_messages
-        channel_indices: [30,9,1]   # 1-based indices of channels to select
+        channel_indices: [1]   # 1-based indices of channels to select
         rms_threshold_uv: 7000
       advanced:
         buffer_sizes:
@@ -73,7 +73,7 @@ graph:
         n_messages: *n_messages
         calc_interval: 100
         window_size_sec: 10
-        max_invalid_sec: 1
+        max_invalid_sec: 3
         # kalman_estimator_std: 0.088
         kalman_iaf_std: 0.1
         kalman_full: true
@@ -90,8 +90,8 @@ graph:
         # n_fft: *window_size
         iaf_read_interval: 1
         calibrate: true
-        filter:
-          bandwidth: 4
+        # filter:
+        #   bandwidth: 4
         compensate_filter: true
       advanced:
         buffer_sizes:
@@ -112,7 +112,7 @@ graph:
         stim_period_ms: 1.0
         audio_device: "hw:1,0"
         use_background_sound: true
-        background_dB: 18
+        background_dB: 30
       advanced:
         buffer_sizes:
           out: 1048

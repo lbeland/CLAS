@@ -13,7 +13,8 @@ graph:
         nsamples: 1
         n_messages: *n_messages
         store_aux: true
-        calib_packets: 10000
+        calib_packets: 30000
+        recal_interval_s: 15
       advanced:
         buffer_sizes:
           out: 2048
@@ -23,9 +24,9 @@ graph:
       options:
         filter:
           # file: filters://2_2.0_20.0_10000.txt
-          N: [1, 8]
+          N: [1, 4]
           low_cutoff: [7, 30]
-          high_cutoff: [16, 70]
+          high_cutoff: [18, 70]
           btype: [bandpass, bandstop]
           name: selection
         n_messages: *n_messages
@@ -77,7 +78,7 @@ graph:
         # kalman_estimator_std: 0.088
         kalman_iaf_std: 0.1
         kalman_full: true
-        f_min: 5.0
+        f_min: 7.0
         f_max: 16.0
       advanced:
         buffer_sizes:
@@ -90,8 +91,8 @@ graph:
         # n_fft: *window_size
         iaf_read_interval: 1
         calibrate: true
-        filter:
-          bandwidth: 4
+        # filter:
+        #   bandwidth: 4
         compensate_filter: true
       advanced:
         buffer_sizes:
@@ -105,13 +106,13 @@ graph:
         stim_dur_unit: "deg"
         stim_dur_deg: 90
         correct_latencies: true
-        audio_latency_s: 0.0035
+        audio_latency_s: 0.0037
         erp_latency_s: 0
         stim_dur_ms: 45
         stim_amplitude: 0.5
         stim_period_ms: 0.8
-        use_background_sound: false
-        background_dB: 30
+        use_background_sound: true
+        background_dB: 18
       advanced:
         buffer_sizes:
           out: 256
@@ -121,11 +122,11 @@ graph:
       options:
         encoding: binary
         throttle/enabled: false
-        overwrite: false 
+        overwrite: false
         format: full
         n_messages: *n_messages
       advanced:
-        thread_core: [21,22,23]
+        thread_core: [21,22]
     
   connections:
   # - Producer.out.0 = GlobalFilter.in

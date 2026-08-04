@@ -58,9 +58,9 @@ class StimulusController : public IProcessor {
     options::Double erp_latency_s_{0};        // auditory evoked response potential latency (s)
     options::Bool   correct_latencies_{true};
 
-    options::Double stim_period_ms_{1};
+    options::Double stim_period_ms_{0.5};
     options::Double stim_amplitude_{0.7};
-    options::Int    stim_num_octaves_{6};      // Voss-McCartney pink noise octaves
+    options::Int    stim_num_octaves_{16};      // Voss-McCartney pink noise octaves
 
     options::String stim_dur_unit_{"deg"};     // "deg" or "ms"
     options::Double stim_dur_ms_{20};          // fallback burst duration when IAF is unavailable

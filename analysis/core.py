@@ -28,7 +28,9 @@ def compute_hilbert_reference(
 
         raw_white = np.fft.irfft(X_white, n=n)
 
-    sos      = butter(4, [6.0, 16.0], btype="band", fs=fs, output="sos")
+    # sos      = butter(4, [6.0, 16.0], btype="band", fs=fs, output="sos")
+    sos      = butter(4, [f0-4, f0+4], btype="band", fs=fs, output="sos")
+
     filtered = sosfiltfilt(sos, raw_white if aperiodic_params is not None else raw)
 
     return filtered, np.angle(hilbert(filtered))

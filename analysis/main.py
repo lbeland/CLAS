@@ -10,7 +10,6 @@ import sys
 import yaml
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import butter, lfilter, sosfiltfilt
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -89,7 +88,7 @@ def analyse_results(f0: float, results_dir: str) -> None:
     plot_iaf(ground_truth, iaf_continuous, samples, start_ts)
 
     # 11. Plot spectrum
-    plot_spectrum(raw, samples, fs)
+    # plot_spectrum(raw, samples, fs)
 
     # 12. Plot time series
     time_range = None #(10, 20)  # set to e.g. (17, 18) to zoom in seconds

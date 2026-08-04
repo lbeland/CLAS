@@ -325,16 +325,16 @@ def write_edf(
     if samples.get("ecHTFilter") is not None:
         channels.append(("Filt_on",  "misc", samples["ecHTFilter"]["y"][:n]))
     if ground_truth.get("true_inst_freq") is not None:
-        channels.append(("IAF_true_Hz", "misc", ground_truth["true_inst_freq"][:n]))
+        channels.append(("IAF_true_Hz", "stim", ground_truth["true_inst_freq"][:n]))
     if samples.get("IAFEstimator") is not None:
-        channels.append(("IAF_est_Hz",  "misc", np.nan_to_num(samples["IAFEstimator"]["y"])[:n]))
+        channels.append(("IAF_est_Hz",  "stim", np.nan_to_num(samples["IAFEstimator"]["y"])[:n]))
     if hilbert_phase is not None:
-        channels.append(("Hilbert_phi", "misc", hilbert_phase[:n]))
+        channels.append(("Hilbert_phi", "stim", hilbert_phase[:n]))
     if ground_truth.get("true_phase") is not None:
-        channels.append(("True_phi",    "misc", ground_truth["true_phase"][:n]))
+        channels.append(("True_phi",    "stim", ground_truth["true_phase"][:n]))
     if samples.get("PhaseEstimator_phase") is not None:
         phase_est = np.nan_to_num(samples["PhaseEstimator_phase"]["y"], nan=-2 * np.pi)
-        channels.append(("Online_phi", "misc", phase_est[:n]))
+        channels.append(("Online_phi", "stim", phase_est[:n]))
     if stim_ref is not None:
         channels.append(("Target_Stim", "stim", stim_ref[:n]))
     if samples.get("StimulusController") is not None:

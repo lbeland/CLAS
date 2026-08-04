@@ -39,6 +39,7 @@ def combine_simple(psd, freq_bins, config):
     band = (freq_bins >= config["freq_range"][0]) & (freq_bins <= config["freq_range"][1])
     psd_band = psd[band]
     freqs = freq_bins[band]
+    log_freqs = np.log10(freqs)
 
     resolution = freqs[1] - freqs[0]
     sav_gol_window_length = int(2.5 / resolution)
@@ -50,22 +51,22 @@ def combine_simple(psd, freq_bins, config):
         sav_gol_window_length = sav_gol_polyorder + 2
 
     eps = np.nextafter(0, 1)  # Smallest positive float
-    psd_safe = np.maximum(psd_band, eps)
-    slope, intercept, _, _, _ = linregress(np.log10(freqs), np.log10(psd_safe))
-    aperiodic_simple = np.log10(freqs) * slope + intercept  # log10-scale
+    log_psd = np.log10(np.maximum(psd_band, eps))
+    slope, intercept, _, _, _ = linregress(log_freqs, log_psd)
+    aperiodic_simple = log_freqs * slope + intercept  # log10-scale
     # psd_flat = psd_safe / np.power(10, aperiodic_simple)  # ratio: 1.0 = on fit
-    psd_flat = np.log10(psd_safe) - aperiodic_simple  # log10 ratio: 0.0 = on fit
+    psd_flat = log_psd - aperiodic_simple  # log10 ratio: 0.0 = on fit
 
     # Select only samples that are exactly on (1) or below the perfect fit
     ratio_threshold = 0.0 # 1.0
     mask = psd_flat <= ratio_threshold
-    freqs_refit = freqs[mask]
-    psd_refit = psd_safe[mask]
+    freqs_refit = log_freqs[mask]
+    psd_refit = log_psd[mask]
     # Re-fit using only the selected samples to ignore peak oscillations
-    slope, intercept, _, _, _ = linregress(np.log10(freqs_refit), np.log10(psd_refit))
-    aperiodic_simple = np.log10(freqs) * slope + intercept  # log10-scale
+    slope, intercept, _, _, _ = linregress(freqs_refit, psd_refit)
+    aperiodic_simple = log_freqs * slope + intercept  # log10-scale
     # psd_flat = psd_safe / np.power(10, aperiodic_simple)
-    psd_flat = np.log10(psd_safe) - aperiodic_simple  # log10 ratio: 0.0 = on fit
+    psd_flat = np.power(10, np.maximum(log_psd - aperiodic_simple, eps))  # log10 ratio: 0.0 = on fit
 
     psd_smooth = savgol_filter(psd_flat, window_length=sav_gol_window_length, polyorder=sav_gol_polyorder)
 
@@ -77,20 +78,20 @@ def combine_simple(psd, freq_bins, config):
     fit_freqs = freqs[alpha_band]
 
     max_bin = np.argmax(psd_alpha_band)
-    paf = freqs[alpha_band][max_bin]
+    est_pf = freqs[alpha_band][max_bin]
 
     if 0 < max_bin < (psd_alpha_band.size - 1):
         y1, y2, y3 = psd_alpha_band[max_bin - 1], psd_alpha_band[max_bin], psd_alpha_band[max_bin + 1]
         denom = (y1 - 2 * y2 + y3)
         if denom != 0:
             delta = 0.5 * (y1 - y3) / denom
-            paf += delta * resolution
+            est_pf += delta * resolution
 
 
     floor_value = 0 #1
 
     amp_guess = psd_smooth[alpha_band][max_bin] - floor_value
-    center_guess = fit_freqs[max_bin]
+    # center_guess = fit_freqs[max_bin]
 
     half_max = amp_guess / 2 + floor_value
     global_max_bin = max_bin + np.where(alpha_band)[0][0]
@@ -108,8 +109,8 @@ def combine_simple(psd, freq_bins, config):
     std_gauss = fwhm / (2 * np.sqrt(2 * np.log(2)))
     if std_gauss > 2:
         # print(std_gauss)
-        return np.nan, [np.nan, np.nan]
-    popt = [amp_guess, center_guess, std_gauss]
+        return np.nan
+    popt = [amp_guess, est_pf, std_gauss]
 
     gaussian = gaussian_peak(freqs, *popt) + floor_value
     
@@ -118,7 +119,7 @@ def combine_simple(psd, freq_bins, config):
     if not peak_approved:
         return np.nan, [np.nan, np.nan]
 
-    return paf, [slope, intercept]
+    return est_pf, [slope, intercept]
 
 
 def estimate_iaf(raw: np.ndarray, fs: float) -> list:

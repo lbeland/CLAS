@@ -140,7 +140,7 @@ PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH)
     add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
     add_option("calibrate", calibrate_, "Whether to apply MSE-optimal calibration gain to cecHT.");
     add_option("iaf_read_interval", iaf_read_interval_, "Packets between shared IAF polling steps.");
-    add_option("filter", filter_def_, "Filter definition.", true);
+    add_option("filter", filter_def_, "Filter definition.", false);
     add_option("compensate_filter", compensate_filter_, "Whether to compensate the phase distortion of the preceding bandpass filter.", true);
 
     iaf_state_ = create_follower_state<double>(

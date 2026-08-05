@@ -1,203 +1,160 @@
 """
-Analyze the empirical jitter.csv produced by measurement.cpp.
+Analyze jitter_<fs>.csv files produced by measurement.cpp.
 
-Expected CSV format (header + rows):
-    sample_counter,jitter_us
+Each jitter_<fs>.csv (fs = nominal sample rate, embedded in the filename)
+holds only the last JITTER_WINDOW_S seconds of the run (see measurement.cpp),
+with a header comment line giving the sample rate estimated from the *whole*
+run:
+    # true_fs_hz=<value>
+    sample_counter,jitter_us,inter_sample_us
 
-This script:
-  1. Loads the empirical jitter distribution (already detrended / floor-zeroed
-     by measurement.cpp, i.e. min(jitter) == 0 by construction there).
-  2. Reports summary statistics and percentiles.
-  3. Fits/compares candidate distributions (Uniform, Exponential, truncated
-     Normal) against the empirical histogram, purely descriptively -- this
-     does NOT re-derive the physical floor (that was already done in
-     measurement.cpp); it helps you understand the *shape* of the jitter
-     so you can reason about how many calibration packets you need.
-  4. Runs the convergence analysis from verify_calibration.py but using
-     resampling from your REAL empirical jitter values instead of a
-     synthetic distribution, answering: "given my actual measured jitter,
-     how many calibration packets do I need for the start_time_us_
-     estimate to be accurate to within X us?"
+This script owns all the statistics (measurement.cpp just dumps the raw
+buffered jitter): for every jitter_*.csv found, it
+  1. plots jitter over time in its own figure, saved as .pdf and .pgf under
+     /home/linda/Documents/MA/plots, and
+  2. writes one combined LaTeX table (jitter_stats.tex) with one row per
+     nominal sample rate: estimated true fs, jitter mean/std/percentiles.
 
 Usage:
-    python3 analyze_jitter.py /path/to/jitter.csv
-    python3 analyze_jitter.py /path/to/jitter.csv --fs 10000
+    python3 plotMeas.py [glob]
 
-If no path is given, looks for ./jitter.csv in the current directory.
+`glob` defaults to "jitter_*.csv" in this script's directory.
 """
 
+import glob
 import os
+import re
 import sys
-import argparse
-import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-from scipy.stats import linregress
 
-ROOT = sys.path[0]  # directory of this script, used as default path for jitter.csv
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import numpy as np
+
+mpl.use("pgf")
+mpl.rcParams.update({
+    "pgf.texsystem": "pdflatex",
+    "font.family": "serif",
+    "text.usetex": True,
+    "pgf.rcfonts": False,
+})
+
+ROOT = sys.path[0]  # directory of this script
+PLOTS_DIR = "/home/linda/Documents/MA/plots"
+
+TEXTWIDTH = 6.30045
+ASPECT_RATIO = 9 / 16
+
+PERCENTILES = (50, 95, 99)
+
+TRUE_FS_RE = re.compile(r"true_fs_hz=([\d.eE+-]+)")
+FILENAME_RE = re.compile(r"jitter_(\d+)\.csv$")
+
 
 def load_jitter(path):
-    if not os.path.exists(path):
-        path = os.path.join(ROOT, path)
-    data = np.genfromtxt(path, delimiter=",", names=True)
-    if "jitter_us" not in data.dtype.names:
-        raise ValueError(
-            f"Expected a 'jitter_us' column, found columns: {data.dtype.names}"
-        )
-    sample_counter = data["sample_counter"]
-    jitter_us = data["jitter_us"]
-    inter_sample_us = data["inter_sample_us"]
-    return sample_counter, jitter_us, inter_sample_us
+    """Returns (nominal_fs, true_fs, sample_counter, jitter_us, inter_sample_us)."""
+    with open(path) as f:
+        first_line = f.readline()
+    match = TRUE_FS_RE.search(first_line)
+    if not match:
+        raise ValueError(f"'{path}' is missing the '# true_fs_hz=...' header line")
+    true_fs = float(match.group(1))
+
+    fname_match = FILENAME_RE.search(os.path.basename(path))
+    if not fname_match:
+        raise ValueError(f"Could not infer nominal sample rate from filename '{path}'")
+    nominal_fs = float(fname_match.group(1))
+
+    # skip_header=1 to skip past the "# true_fs_hz=..." line explicitly:
+    # genfromtxt's own comment-stripping turns it into an empty line rather
+    # than skipping it, which throws off names=True's header-row detection.
+    data = np.genfromtxt(path, delimiter=",", names=True, skip_header=1)
+    return (nominal_fs, true_fs,
+            data["sample_counter"], data["jitter_us"], data["inter_sample_us"])
 
 
-def summary_stats(jitter_us):
-    print("--- Empirical jitter summary ---")
-    print(f"  N samples:        {len(jitter_us)}")
-    print(f"  mean:              {jitter_us.mean():.3f} us")
-    print(f"  std:               {jitter_us.std():.3f} us")
-    print(f"  min:               {jitter_us.min():.3f} us")
-    print(f"  max:               {jitter_us.max():.3f} us")
-    for p in [5, 25, 75, 90, 95, 99]:
-        print(f"  p{p:<5}:            {np.percentile(jitter_us, p):.3f} us")
-    print()
+def plot_jitter_over_time(nominal_fs, true_fs, sample_counter, jitter_us):
+    width = TEXTWIDTH
+    height = width * ASPECT_RATIO
+    fig, ax = plt.subplots(figsize=(width, height))
+
+    t = (sample_counter - sample_counter[0]) / true_fs
+    ax.plot(t, jitter_us, linewidth=0.5)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel(r"Jitter ($\mu$s)")
+    ax.grid(True, linewidth=0.3)
+    fig.tight_layout()
+
+    stem = f"jitter_{int(nominal_fs)}"
+    fig.savefig(os.path.join(PLOTS_DIR, f"{stem}.pgf"))
+    fig.savefig(os.path.join(PLOTS_DIR, f"{stem}.pdf"))
+    plt.close(fig)
 
 
-def shape_diagnostics(jitter_us):
-    """
-    Purely descriptive comparison against a few simple one-sided shapes.
-    This does not change your calibration -- it's to help you understand
-    whether jitter looks closer to uniform, exponential, or something
-    heavier-tailed, since that affects how many calibration packets you
-    need for a given target accuracy (see convergence section below).
-    """
-    mean = jitter_us.mean()
-    std = jitter_us.std()
-    median = np.median(jitter_us)
-
-    # Uniform(0, 2*mean) has std = mean / sqrt(3) ~ 0.577 * mean
-    uniform_std_ratio = std / mean if mean > 0 else np.nan
-    # Exponential(mean) has std == mean (ratio == 1.0)
-    # A ratio << 1 suggests sub-exponential / closer to uniform (bounded, light tail)
-    # A ratio >= 1 suggests exponential-like or heavier-tailed
-
-    skewness = np.mean((jitter_us - mean) ** 3) / (std ** 3) if std > 0 else np.nan
-
-    print("--- Shape diagnostics (descriptive only) ---")
-    print(f"  mean/median ratio:      {mean / median:.3f}  "
-          f"(~1.0 for symmetric-ish, >1 for right-skewed)")
-    print(f"  std/mean ratio:         {uniform_std_ratio:.3f}  "
-          f"(~0.577 matches Uniform(0,2*mean); ~1.0 matches Exponential(mean))")
-    print(f"  skewness:               {skewness:.3f}  "
-          f"(0 = symmetric, >0 = right-skewed/long tail, typical for network jitter)")
-    print()
+def jitter_stats(jitter_us):
+    stats = {"mean": float(jitter_us.mean()), "std": float(jitter_us.std())}
+    for p in PERCENTILES:
+        stats[f"p{p}"] = float(np.percentile(jitter_us, p))
+    return stats
 
 
-def convergence_via_resampling(jitter_us, calib_sizes, n_trials=2000, seed=0):
-    """
-    Empirically answers: "if I calibrate using N packets drawn from MY
-    measured jitter distribution, how far off is min(jitter_sample) from
-    the true floor (0, since jitter_us here is already floor-zeroed) on
-    average / in the worst case?"
+def save_latex_table(rows, out_path):
+    """rows: list of dicts with nominal_fs, true_fs, mean, std, p<PERCENTILES>."""
+    header_cols = (
+        ["Nominal $f_s$ (Hz)", "Estimated $f_s$ (Hz)",
+         r"Mean ($\mu$s)", r"Std ($\mu$s)"]
+        + [rf"p{p} ($\mu$s)" for p in PERCENTILES]
+    )
+    col_spec = "l" + "c" * (len(header_cols) - 1)
 
-    This resamples (with replacement) from the empirical jitter values,
-    which respects whatever shape your real distribution has -- no
-    parametric assumption needed.
-    """
-    rng = np.random.default_rng(seed)
-    print("--- Calibration convergence (resampled from YOUR empirical jitter) ---")
-    print(f"  (Lower 'floor error' = better. This is how much start_time_us_")
-    print(f"   would overestimate the true floor, using N calibration packets.)\n")
+    lines = [
+        r"\begin{table}[ht]",
+        r"\centering",
+        r"\caption{Jitter statistics per nominal sample rate}",
+        r"\label{tab:jitter_stats}",
+        rf"\begin{{tabular}}{{{col_spec}}}",
+        r"\toprule",
+        " & ".join(header_cols) + r" \\",
+        r"\midrule",
+    ]
+    for row in rows:
+        cells = [
+            f"{row['nominal_fs']:.0f}",
+            f"{row['true_fs']:.3f}",
+            f"{row['mean']:.3f}",
+            f"{row['std']:.3f}",
+        ] + [f"{row[f'p{p}']:.3f}" for p in PERCENTILES]
+        lines.append(" & ".join(cells) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
 
-    print(f"  {'N':>8}  {'mean error (us)':>16}  {'p95 error (us)':>16}  {'max error (us)':>16}")
-    for n in calib_sizes:
-        errors = np.empty(n_trials)
-        for t in range(n_trials):
-            sample = rng.choice(jitter_us, size=n, replace=True)
-            errors[t] = sample.min()  # true floor is 0 here, so error == min(sample)
-        print(f"  {n:>8}  {errors.mean():>16.3f}  {np.percentile(errors, 95):>16.3f}  {errors.max():>16.3f}")
-    print()
-
-
-def plot_data(sample_counter, jitter_us, inter_sample_us):
-    plt.figure()
-    ax1 = plt.subplot(2, 1, 1)
-    ax1.plot(sample_counter-sample_counter[0], inter_sample_us, marker=".", linestyle="none", alpha=0.5)
-    linear_fit = linregress(sample_counter, inter_sample_us)
-    lin = linear_fit.intercept + linear_fit.slope * sample_counter
-    ax1.plot(sample_counter-sample_counter[0], lin)
-    plt.xlabel("Sample Counter")
-    plt.ylabel("Inter-sample Interval (us)")
-    plt.grid(True)
-    ax2 = plt.subplot(2, 1, 2, sharex=ax1)
-    ax2.plot(sample_counter-sample_counter[0], jitter_us, marker=".", linestyle="none", alpha=0.5)
-    linear_fit = linregress(sample_counter, jitter_us)
-    lin = linear_fit.intercept + linear_fit.slope * sample_counter
-    ax2.plot(sample_counter-sample_counter[0], lin)
-    plt.xlabel("Sample Counter")
-    plt.ylabel("Jitter (us)")
-    plt.grid(True)
-    plt.show()
-
-def plot_all():
-
-    fig, ax = plt.subplots(figsize=(15, 8))
-
-    # Create histogram axis on the right
-    divider = make_axes_locatable(ax)
-    ax_hist = divider.append_axes("right", size="20%", pad=0.1)
-
-    for freq in [500,1000, 5000, 10000]:
-        sample_counter,_, recv_times = load_jitter(f"jitter_{freq}.csv")
-        sample_counter = sample_counter - sample_counter[0]  # zero the sample counter
-        x = np.linspace(0, len(sample_counter)/freq, len(sample_counter))  # convert to seconds
-        recv_times = recv_times / 1e3  # convert to ms
-
-        ax_hist.hist(recv_times, bins=25, histtype='step', orientation='horizontal', label=freq)
-        ax.plot(x, recv_times, label=freq)
-
-    # recv_times = recv_times - 1e3/freq_value
-
-    ax.set_xlabel("Time (ms)")
-    ax.set_ylabel("Receive Period (ms)")
-
-    ax.minorticks_on()
-    ax_hist.minorticks_on()
-    ax_hist.grid(which="both",axis="y")
-    ax.grid(which="both",axis="both")
-    ax.legend()
-    plt.savefig("TurboLink.png", dpi=300)
-    plt.show()
+    with open(out_path, "w") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Analyze empirical jitter.csv")
-    parser.add_argument("path", nargs="?", default="jitter_10000.csv",
-                        help="Path to jitter.csv (default: ./jitter.csv)")
-    parser.add_argument("--fs", type=float, default=10000.0,
-                        help="Sample rate in Hz, used only for context in printed output")
-    parser.add_argument("--target-error-us", type=float, default=20.0,
-                        help="Target floor-estimation accuracy (us) for the recommendation")
-    args = parser.parse_args()
-
-    try:
-        sample_counter, jitter_us, inter_sample_us = load_jitter(args.path)
-    except (FileNotFoundError, OSError):
-        print(f"Could not find '{args.path}'. Pass the path to your jitter.csv "
-              f"as the first argument:\n  python3 analyze_jitter.py /path/to/jitter.csv")
+    pattern = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "jitter_*.csv")
+    paths = sorted(glob.glob(pattern))
+    if not paths:
+        print(f"No files matched '{pattern}'")
         sys.exit(1)
 
-    print(f"Loaded {len(jitter_us)} jitter samples from '{args.path}' "
-          f"(fs={args.fs:.0f} Hz, interval={1e6/args.fs:.2f} us)\n")
+    os.makedirs(PLOTS_DIR, exist_ok=True)
 
-    plot_data(sample_counter, jitter_us, inter_sample_us)
-    summary_stats(jitter_us)
+    rows = []
+    for path in paths:
+        nominal_fs, true_fs, sample_counter, jitter_us, _inter_sample_us = load_jitter(path)
+        print(f"{os.path.basename(path)}: nominal_fs={nominal_fs:.0f} Hz, "
+              f"true_fs={true_fs:.4f} Hz, N={len(jitter_us)}")
 
-    plot_all()
+        plot_jitter_over_time(nominal_fs, true_fs, sample_counter, jitter_us)
 
-    # shape_diagnostics(jitter_us)
-    # calib_sizes = [10, 50, 100, 500, 1000, 5000, 10000, 50000]
-    # calib_sizes = [n for n in calib_sizes if n <= len(jitter_us)]
-    # convergence_via_resampling(jitter_us, calib_sizes)
+        row = {"nominal_fs": nominal_fs, "true_fs": true_fs}
+        row.update(jitter_stats(jitter_us))
+        rows.append(row)
+
+    rows.sort(key=lambda r: r["nominal_fs"])
+    table_path = os.path.join(PLOTS_DIR, "jitter_stats.tex")
+    save_latex_table(rows, table_path)
+    print(f"\nSaved {len(rows)} figure(s) to {PLOTS_DIR} and table to {table_path}")
 
 
 if __name__ == "__main__":

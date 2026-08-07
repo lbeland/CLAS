@@ -24,6 +24,7 @@
 #include <chrono>
 #include <cmath>
 #include <sstream>
+#include <iomanip>
 #include <algorithm>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -86,7 +87,8 @@ SourceClient::SourceClient() : IProcessor(PRIORITY_HIGH)
     add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
     add_option("store_aux", store_aux_, "Whether to forward auxiliary (AUX + trigger) data.");
     add_option("calib_packets", calib_packets_, "Number of packets used for initial start-time calibration.");
-    add_option("recal_interval_s", recal_interval_s_, "Interval (s) between online true-fs re-estimation refits.");
+    add_option("fs_tau_s", fs_tau_s_, "Time constant (s) of the forgetting factor for continuous true-fs tracking.");
+    add_option("recal_warmup_s", recal_warmup_s_, "Duration (s) of the RLS warm-up: below this, lambda=1 (no forgetting).");
 }
 
 void SourceClient::CreatePorts()
@@ -110,10 +112,24 @@ void SourceClient::CompleteStreamInfo()
 
 void SourceClient::Prepare(GlobalContext &context)
 {
+    double tau_s = fs_tau_s_();
+    lambda = std::exp(-1.0 / (fs_() * tau_s));
+    recal_warmup_samples_ = static_cast<uint64_t>(recal_warmup_s_() * fs_());
 }
 
 void SourceClient::Preprocess(ProcessingContext &context)
 {
+    // Anchor the continuous fs-recalibration mapping at the calibration result.
+    // start_time_us_ is defined at relative sample 0 (see calibration loop
+    // above), so the anchor must be n=0, not the current sample_counter.
+    anchor_time_us_ = start_time_us_;
+    anchor_n_ = 0;
+    // Uninformative prior variance [(us/sample)^2] for the slope RLS's
+    // covariance P_. Large enough that early real observations dominate it.
+    P_ = 1.0; 
+    theta_slope_ = 0.0;
+    recal_anchor_set_ = false;
+
     packet_count_ = 0;
     start_time_us_ = 0;
 
@@ -143,62 +159,55 @@ uint64_t SourceClient::hardware_time_us_(uint64_t sample_counter) const
         static_cast<double>(sample_counter - anchor_n_) * 1e6 / fs_eff_);
 }
 
-// Feeds one real (not interpolated) packet observation into the current
-// tumbling window, and refits fs_eff_ once recal_interval_s_ has elapsed.
+// Standard 1D RLS: x = sample_counter, y = residual timestamp (deviation
+// from the ideal grid), both relative to a fixed local anchor set on the
+// first call (Fits a line through the origin)
+//
+// Below x < recal_warmup_samples_, lambda is pinned to 1 (no forgetting)
+// so early low-leverage samples fully shrink P before switching to the
+// fs_tau_s_ forgetting factor
 void SourceClient::recalibrate_fs_(uint64_t sample_counter, int64_t ts_us)
 {
-    if (recal_count_ == 0)
+    if (!recal_anchor_set_)
     {
-        recal_block_start_n_ = sample_counter;
-        recal_block_start_ts_us_ = ts_us;
-        recal_next_refit_ts_us_ = ts_us + static_cast<int64_t>(recal_interval_s_() * 1e6);
+        recal_anchor_n_ = sample_counter;
+        recal_anchor_ts_us_ = ts_us;
+        recal_anchor_set_ = true;
+        return;
     }
 
-    const double x = static_cast<double>(sample_counter - recal_block_start_n_);
-    const double y = static_cast<double>(ts_us - recal_block_start_ts_us_);
+    const double nominal_fs = fs_();
 
-    // Welford's online covariance update.
-    ++recal_count_;
-    const double dx = x - recal_mean_x_;
-    recal_mean_x_ += dx / static_cast<double>(recal_count_);
-    recal_mean_y_ += (y - recal_mean_y_) / static_cast<double>(recal_count_);
-    recal_cov_xy_ += dx * (y - recal_mean_y_);
-    recal_var_x_ += dx * (x - recal_mean_x_);
+    const double x = static_cast<double>(sample_counter - recal_anchor_n_);
+    const double y = static_cast<double>(ts_us - recal_anchor_ts_us_) -
+                      x / nominal_fs * 1e6;
 
-    if (ts_us < recal_next_refit_ts_us_)
-        return;
+    const double effective_lambda = x < static_cast<double>(recal_warmup_samples_) ? 1.0 : lambda;
 
-    if (recal_count_ >= 2 && recal_var_x_ > 0.0)
+    const double error = y - theta_slope_ * x;
+    const double K = P_ * x / (effective_lambda + x * x * P_);
+    theta_slope_ += K * error;
+    P_ = (P_ - K * x * P_) / effective_lambda;
+
+    // Undo the detrend: 1/true_fs = 1/nominal_fs + slope*1e-6
+    const double new_fs_eff = nominal_fs / (1.0 + nominal_fs * theta_slope_ * 1e-6);
+
+    // Crystal drift is ppm-scale; reject implausible fits (packet-loss
+    // bursts, under-warmed estimates) instead of adopting them.
+    if (sample_counter > recal_warmup_samples_)
     {
-        const double slope_us_per_sample = recal_cov_xy_ / recal_var_x_;
-        const double new_fs_eff = 1e6 / slope_us_per_sample;
-
-        // Real crystal drift is ppm-scale; reject anything further off nominal
-        // as a bad fit (e.g. from a packet-loss burst) instead of adopting it.
-        const double nominal_fs = fs_();
-        if (std::isfinite(new_fs_eff) && std::abs(new_fs_eff - nominal_fs) < 0.005 * nominal_fs)
+        if (std::isfinite(new_fs_eff) && std::abs(new_fs_eff - nominal_fs) < 0.000005 * nominal_fs)
         {
             anchor_time_us_ = hardware_time_us_(sample_counter);
             anchor_n_ = sample_counter;
             fs_eff_ = new_fs_eff;
-            LOG(INFO) << name() << " fs refit: effective sample rate = " << fs_eff_
-                      << " Hz (nominal " << nominal_fs << " Hz)";
         }
         else
         {
-            LOG(WARNING) << name() << " Rejected implausible fs refit: " << new_fs_eff
-                         << " Hz (nominal " << nominal_fs << " Hz); keeping fs_eff_=" << fs_eff_;
+            LOG(WARNING) << name() << " Rejected implausible fs update: " << new_fs_eff
+                        << " Hz (nominal " << nominal_fs << " Hz); keeping fs_eff_=" << fs_eff_;
         }
     }
-
-    recal_count_ = 0;
-    recal_mean_x_ = 0.0;
-    recal_mean_y_ = 0.0;
-    recal_cov_xy_ = 0.0;
-    recal_var_x_ = 0.0;
-    recal_block_start_n_ = sample_counter;
-    recal_block_start_ts_us_ = ts_us;
-    recal_next_refit_ts_us_ = ts_us + static_cast<int64_t>(recal_interval_s_() * 1e6);
 }
 
 void SourceClient::Process(ProcessingContext &context)
@@ -320,13 +329,7 @@ void SourceClient::Process(ProcessingContext &context)
         }
     }
 
-    // Anchor the continuous fs-recalibration mapping at the calibration result.
-    // start_time_us_ is defined at relative sample 0 (see calibration loop
-    // above), so the anchor must be n=0, not the current sample_counter.
-    anchor_time_us_ = start_time_us_;
-    anchor_n_ = 0;
     fs_eff_ = fs_();
-    recal_count_ = 0;
 
     while (!context.terminated())
     {
@@ -475,6 +478,11 @@ void SourceClient::Process(ProcessingContext &context)
                       << ", pub_eeg=" << std::chrono::duration<double, std::micro>(after_publish_eeg - after_set_eeg).count()
                       << ", pub_aux=" << std::chrono::duration<double, std::micro>(after_publish_aux - after_publish_eeg).count()
                       << ", total=" << std::chrono::duration<double, std::micro>(finished - timestamp).count();
+        }
+        if (packet_count_ % static_cast<int>(10 * fs_()) == 0)
+        {
+            LOG(INFO) << name() << " processed packet " << packet_count_ << ", fs_eff_="
+                      << std::fixed << std::setprecision(4) << fs_eff_;
         }
     }
     LOG(INFO) << name() << " stopped working";

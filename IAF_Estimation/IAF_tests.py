@@ -19,6 +19,33 @@ from modal import modal
 
 BASE_FOLDER = Path(__file__).parent
 
+
+def _dpss_nw_kspec(window_length_sec, target_resolution_hz=0.1):
+    nw = max(window_length_sec * target_resolution_hz / 3, 2)
+    kspec = int(2 * nw - 1)
+    return nw, kspec
+
+
+# DPSS taper computation is the O(N^2)+ eigendecomposition bottleneck in
+# multitaper spectral estimation. Only a handful of distinct (window_length,
+# nw, kspec) combos ever occur across the whole sweep, so each Pool worker is
+# seeded with every taper set up front (via the Pool initializer, computed
+# once in the main process) instead of every worker recomputing its own copy
+# lazily on first use.
+_DPSS_CACHE = {}
+
+
+def _init_dpss_cache(precomputed):
+    _DPSS_CACHE.update(precomputed)
+
+
+def _cached_dpss(window_length, nw, kspec):
+    key = (window_length, nw, kspec)
+    if key not in _DPSS_CACHE:
+        _DPSS_CACHE[key] = dpss(window_length, nw, kspec)
+    return _DPSS_CACHE[key]
+
+
 # Params excluded from the LaTeX conditions table (not a meaningful sweep to report)
 _LATEX_TABLE_EXCLUDE = ("aperiodic_ref_power_db", "f_rotation", "pink_ax_r2")
 
@@ -50,7 +77,7 @@ name_dict = {
     "stationarity": "Stationarity",
     "aperiodic_exponent": "Aperiodic exponent",
     "n_peaks": "Number of peaks",
-    "peak_bw": "Peak bandwidth [Hz]",
+    "peak_width": "Peak width [Hz]",
     "peak_snr_db": "Peak SNR [dB]",
     "window_length_sec": "Window length [s]",
     "noise_lv": "Noise level ", # std dev of per-bin noise in log10-power space
@@ -131,7 +158,7 @@ def main():
         "stationarity":     "constant",   # "constant" | "burst"
         "aperiodic_exponent":   2.0,      # β — slope of 1/f^β
         "n_peaks":              1,
-        "peak_bw":              0.5,      # Gaussian σ in Hz
+        "peak_width":              0.5,      # Gaussian σ in Hz
         "peak_snr_db":          10.0,     # peak power relative to aperiodic floor at peak_freq
         "window_length_sec":    10,
         "noise_lv":             0.5,      # std dev of per-bin log10-power noise (gen_noise)
@@ -141,7 +168,7 @@ def main():
     # condition here, see "Window-length comparison"), not as an OFAT sweep entry.
     sweeps = {
         "peak_snr_db":          [0, 5, 10, 20, 50],
-        "peak_bw":              [0.1, 0.5, 1.0, 2.0, 4.0],
+        "peak_width":              [0.1, 0.5, 1.0, 2.0, 4.0],
         "aperiodic_exponent":   [0, 1, 2, 3],
         "peak_freq":            sorted([6,8,12,14] + [default["peak_freq"]]),
         "stationarity":         ["constant", "burst"],
@@ -175,7 +202,7 @@ def main():
     # # All params not listed stay at their default value.
     # cross_sweeps = [
     #     {"peak_snr_db":        [20, 10, 3, 0, -3],
-    #     "peak_bw":            [0.1, 0.5, 1.0, 2.0, 4.0]},
+    #     "peak_width":            [0.1, 0.5, 1.0, 2.0, 4.0]},
 
     #     {"peak_freq":          peak_freq,
     #     "aperiodic_exponent": [1, 2, 3]},
@@ -214,8 +241,21 @@ def main():
 
     print(f"Total window-length trials: {len(window_length_groups) * len(window_lengths_sec)}")
 
+    # Precompute every DPSS taper set this run will ever need (one per
+    # distinct window_length_sec) here in the main process, and hand them to
+    # every worker via the Pool initializer -- so each of the (at most 3)
+    # expensive eigendecompositions happens exactly once total, instead of
+    # once per worker.
+    window_length_secs_needed = {c["window_length_sec"] for c in conditions} | set(window_lengths_sec)
+    precomputed_dpss = {}
+    for wl_sec in window_length_secs_needed:
+        npts = int(wl_sec * fixed["fs"])
+        nw, kspec = _dpss_nw_kspec(wl_sec)
+        precomputed_dpss[(npts, nw, kspec)] = dpss(npts, nw, kspec)
+    print(f"Precomputed {len(precomputed_dpss)} DPSS taper set(s) for window lengths (sec): {sorted(window_length_secs_needed)}")
+
     n_workers = 5 # max(1, cpu_count() - 1)
-    with Pool(n_workers) as pool:
+    with Pool(n_workers, initializer=_init_dpss_cache, initargs=(precomputed_dpss,)) as pool:
         base_results = list(tqdm(
             pool.imap(process_condition, conditions_with_seeds),
             total=n_base_trials,
@@ -292,14 +332,14 @@ def _db_to_amp(db):
     return 10 ** (np.asarray(db) / 20)
 
 
-def _constant_added_power(freqs_nz, aperiodic_params, peak_freq, peak_snr_db, peak_bw):
+def _constant_added_power(freqs_nz, aperiodic_params, peak_freq, peak_snr_db, peak_width):
     """Total extra power a "constant" mode peak adds on top of the aperiodic
     background: (aperiodic+peak total power) minus (aperiodic-only total
     power). Used to calibrate the burst peak to the same total power a
     constant-mode peak of this height/bw would add, so comparing
     stationarity isn't confounded by total energy."""
     ap_log = gen_aperiodic(freqs_nz, aperiodic_params)
-    peak_log = gen_periodic(freqs_nz, [peak_freq, peak_snr_db / 10, peak_bw])
+    peak_log = gen_periodic(freqs_nz, [peak_freq, peak_snr_db / 10, peak_width])
     df = freqs_nz[1] - freqs_nz[0]
     power_with_peak = np.sum(10 ** (ap_log + peak_log)) * df
     power_ap_only = np.sum(10 ** ap_log) * df
@@ -404,7 +444,7 @@ def generate_signal(config, rng):
     if has_peaks and stationarity == "constant":
         # peak_snr_db is dB above the aperiodic floor AT peak_freq itself, so
         # it converts straight to FOOOF's height (log10-power units).
-        periodic_params += [peak_freq, config["peak_snr_db"] / 10, config["peak_bw"]]
+        periodic_params += [peak_freq, config["peak_snr_db"] / 10, config["peak_width"]]
 
         for idx in range(n_peaks - 1):
             extra_freq = peak_freq + (-1) ** idx * 2  # alternate sides, 2 Hz spacing
@@ -412,7 +452,7 @@ def generate_signal(config, rng):
             main_power_db = _aperiodic_floor_db(aperiodic_params, peak_freq) + config["peak_snr_db"]
             extra_power_db = main_power_db + _power_to_db(0.5)
             extra_height = (extra_power_db - _aperiodic_floor_db(aperiodic_params, extra_freq)) / 10
-            periodic_params += [extra_freq, extra_height, config["peak_bw"]]
+            periodic_params += [extra_freq, extra_height, config["peak_width"]]
 
     powers_nz = gen_power_vals_fn(
         freqs_nz,
@@ -429,13 +469,13 @@ def generate_signal(config, rng):
         main_power_db = _aperiodic_floor_db(aperiodic_params, peak_freq) + config["peak_snr_db"]
         # Same total power a "constant" mode peak of this height/bw would add
         target_power = _constant_added_power(
-            freqs_nz, aperiodic_params, peak_freq, config["peak_snr_db"], config["peak_bw"])
+            freqs_nz, aperiodic_params, peak_freq, config["peak_snr_db"], config["peak_width"])
         signal += generate_burst_peak(n, fs, peak_freq, target_power)
 
         for idx in range(n_peaks - 1):
             extra_freq = peak_freq + (-1) ** idx * 2
             extra_power_db = main_power_db + _power_to_db(0.2)
-            signal += generate_peak(n, fs, extra_freq, config["peak_bw"], extra_power_db, rng)
+            signal += generate_peak(n, fs, extra_freq, config["peak_width"], extra_power_db, rng)
 
     return signal, gt_pf
 
@@ -484,17 +524,14 @@ def run_window_analysis(signal, gt_pf, config):
     (Signals are generated at exactly window_length_sec, so there's nothing
     to slide through -- one signal == one window == one trial.)"""
     window_length = int(config["window_length_sec"] * config["fs"])
-    if window_length > len(signal):
+    if window_length < len(signal):
         window = signal[(len(signal)-window_length)//2:(len(signal)+window_length)//2]
     else:
         window = signal
     # window = window * windows.flattop(len(window))  # taper to reduce spectral leakage?
 
-    target_resolution_hz = 1.0   # narrowest peak width you need to resolve
-    nw = max(config["window_length_sec"] * target_resolution_hz / 3, 2)
-    kspec = int(2 * nw - 1)       # use the max well-concentrated tapers at this nw
-
-    # vn, lamb = dpss(window_length, nw, kspec)   # compute Slepian tapers once, reused every window
+    nw, kspec = _dpss_nw_kspec(config["window_length_sec"])
+    vn, lamb = _cached_dpss(window_length, nw, kspec)   # pre-seeded by the Pool initializer; see _init_dpss_cache
 
     nperseg = int(min(window_length, 7 * config["fs"]))
     freq_bins_welch, psd_welch = welch(window, fs=config["fs"], nperseg=nperseg, noverlap=nperseg//1.5)
@@ -505,8 +542,8 @@ def run_window_analysis(signal, gt_pf, config):
     psd = (np.abs(X) ** 2) / (config["fs"] * window_length)
     psd[1:-1] *= 2  # Correct for dropping negative freqs in one-sided spectrum (except DC and Nyquist)
 
-    # mt = MTSpec(window, nw=nw, kspec=kspec, dt=1/config["fs"], vn=vn, lamb=lamb)
-    freq_mt, psd_mt = None, None# mt.rspec()
+    mt = MTSpec(window, nw=nw, kspec=kspec, dt=1/config["fs"], vn=vn, lamb=lamb)
+    freq_mt, psd_mt = mt.rspec()
 
     estimates_per_algo = run_algorithms(
         window, psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, freq_mt, config)
@@ -566,13 +603,12 @@ def compute_pooled_metrics(estimates, ground_truths):
 
 def run_algorithms(window, psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, freq_mt, config):
     return {
-        "stupid_max":   stupid_max(psd, freq_bins, config),
-        "fooof":        fooof(psd_welch, freq_bins_welch, config),
-        "philistine":   philistine_iaf(psd, freq_bins, config),
-        # "modal":        modal_iaf(window, config),
-        "combine_complex":      combine_algo(psd, freq_bins, config),
+        "Maximum":   stupid_max(psd_welch, freq_bins_welch, config),
+        "FOOOF":        fooof(psd_welch, freq_bins_welch, config),
+        "RestingIAF":   philistine_iaf(psd, freq_bins, config),
+        # "combine_complex":      combine_algo(psd, freq_bins, config),
         "combine_simple":       combine_simple(psd, freq_bins, config),
-        # "simple_mt": combine_simple_mt(psd_mt, freq_mt, config),
+        "simple_mt": combine_simple_mt(psd_mt, freq_mt, config),
     }
 
 
@@ -629,26 +665,6 @@ def fooof(psd, freq_bins, config):
                    if config["alpha_band"][0] <= p[0] <= config["alpha_band"][1]]
     return max(alpha_peaks, key=lambda p: p[1])[0] if alpha_peaks else np.nan
 
-# def modal_iaf(window, config):
-#     try:
-#         # 6-cycle wavelets need >=6 periods to fit in the window; frequencies
-#         # below that (e.g. FOOOF's 0.01 Hz aperiodic-fit floor) blow up the
-#         # wavelet length far past the window length.
-#         min_wavefreq = config["alpha_band"][0]
-#         params = {
-#             "srate": config["fs"],
-#             "wavefreqs": np.arange(min_wavefreq, config["freq_range"][1], 1.0),
-#             "local_winsize_sec": [min(10, len(window)/config["fs"])],
-#             "wavecycles": 6,
-#             "crop_fs": True,
-#         }
-#         iaf = modal(window, params)
-#         if all(np.isnan(iaf)):
-#             return np.nan
-#         return np.nanmean(iaf)
-#     except Exception as e:
-#         print(f"Modal fitting error: {e}")
-#         return np.nan
 
 def gaussian_peak(freqs, amp, center, width):
     return amp * np.exp(-0.5 * ((freqs - center) / width) ** 2)
@@ -1080,7 +1096,7 @@ if __name__ == "__main__":
 
     # config = {'fs': 10000.0, 'signal_length_sec': 20, 'freq_range': (1.0, 30.0), 'alpha_band': (5, 18), 'pink_ax_r2': 0.8, 'aperiodic_ref_power_db': 0.0,
     #         'f_rotation': 1.0, 'noise_lv': 0.1, 'peak_freq': 14.0, 'stationarity': 'burst',
-    #         'aperiodic_exponent': 2, 'n_peaks': 1, 'peak_bw': 0.5, 'peak_snr_db': 20.0,
+    #         'aperiodic_exponent': 2, 'n_peaks': 1, 'peak_width': 0.5, 'peak_snr_db': 20.0,
     #         'window_length_sec': 10,}
 
     # plot_signal_debug(config, n_seconds=20)

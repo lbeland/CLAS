@@ -6,6 +6,15 @@ from matplotlib.patches import PathPatch
 import seaborn as sns
 from pathlib import Path
 import h5py
+import matplotlib as mpl
+
+mpl.use("pgf")
+mpl.rcParams.update({
+    "pgf.texsystem": "pdflatex",
+    'font.family': 'serif',
+    'text.usetex': True,
+    'pgf.rcfonts': False,
+})
 
 BASE_FOLDER = Path(__file__).parent
 PALETTE = sns.color_palette("tab10")
@@ -209,7 +218,7 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
  
     # --- Box plot panel ---
     # x_order = ["stupid_max", "parabolic_max", "fooof","philistine","combine"]
-    x_order = ["stupid_max", "fooof","philistine", "combine_complex","combine_simple"]
+    x_order = ["Maximum", "FOOOF","RestingIAF", "combine_simple","simple_mt"]
     # x_order = ["stupid_max", "fooof","philistine","combine_simple", "simple_mt"]
 
     hue_order = sorted(df[hue].unique()) if hue is not None else None
@@ -322,7 +331,8 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
     else:
         fig.subplots_adjust(left=0.06, right=0.98)
 
-    plt.savefig(f"{BASE_FOLDER}/plots/{save_name or hue}.svg", dpi=300, bbox_inches="tight")
+    plt.savefig(f"/home/linda/Documents/MA/plots/{save_name or hue}.pgf", dpi=300, bbox_inches="tight")
+    plt.savefig(f"/home/linda/Documents/MA/plots/{save_name or hue}.pdf", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 def plot_bar(df, x="algorithm", y="mae", agg="mean", hue=None, title=None):
@@ -354,7 +364,7 @@ if __name__ == "__main__":
         "aperiodic_exponent":   2.0,          # β — slope of 1/f^β
         # Peak(s)
         "n_peaks":              1,
-        "peak_bw":              0.5,          # Gaussian σ in Hz
+        "peak_width":              0.5,          # Gaussian σ in Hz
         # KEY PARAM: peak power relative to aperiodic floor at aperiodic_ref_freq
         "peak_snr_db":          10.0,
         # Analysis
@@ -436,11 +446,11 @@ if __name__ == "__main__":
 
         plot_box(
             load_samples_for_plot(HDF_PATH, df_metrics,
-                                  **params_excluding(wl_filter, "peak_bw")),
+                                  **params_excluding(wl_filter, "peak_width")),
             HDF_PATH,
-            x="algorithm", y=error_label, hue="peak_bw",
+            x="algorithm", y=error_label, hue="peak_width",
             title=f"Effect of Peak Bandwidth{suffix}\n",
-            save_name=f"{prefix}_peak_bw",
+            save_name=f"{prefix}_peak_width",
         )
 
         plot_box(

@@ -83,8 +83,7 @@ static double diff_ns(const timespec& start, const timespec& end) {
 
 // Online (O(1)-memory) running statistics, so this program can run for
 // arbitrarily long sessions (e.g. 30 min) without accumulating one entry
-// per sample/packet in memory. Mirrors the Welford's-algorithm approach
-// used in SourceClient.cpp's recalibrate_fs_().
+// per sample/packet in memory.
 
 // Welford's online mean/variance, plus a running max (with its index).
 struct RunningStats {
@@ -112,33 +111,28 @@ struct RunningStats {
     double stddev() const { return std::sqrt(std::fmax(0.0, variance())); }
 };
 
-// Welford's online covariance update, used to fit a linear regression
-// (x -> y) incrementally with O(1) memory. This is mathematically exact,
-// not an approximation of the two-pass batch formula -- it just spreads
-// the same computation over one sample at a time.
+// Standard 1D RLS, lambda=1 (batch -- runs are short, every sample counts
+// equally), fitting y = theta_slope_us_per_sample * x. y=0 at x=0 exactly
+// (both anchored to the first packet), so no intercept is needed.
 struct OnlineRegression {
-    uint64_t count = 0;
-    double mean_x = 0.0;
-    double mean_y = 0.0;
-    double cov_xy = 0.0;
-    double var_x = 0.0;
+    double theta_slope_us_per_sample = 0.0;
+    double P = 1.0; // uninformative prior variance [(us/sample)^2]
 
     void update(double x, double y) {
-        ++count;
-        double dx = x - mean_x;
-        mean_x += dx / static_cast<double>(count);
-        mean_y += (y - mean_y) / static_cast<double>(count);
-        cov_xy += dx * (y - mean_y);
-        var_x += dx * (x - mean_x);
+        const double error_us = y - theta_slope_us_per_sample * x;
+        const double K = P * x / (1.0 + x * x * P);
+        theta_slope_us_per_sample += K * error_us;
+        P -= K * x * P;
     }
 
-    double slope() const { return var_x > 0.0 ? cov_xy / var_x : 0.0; }
+    // Fitted y at sample index x.
+    double fitted(double x) const { return theta_slope_us_per_sample * x; }
 };
 
-// One packet's grid-jitter inputs, kept only for the most recent
-// JITTER_WINDOW_S seconds (see JitterRingBuffer) so we can still export a
-// CSV for plotting without retaining the full-run history.
-struct JitterSample {
+// One packet's grid-PDV (Packet Delay Variation) inputs, kept only for the
+// most recent PDV_WINDOW_S seconds (see PdvRingBuffer) so we can still
+// export a CSV for plotting without retaining the full-run history.
+struct PdvSample {
     uint32_t sample_counter = 0;
     double x = 0.0;           // sample index relative to the first packet
     double offset_us = 0.0;   // arrival offset from the ideal sample grid (us)
@@ -147,11 +141,11 @@ struct JitterSample {
 
 // Fixed-capacity circular buffer: memory is bounded by the window length,
 // not by the run length.
-class JitterRingBuffer {
+class PdvRingBuffer {
 public:
-    explicit JitterRingBuffer(std::size_t capacity) : buf_(capacity) {}
+    explicit PdvRingBuffer(std::size_t capacity) : buf_(capacity) {}
 
-    void push(const JitterSample& sample) {
+    void push(const PdvSample& sample) {
         buf_[next_write_] = sample;
         last_write_idx_ = next_write_;
         next_write_ = (next_write_ + 1) % buf_.size();
@@ -166,8 +160,8 @@ public:
     }
 
     // Returns buffered samples in chronological order (oldest first).
-    std::vector<JitterSample> ordered() const {
-        std::vector<JitterSample> out;
+    std::vector<PdvSample> ordered() const {
+        std::vector<PdvSample> out;
         out.reserve(filled_);
         if (filled_ < buf_.size()) {
             out.insert(out.end(), buf_.begin(), buf_.begin() + static_cast<long>(filled_));
@@ -179,7 +173,7 @@ public:
     }
 
 private:
-    std::vector<JitterSample> buf_;
+    std::vector<PdvSample> buf_;
     std::size_t next_write_ = 0;
     std::size_t filled_ = 0;
     std::size_t last_write_idx_ = SIZE_MAX;
@@ -193,12 +187,14 @@ int main(int argc, char* argv[]) {
     }
     if (argc == 2) {
         char* end = nullptr;
-        freq = std::strtod(argv[1], &end);
-        if (end == argv[1] || *end != '\0' || !(freq > 0.0)) {
-            std::cerr << "Usage: " << argv[0] << " [nominal_sample_rate_hz]\n";
-            return 1;
+        double parsed = std::strtod(argv[1], &end);
+        if (end == argv[1] || *end != '\0' || !(parsed > 0.0)) {
+            std::cerr << "Invalid nominal_sample_rate_hz '" << argv[1] << "', falling back to " << freq << " Hz\n";
+        } else {
+            freq = parsed;
         }
     }
+    std::cout << "Nominal sample rate: " << freq << " Hz\n";
 
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
@@ -214,13 +210,13 @@ int main(int argc, char* argv[]) {
     static_assert(FRAME_SIZE * NUM_PACKAGING <= 2048, "buffer too small for NUM_PACKAGING");
     std::array<std::uint8_t, 2048> buffer{};
 
-    const int n_samples = static_cast<int>(5 * 60 * freq);
+    const int n_samples = static_cast<int>(0.5 * 60 * freq);
 
     // Tail window kept for CSV/percentile output
-    constexpr double JITTER_WINDOW_S = 10.0;
+    constexpr double PDV_WINDOW_S = 10.0;
     const std::size_t ring_capacity =
-        static_cast<std::size_t>(JITTER_WINDOW_S * freq / static_cast<double>(NUM_PACKAGING)) + 1;
-    JitterRingBuffer ring(ring_capacity);
+        static_cast<std::size_t>(PDV_WINDOW_S * freq / static_cast<double>(NUM_PACKAGING)) + 1;
+    PdvRingBuffer ring(ring_capacity);
 
     int count = 0; // number of individual samples decoded (NUM_PACKAGING per network packet)
     int net_packet_count = 0; // number of UDP packets received
@@ -237,7 +233,7 @@ int main(int argc, char* argv[]) {
     RunningStats legacy_period_stats;
     uint64_t diff_idx = 0;
 
-    // Grid-based jitter regression inputs (see analysis below), O(1) memory.
+    // Grid-based PDV regression inputs (see analysis below), O(1) memory.
     OnlineRegression grid_regression;
     std::chrono::steady_clock::time_point t0{};
     uint32_t sc0 = 0;
@@ -311,7 +307,7 @@ int main(int argc, char* argv[]) {
         prev_timestamp = timestamp;
         have_prev_timestamp = true;
 
-        // Grid-based jitter regression input for this packet
+        // Grid-based PDV regression input for this packet
         if (!have_first_packet) {
             t0 = timestamp;
             sc0 = sc;
@@ -323,11 +319,11 @@ int main(int argc, char* argv[]) {
         double offset_us = a_us - ideal_us;
         grid_regression.update(x, offset_us);
 
-        JitterSample js;
-        js.sample_counter = sc;
-        js.x = x;
-        js.offset_us = offset_us;
-        ring.push(js);
+        PdvSample ps;
+        ps.sample_counter = sc;
+        ps.x = x;
+        ps.offset_us = offset_us;
+        ring.push(ps);
         // auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - timestamp).count();
         // if (elapsed > 10) {
         //     std::cerr << "Warning: Processing took" << elapsed << " microseconds\n";
@@ -360,68 +356,65 @@ int main(int argc, char* argv[]) {
            static_cast<unsigned long long>(legacy_period_stats.max_idx));
     printf("\n Std receive period (us): %.3f\n", legacy_period_stats.stddev() * 1e-3);
 
-    // Grid-based jitter analysis.
+    // Grid-based PDV (Packet Delay Variation) analysis.
     //
     // offset_i = (a_i - a_0) - (sample_counter_i - sample_counter_0) / fs
     //
     // offset_i drifts linearly if the true device sample rate differs from
     // the nominal `freq`, so we detrend via linear regression against sample
-    // index, then take jitter_i = residual_i - min(residual). The regression
+    // index, then take pdv_i = residual_i - min(residual). The regression
     // itself (true_fs, drift slope) is exact over the whole run, computed
-    // online via Welford's covariance update (grid_regression above) rather
+    // online via recursive least squares (grid_regression above) rather
     // than a two-pass batch fit over stored vectors.
     //
-    // jitter_i requires knowing min(residual) over the run, which can't be
+    // pdv_i requires knowing min(residual) over the run, which can't be
     // obtained exactly in O(1) memory from an unbounded stream; per-sample
-    // jitter/percentiles below are therefore computed only over the most
-    // recent JITTER_WINDOW_S seconds (JitterRingBuffer), not the full run.
+    // PDV/percentiles below are therefore computed only over the most
+    // recent PDV_WINDOW_S seconds (PdvRingBuffer), not the full run.
     {
-        const double mean_x = grid_regression.mean_x;
-        const double mean_offset = grid_regression.mean_y;
-        const double b_us_per_sample = grid_regression.slope();
+        const double b_us_per_sample = grid_regression.theta_slope_us_per_sample;
 
         // Estimated true sample rate from regression slope:
         // d(offset)/dx = 1/true_fs - 1/freq  =>  1/true_fs = 1/freq + b
         const double true_fs = freq / (1.0 + freq * b_us_per_sample * 1e-6);
 
-        std::vector<JitterSample> tail = ring.ordered();
+        std::vector<PdvSample> tail = ring.ordered();
 
         std::vector<double> residual(tail.size());
         for (std::size_t i = 0; i < tail.size(); ++i) {
-            double fitted = mean_offset + b_us_per_sample * (tail[i].x - mean_x);
-            residual[i] = tail[i].offset_us - fitted;
+            residual[i] = tail[i].offset_us - grid_regression.fitted(tail[i].x);
         }
 
         double min_residual = tail.empty() ? 0.0 : *std::min_element(residual.begin(), residual.end());
 
-        std::vector<double> jitter(tail.size());
+        std::vector<double> pdv(tail.size());
         for (std::size_t i = 0; i < tail.size(); ++i) {
-            jitter[i] = residual[i] - min_residual;
+            pdv[i] = residual[i] - min_residual;
         }
 
-        std::cout << "\n--- Grid-based jitter (relative to sample_counter) ---";
+        std::cout << "\n--- Grid-based PDV (relative to sample_counter) ---";
         printf("\n Estimated true sample rate (Hz): %.4f (nominal %.1f)", true_fs, freq);
         printf("\n Drift slope (us per sample):     %.6f\n", b_us_per_sample);
 
-        // Save per-packet jitter for the buffered tail window (not the full
+        // Save per-packet PDV for the buffered tail window (not the full
         // run) for further analysis / plotting in plotMeas.py
-        std::ofstream out("jitter_" + std::to_string((int)freq) + ".csv");
+        std::ofstream out("pdv_" + std::to_string((int)freq) + ".csv");
         if (!out.is_open()) {
-            std::cerr << "Failed to open jitter_" << (int)freq << ".csv for writing\n";
+            std::cerr << "Failed to open pdv_" << (int)freq << ".csv for writing\n";
             return 1;
         }
         out << "# true_fs_hz=" << std::fixed << std::setprecision(6) << true_fs << "\n";
-        out << "sample_counter,jitter_us,inter_sample_us\n";
+        out << "sample_counter,pdv_us,inter_sample_us\n";
         for (std::size_t i = 0; i < tail.size(); ++i) {
             // The most recently buffered sample has no "gap to next" yet.
-            out << tail[i].sample_counter << "," << jitter[i] << ",";
+            out << tail[i].sample_counter << "," << pdv[i] << ",";
             if (!std::isnan(tail[i].inter_sample_us)) {
                 out << tail[i].inter_sample_us;
             }
             out << "\n";
         }
         out.close();
-        std::cout << "Per-packet jitter (last " << JITTER_WINDOW_S << "s) saved to jitter_" << (int)freq << ".csv\n";
+        std::cout << "Per-packet PDV (last " << PDV_WINDOW_S << "s) saved to pdv_" << (int)freq << ".csv\n";
     }
 
     return 0;

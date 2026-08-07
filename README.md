@@ -61,3 +61,24 @@ GRUB_CMDLINE_LINUX_DEFAULT="quiet splash isolcpus=6,7,8,9,10,18,19,20,21,22 nohz
 
 ## After executing the programm the sound on the PC may not work anymore because the program took over the sound card. To restart normal Pulsewire:
 systemctl --user restart pipewire.service
+
+## Caution when connecting the TurboLink via an USB Ethernet adapter
+- Symptom: samples arrive in bursts rather than with the nominal inter-sample interval (you can check this by executing the script [measurement.cpp](TurbolinkMeas/measurement.cpp) followed by [plotMeas.py](TurbolinkMeas/plotMeas.py) -> the PDV histogram shall show a single uniform distribution instead of having multiple maxima)
+- Cause: USB Ethernet adapters (interface names like `enx<mac>`) can have NIC interrupt coalescing (`rx-usecs`) set very high by default, so incoming packets are batched and delivered to the kernel/app in bursts instead of individually.
+- Check current setting (replace `<iface>` with your adapter, e.g. from `ip -brief link show`):
+```bash
+sudo ethtool -c <iface>
+```
+- Fix (not persistent, resets on reboot/replug):
+```bash
+sudo ethtool -C <iface> rx-usecs 0
+```
+- Make it persistent by adding a udev rule that reapplies the setting whenever the adapter is connected (the `enx<mac>` name is stable per device):
+```bash
+# /etc/udev/rules.d/71-usb-eth-coalesce.rules
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="<iface>", RUN+="/usr/sbin/ethtool -C %k rx-usecs 0"
+```
+```bash
+sudo udevadm control --reload-rules
+```
+- Note: some USB Ethernet drivers don't actually implement coalescing and may silently ignore the setting — re-run `ethtool -c <iface>` after setting it to confirm the value changed.

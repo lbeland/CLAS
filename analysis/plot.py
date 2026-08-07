@@ -3,14 +3,39 @@ Plotting and EDF export.
 """
 
 import datetime
+import os
 import pytz
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import circmean, circstd
 from scipy.signal import spectrogram
 import mne
+import matplotlib as mpl
+
+# Saving to a ".pgf" filename invokes the pgf backend automatically, so the
+# default (interactive) backend stays active and plt.show() keeps working.
+mpl.rcParams.update({
+    "pgf.texsystem": "pdflatex",
+    'font.family': 'serif',
+    'text.usetex': True,
+    'pgf.rcfonts': False,
+})
 
 from .stimulus import get_edges
+
+PLOTS_DIR = "/home/linda/Documents/MA/plots"
+os.makedirs(PLOTS_DIR, exist_ok=True)
+
+TEXTWIDTH    = 6.30045
+ASPECT_RATIO = 9 / 16
+SCALE        = 1.0
+FIG_WIDTH    = TEXTWIDTH * SCALE
+FIG_HEIGHT   = FIG_WIDTH * ASPECT_RATIO
+FIGSIZE      = (FIG_WIDTH, FIG_HEIGHT)
+
+
+def save_pgf(fig, name: str) -> None:
+    fig.savefig(os.path.join(PLOTS_DIR, f"{name}.pgf"), bbox_inches="tight")
 
 COMMON_BBOX = dict(
     facecolor="white",
@@ -62,12 +87,12 @@ def plot_errors(errors: list[dict], time_range: tuple = None,title=None) -> None
         print("No errors to plot.")
         return
 
-    fig_time      = plt.figure(figsize=(10, 5))
+    fig_time      = plt.figure(figsize=FIGSIZE)
     fig_time.suptitle(f"Error time series - {title if title else ''}", fontsize=12)
     ax_ts         = fig_time.add_subplot(111)
     ax_ts_twin = ax_ts.twinx()  # Twin axis for amplitude if needed
-    fig_polars = plt.figure(figsize=(3 * len(errors), 3.5))
-    fig_polars.suptitle(f"Error distributions - {title if title else ''}", fontsize=12)
+    fig_polars = plt.figure(figsize=FIGSIZE)
+    fig_polars.suptitle(f"Error distributions {' - ' + title if title else ''}", fontsize=12)
     ax_polars  = [fig_polars.add_subplot(1, len(errors), i + 1, projection="polar")
                   for i in range(len(errors))]
 
@@ -127,15 +152,15 @@ def plot_errors(errors: list[dict], time_range: tuple = None,title=None) -> None
     if time_range is not None:
         ax_ts.set_xlim(time_range)
 
-    fig_time.savefig("error_timeseries.png", dpi=300, bbox_inches="tight")
-    fig_polars.savefig("error_distributions.png", dpi=300, bbox_inches="tight")
+    save_pgf(fig_time, "error_timeseries")
+    save_pgf(fig_polars, "error_distributions")
 
 
 # ---------------------------------------------------------------------------
 # IAF time series
 # ---------------------------------------------------------------------------
 
-def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, start_ts: float, output_path: str="iaf_timeseries.png") -> None:
+def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, start_ts: float, output_name: str = "iaf_timeseries") -> None:
     """Plot estimated IAF over time with true IAF overlaid; adds error subplot when truth is known."""
     has_estimated = samples.get("IAFEstimator") is not None
     has_true      = ground_truth.get("true_inst_freq") is not None
@@ -145,7 +170,7 @@ def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, star
     show_error = has_estimated and has_true
     nrows      = 2 if show_error else 1
     fig, axes  = plt.subplots(nrows, 1, sharex=True,
-                              figsize=(10, 5 if show_error else 3),
+                              figsize=FIGSIZE,
                               height_ratios=[2, 1] if show_error else [1])
     ax     = axes[0] if show_error else axes
     ax_err = axes[1] if show_error else None
@@ -193,10 +218,10 @@ def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, star
     handles_r, labels_r = ax_r.get_legend_handles_labels() if ax_r is not None else ([], [])
     ax.legend(handles + handles_r, labels + labels_r, frameon=True, fontsize=8)
 
-    ax.set_ylim(0,50)
+    ax.set_ylim(0,20)
 
     fig.tight_layout()
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    save_pgf(fig, output_name)
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +232,7 @@ def plot_spectrum(raw: np.ndarray, samples: dict, fs: float) -> None:
     """Plot FFT magnitude spectrum of raw and filtered signals."""
     freqs = np.fft.rfftfreq(len(raw), d=1 / fs)
 
-    plt.figure(figsize=(8, 4))
+    fig = plt.figure(figsize=FIGSIZE)
     X = np.abs(np.fft.rfft(raw))
     plt.plot(freqs, X, label="Raw", alpha=0.7, color="blue")
 
@@ -223,14 +248,16 @@ def plot_spectrum(raw: np.ndarray, samples: dict, fs: float) -> None:
     plt.ylabel("Magnitude")
     plt.title("Spectrum")
     plt.legend(facecolor="white", frameon=True)
-    
-    # plt.figure(figsize=(8, 4))
+
+    # fig = plt.figure(figsize=FIGSIZE)
     # f, t, Sxx = spectrogram(raw, fs=fs, nperseg=int(fs*10))
     # plt.pcolormesh(t, f, np.log(Sxx), shading='nearest')
     # plt.colorbar(label='Intensity (log scale)')
     # plt.ylim(0, 50)
     # plt.ylabel('Frequency [Hz]')
     # plt.xlabel('Time [sec]')
+
+    save_pgf(fig, "spectrum")
 
 
 def plot_time_series(
@@ -254,7 +281,7 @@ def plot_time_series(
     stimulus     = _pick("StimulusController")
     trigger      = _pick("SourceClient_TRIGGER")
 
-    fig, axes = plt.subplots(2, 1, sharex=True, figsize=(14, 9), height_ratios=[3, 1])
+    fig, axes = plt.subplots(2, 1, sharex=True, figsize=FIGSIZE, height_ratios=[3, 1])
     ax_raw, ax_phase = axes
 
     ax_raw.plot(time_s, raw_eeg[:n], color="0.6", linewidth=0.8, label="Raw EEG")
@@ -297,7 +324,7 @@ def plot_time_series(
     for ax in axes:
         ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
-    plt.savefig("time_series.png", dpi=300, bbox_inches="tight")
+    save_pgf(fig, "time_series")
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +439,7 @@ def plot_erp_latency(windows: list[dict], fs: float) -> None:
     std_eeg = np.std( [w["eeg_y"] for w in windows], axis=0)
     time    = windows[0]["time_s"] - windows[0]["time_s"][int(0.25 * fs)]
 
-    plt.figure(figsize=(8, 4))
+    fig = plt.figure(figsize=FIGSIZE)
     for w in windows[:20]:
         plt.plot(time, w["eeg_y"], color="0.8", linewidth=0.8, alpha=0.8)
     plt.plot(time, avg_eeg, color="tab:blue", linewidth=2, label="Average ERP")
@@ -421,4 +448,6 @@ def plot_erp_latency(windows: list[dict], fs: float) -> None:
     plt.axvline(0, color="0.0", linestyle="--", label="Trigger onset")
     plt.xlabel("Peri-stimulus time (s)")
     plt.ylabel("EEG amplitude (µV)")
-    plt.legend()
+    plt.legend(loc="upper right")
+
+    save_pgf(fig, "erp_latency")

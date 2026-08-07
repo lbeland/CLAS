@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 
 from .read_output import get_signal_data
 from .stimulus import get_edges
+from .plot import FIGSIZE, save_pgf
 
 RESULTS_DIR = "_last_run"
 
@@ -337,7 +338,7 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
     # Latency between computed stimulus onset (StimulusController) and the
     # recorded trigger onset (SourceClient_TRIGGER), matched edge-by-edge.
     if "StimulusController" in samples and "SourceClient_TRIGGER" in samples:
-        plt.figure(figsize=(15, 4))
+        fig = plt.figure(figsize=FIGSIZE)
         stim = samples["StimulusController"]
         trig = samples["SourceClient_TRIGGER"]
 
@@ -364,6 +365,8 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
             plt.xlabel("Stimulus index")
             plt.ylabel("Latency (ms)")
             plt.title("StimulusController → SourceClient_TRIGGER onset latency")
+
+            save_pgf(fig, "latency_analysis")
 
             print(f" Audio onset latency (ms)")
             print(f"{'─' * W}")

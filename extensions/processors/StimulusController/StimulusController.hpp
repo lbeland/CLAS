@@ -120,7 +120,7 @@ class StimulusController : public IProcessor {
     snd_pcm_t *pcm_ = nullptr;
 
     double period_ms_ = 0;
-    double burst_precompute_ms_ = 1000; // pre-compute 1 second of audio buffers
+    double burst_precompute_ms_ = 500; // pre-compute 0.5 second of audio buffers
     double burst_ms_ = 0;
     double last_iaf_ = std::numeric_limits<double>::quiet_NaN();
 

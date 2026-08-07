@@ -2,7 +2,7 @@ graph:
   name: CLAS
   defaults:
     n_messages: &n_messages -1
-    window_size: &window_size 50000
+    # window_size: &window_size 50000
     fs: &fs 10000
   processors:
     SourceClient:
@@ -14,7 +14,7 @@ graph:
         n_messages: *n_messages
         store_aux: true
         calib_packets: 30000
-        recal_interval_s: 15
+        fs_tau_s: 20
       advanced:
         buffer_sizes:
           out: 2048
@@ -23,7 +23,6 @@ graph:
       class: MultiChannelFilter
       options:
         filter:
-          # file: filters://2_2.0_20.0_10000.txt
           N: [1, 4]
           low_cutoff: [7, 30]
           high_cutoff: [18, 70]
@@ -57,7 +56,6 @@ graph:
       class: MultiChannelFilter
       options:
         filter:
-          # file: filters://2_2.0_20.0_10000.txt
           N: [1, 1]
           low_cutoff: [5, 46]
           high_cutoff: [16, 54]
@@ -75,7 +73,6 @@ graph:
         calc_interval: 100
         window_size_sec: 10
         max_invalid_sec: 3
-        # kalman_estimator_std: 0.088
         kalman_iaf_std: 0.1
         kalman_full: true
         f_min: 7.0
@@ -102,12 +99,12 @@ graph:
       class: StimulusController
       options:
         n_messages: *n_messages
-        stim_onset_deg: 0
+        stim_onset_deg: 180
         stim_dur_unit: "deg"
         stim_dur_deg: 90
         correct_latencies: true
         audio_latency_s: 0.0037
-        erp_latency_s: 0
+        erp_latency_s: 0.062
         stim_dur_ms: 45
         stim_amplitude: 0.5
         stim_period_ms: 0.8
@@ -129,7 +126,6 @@ graph:
         thread_core: [21,22]
     
   connections:
-  # - Producer.out.0 = GlobalFilter.in
   - SourceClient.out.0 = SelectionFilter.in
   - SourceClient.out.0 = ChannelReductor.in
   - SelectionFilter.out.0 = ChannelSelector.in

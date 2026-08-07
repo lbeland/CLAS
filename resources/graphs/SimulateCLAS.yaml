@@ -1,7 +1,7 @@
 graph:
   name: CLAS
   defaults:
-    n_messages: &n_messages 600000
+    n_messages: &n_messages 20000000
     window_size: &window_size 100000
     fs: &fs 10000
     threadpriority: &threadpriority 100
@@ -122,7 +122,7 @@ graph:
         stim_period_ms: 1
         stim_amplitude: 0.5
         use_background_sound: true
-        background_dB: 30
+        background_dB: 18
       advanced:
         buffer_sizes:
           out: 1024

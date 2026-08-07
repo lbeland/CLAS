@@ -74,11 +74,13 @@ graph:
     StimulusController:
       class: StimulusController
       options:
-        stim_onset_deg: 330
+        stim_onset_deg: 180
         stim_dur_unit: "ms"
         stim_dur_ms: 12
+        correct_latencies: true
+        audio_latency_s: 0.0037
+        erp_latency_s: 0
         stim_amplitude: 0.3
-        audio_latency_s: 0.003
         stim_period_ms: 0.8
         randomize_stim_onset: false
         min_stim_dist_sec: 0.5  #

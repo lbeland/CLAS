@@ -140,6 +140,19 @@ void StimulusController::CreatePorts()
         "out",
         MultiChannelType<double>::Parameters(1, 1, 1), // Placeholder, will be set in CompleteStreamInfo
         PortOutPolicy(SlotRange(0, MAX_NCHANNELS), 200, WaitStrategy::kBlockingStrategy));
+
+    expose_method("set_enabled", &StimulusController::SetEnabled);
+}
+
+YAML::Node StimulusController::SetEnabled(const YAML::Node &node)
+{
+    bool enabled = node["enabled"].as<bool>();
+    stim_enabled_.store(enabled);
+    LOG(INFO) << name() << " stimulus output " << (enabled ? "enabled" : "disabled") << " externally.";
+
+    YAML::Node reply;
+    reply["enabled"] = enabled;
+    return reply;
 }
 
 void StimulusController::CompleteStreamInfo()
@@ -801,7 +814,7 @@ void StimulusController::audio_thread_main_()
             // target_gain = do_burst ? static_cast<float>(stim_amplitude_()) : 0.0f;
             frames = do_burst ? burst_frames_ : period_frames_;
         }
-        float target_gain = do_burst ? gain_ : 0.0f;
+        float target_gain = (do_burst && stim_enabled_.load()) ? gain_ : 0.0f;
 
         if (frames > 0)
         {

@@ -113,6 +113,8 @@ class StimulusController : public IProcessor {
 
     std::atomic<bool> audio_running_{false};
     std::atomic<bool> audio_trigger_pending_{false};
+    std::atomic<bool> stim_enabled_{true};  // externally gated via "set_enabled" apply command
+    YAML::Node SetEnabled(const YAML::Node &node);
     std::thread audio_thread_;
     std::mutex audio_mutex_;
     snd_pcm_t *pcm_ = nullptr;

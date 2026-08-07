@@ -109,7 +109,7 @@ def combine_simple(psd, freq_bins, config):
     std_gauss = fwhm / (2 * np.sqrt(2 * np.log(2)))
     if std_gauss > 2:
         # print(std_gauss)
-        return np.nan
+        return np.nan, [np.nan, np.nan]
     popt = [amp_guess, est_pf, std_gauss]
 
     gaussian = gaussian_peak(freqs, *popt) + floor_value

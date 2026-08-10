@@ -53,13 +53,23 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import hilbert, butter, sosfiltfilt
+import matplotlib as mpl
+
+mpl.use("pgf")
+mpl.rcParams.update({
+    "pgf.texsystem": "pdflatex",
+    'font.family': 'serif',
+    'text.usetex': True,
+    'pgf.rcfonts': False,
+})
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "IAF_Estimation" / "SIMparam" / "code"))
-from fooof.sim.gen import gen_aperiodic, gen_periodic, gen_noise  # noqa: E402
-from sims import gen_power_vals_fn  # noqa: E402
+from fooof.sim.gen import gen_aperiodic, gen_periodic, gen_noise
+from sims import gen_power_vals_fn
+import extended_HT as ht
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from analysis.plot import _circ_stats, _style_polar_axis, COMMON_BBOX  # noqa: E402
+from analysis.plot import _circ_stats, _style_polar_axis, COMMON_BBOX
 
 rng = np.random.default_rng(0)
 
@@ -76,7 +86,7 @@ config = {
     # Periodic peak: gen_periodic([center_freq, height, bw]) -> log10 power
     # `height` is how many log10-power units (dB/10) the peak sits above the
     # aperiodic component AT its own center frequency.
-    "peak_params": [7.0, 2.0, 0.1],
+    "peak_params": [11.0, 2.0, 0.1],
 
     # Noise added in log10-power space, per frequency bin (gen_noise).
     "noise_lv": 0.1,
@@ -240,6 +250,19 @@ for name, sig in pipelines.items():
         "mae_deg": np.degrees(np.mean(np.abs(err[valid]))),
         "max_abs_deg": np.degrees(np.max(np.abs(err[valid]))),
     }
+phase_extHT_cut, _, extHT_initindx = ht.phase_reconst(sig_bp.reshape(1, -1), 1/fs)
+phase_extHT = np.full(n, np.nan)
+phase_extHT[extHT_initindx:extHT_initindx + phase_extHT_cut.shape[1]] = phase_extHT_cut[0]
+err = circular_error(phase_extHT, true_phase)
+mu, sd, _, _ = _circ_stats(circular_error(phase_extHT, true_phase)[valid])
+results["3. extendedHT"] = {
+    "phase": phase_extHT,
+    "error": err,
+    "circ_mean_deg": np.degrees(mu),
+    "circ_std_deg": np.degrees(sd),
+    "mae_deg": np.degrees(np.mean(np.abs(err[valid]))),
+    "max_abs_deg": np.degrees(np.max(np.abs(err[valid]))),
+}
 
 print(f"\n{'Pipeline':<22} {'circ. mean (deg)':>18} {'circ. std (deg)':>18} {'MAE (deg)':>12} {'max |err| (deg)':>18}")
 print("-" * 90)
@@ -253,15 +276,15 @@ plt.figure()
 plt.plot(x)
 plt.show()
 
-n_pipelines = len(pipelines)
+n_results = len(results)
 fig = plt.figure(figsize=(12, 14))
-gs = fig.add_gridspec(3, n_pipelines)
+gs = fig.add_gridspec(3, n_results)
 axes = [
     fig.add_subplot(gs[0, :]),
     fig.add_subplot(gs[1, :]),
     None,
 ]
-ax_polars = [fig.add_subplot(gs[2, i], projection="polar") for i in range(n_pipelines)]
+ax_polars = [fig.add_subplot(gs[2, i], projection="polar") for i in range(n_results)]
 
 # --- PSD sanity check ---
 ax = axes[0]

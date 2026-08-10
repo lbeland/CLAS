@@ -71,14 +71,14 @@ def compute_reference_stimulus(
     ) % (2.0 * np.pi)
 
     diff         = corrected_phase - onset_rad
-    wrapped_diff = np.arctan2(np.sin(diff), np.cos(diff))
+    wrapped_diff = np.mod(diff, 2.0 * np.pi)
 
     stim_ref = np.zeros_like(phase, dtype=float)
     last_stim_idx = 0
     # Minimum needed distance between stim onset is 1 cycle of the current IAF + 10% buffer
-    for i in iaf_safe: 
+    for i in iaf_safe:
         min_dist_stim = 1 / (iaf[i] + iaf[i] * 0.1)
-        if np.abs(wrapped_diff[i]) < stim_dur_rad[i] / 2.0:
+        if wrapped_diff[i] < 0.1 * 1/iaf[i] * 2.0 * np.pi:  # 10% of an alpha cycle
             if (i - last_stim_idx) / fs >= min_dist_stim:
                 stim_ref[i] = 1
                 last_stim_idx = i

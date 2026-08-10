@@ -81,7 +81,7 @@ class StimulusController : public IProcessor {
     unsigned int packet_count_ = 0;
     int stimuli_count_ = 0;
     bool output_      = false;
-    bool last_output_ = false;
+    int  output_samples_remaining_ = 0;  // samples left to keep output_ high for the current stimulus window
     double stim_onset_rad_ = 0;
     double stim_dur_rad_   = 0;
 

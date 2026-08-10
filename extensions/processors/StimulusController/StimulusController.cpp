@@ -974,7 +974,11 @@ void StimulusController::Process(ProcessingContext &context)
 
         time_since_last_stim = std::chrono::duration<double>(now - last_stim_time_).count();
 
-        if (valid_stimulation && time_since_last_stim >= stim_dist_sec_ || output_)
+        // Still inside a previously triggered stimulus window: output_ keeps
+        // mirroring the nominal burst duration independently
+        bool in_stim_window = output_samples_remaining_ > 0;
+
+        if (!in_stim_window && valid_stimulation && time_since_last_stim >= stim_dist_sec_)
         {
             double delay_sec = 0;
             if (correct_latencies_())
@@ -988,13 +992,17 @@ void StimulusController::Process(ProcessingContext &context)
             double phase_advance = 2.0 * M_PI * iaf_ * delay_sec;
             double diff = phase + phase_advance - stim_onset_rad_;
 
-            // Wrap diff to [-pi, pi] once
-            const double wrapped_diff = std::atan2(std::sin(diff), std::cos(diff));
+            // Wrap diff to [0, 2*pi)
+            double wrapped_diff = std::fmod(diff, 2.0 * M_PI);
+            if (wrapped_diff < 0)
+            {
+                wrapped_diff += 2.0 * M_PI;
+            }
 
-            output_ = std::abs(wrapped_diff) < (stim_dur_rad_ / 2);
-
-            // Trigger a single burst on the rising edge (false -> true)
-            if (output_ && !last_output_)
+            // Trigger as soon as the predicted phase enters the first half of the
+            // target window, so at least half the burst still lands on target
+            // even after a bigger phase jump
+            if (wrapped_diff < 0.1 * 1/iaf_ * 2.0 * M_PI) // 10% of an alpha cycle
             {
                 // LOG(INFO) << name() << "Deliver stimulus after: " << time_since_last_stim << " s since last stimulus";
                 audio_trigger_pending_.store(true);
@@ -1006,15 +1014,25 @@ void StimulusController::Process(ProcessingContext &context)
                     stim_onset_rad_ = distrib_onset(gen);
                 }
 
+                // output_ mirrors the full nominal stimulus duration (in samples of
+                // the phase stream), independent of how the trigger was decided.
+                output_samples_remaining_ = std::max(1, (int)std::round(
+                    stim_dur_rad_ / (2.0 * M_PI * iaf_) * fs_));
+                in_stim_window = true;
+
                 // LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated phase = " << phase << " , delay = " << delay_sec << " s, corr_phase = " << corrected_phase;
             }
+        }
+
+        if (in_stim_window)
+        {
+            output_ = true;
+            --output_samples_remaining_;
         }
         else
         {
             output_ = false;
         }
-
-        last_output_ = output_;
 
         data_out->set_source_timestamp(Clock::now());
         data_out->set_data_sample(0, 0, static_cast<double>(output_));

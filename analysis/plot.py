@@ -2,7 +2,9 @@
 Plotting and EDF export.
 """
 
+import csv
 import datetime
+import glob
 import os
 import pytz
 import numpy as np
@@ -331,6 +333,42 @@ def plot_time_series(
 # EDF export
 # ---------------------------------------------------------------------------
 
+def load_stim_annotations(results_dir: str, start_ts: float) -> "mne.Annotations | None":
+    """Load stim event markers from a stim protocol log CSV in results_dir, if present.
+
+    Each "on" or "off" row opens a segment that runs until the next logged row
+    (whichever state that is), producing a "stim_on"/"stim_off" duration
+    annotation. Non on/off rows (protocol_start/end/stopped) additionally get
+    their own zero-duration marker.
+
+    start_ts is the recording start time in the same units as ground_truth["time"]
+    (microseconds since epoch), used to align log timestamps to the EDF timeline.
+    """
+    log_files = sorted(glob.glob(os.path.join(results_dir, "stim_protocol_log_*.csv")))
+    if not log_files:
+        return None
+
+    with open(log_files[-1], newline="") as f:
+        reader = csv.DictReader(f)
+        rows = [(datetime.datetime.fromisoformat(row["timestamp"]).timestamp() - start_ts / 1e6,
+                 row["state"]) for row in reader]
+
+    onsets, durations, descriptions = [], [], []
+    prev_time, prev_state = None, None
+    for t, state in rows:
+        if prev_state in ("on", "off"):
+            onsets.append(prev_time)
+            durations.append(t - prev_time)
+            descriptions.append("stim_on" if prev_state == "on" else "stim_off")
+        if state not in ("on", "off"):
+            onsets.append(t)
+            durations.append(0.0)
+            descriptions.append(state)
+        prev_time, prev_state = t, state
+
+    return mne.Annotations(onset=onsets, duration=durations, description=descriptions)
+
+
 def write_edf(
     filepath: str,
     fs: float,
@@ -339,6 +377,7 @@ def write_edf(
     hilbert_phase: np.ndarray = None,
     stim_ref: np.ndarray = None,
     filtered: np.ndarray = None,
+    annotations: "mne.Annotations | None" = None,
 ) -> None:
     """Write all pipeline signals to an EDF file."""
     raw  = ground_truth["raw"]
@@ -384,6 +423,8 @@ def write_edf(
         time[0] / 1e6, tz=pytz.timezone("Europe/Berlin")
     ).replace(tzinfo=datetime.timezone.utc)
     raw_mne.set_meas_date(start_dt)
+    if annotations is not None:
+        raw_mne.set_annotations(annotations)
     raw_mne.export(filepath, fmt="edf", add_ch_type=True,
                    physical_range="channelwise", overwrite=True, verbose=False)
     print("EDF written.")
@@ -418,14 +459,18 @@ def get_erp_windows(fs: float, samples: dict, channel: int = 1) -> list[dict]:
     time_s         = (eeg_t - eeg_t[0]) / 1e6
     trigger_binary = (trigger_y > 0.5).astype(float)
     onsets         = get_edges(trigger_binary, "rising")
+    offsets        = get_edges(trigger_binary, "falling")
 
     windows = []
     for idx in onsets:
         start_idx = idx - int(0.25 * fs)
         end_idx   = idx + int(0.5  * fs)
         if start_idx >= 0 and end_idx < len(eeg_y):
-            windows.append({"time_s": time_s[start_idx:end_idx],
-                            "eeg_y":  eeg_y[start_idx:end_idx]})
+            later_offsets = offsets[offsets > idx]
+            stim_dur_s    = (time_s[later_offsets[0]] - time_s[idx]) if len(later_offsets) else None
+            windows.append({"time_s":     time_s[start_idx:end_idx],
+                            "eeg_y":       eeg_y[start_idx:end_idx],
+                            "stim_dur_s":  stim_dur_s})
     return windows
 
 
@@ -439,13 +484,29 @@ def plot_erp_latency(windows: list[dict], fs: float) -> None:
     std_eeg = np.std( [w["eeg_y"] for w in windows], axis=0)
     time    = windows[0]["time_s"] - windows[0]["time_s"][int(0.25 * fs)]
 
+    post_stim_mask = (time >= 0.02) & (time <= 0.100)
+
+    window_idx = np.where(post_stim_mask)[0]
+    p1_idx = window_idx[np.argmax(avg_eeg[window_idx])]
+    p1_latency = time[p1_idx]
+    print(f"Estimated P1 latency: {p1_latency * 1000:.1f} ms")
+
+    stim_durs = [w["stim_dur_s"] for w in windows if w["stim_dur_s"] is not None]
+    stim_dur  = np.mean(stim_durs) if stim_durs else None
+    if stim_dur is not None:
+        print(f"Estimated stimulus duration: {stim_dur * 1000:.1f} ms")
+
     fig = plt.figure(figsize=FIGSIZE)
+    if stim_dur is not None:
+        plt.axvspan(0, stim_dur, color="0.6", alpha=0.2, zorder=0, label="Stimulus")
     for w in windows[:20]:
         plt.plot(time, w["eeg_y"], color="0.8", linewidth=0.8, alpha=0.8)
     plt.plot(time, avg_eeg, color="tab:blue", linewidth=2, label="Average ERP")
     plt.fill_between(time, avg_eeg - std_eeg, avg_eeg + std_eeg,
                      color="tab:blue", alpha=0.3, label="±1 SD")
     plt.axvline(0, color="0.0", linestyle="--", label="Trigger onset")
+    plt.axvline(p1_latency, color="tab:red", linestyle="--", label="P1 latency")
+
     plt.xlabel("Peri-stimulus time (s)")
     plt.ylabel("EEG amplitude (µV)")
     plt.legend(loc="upper right")

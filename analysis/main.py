@@ -18,7 +18,7 @@ from analysis.loader import load_processor_signals, analyse_latencies, extract_g
 from analysis.iaf    import estimate_iaf, estimate_iaf_with_phase
 from analysis.core   import compute_hilbert_reference, compute_errors
 from analysis.plot   import write_edf, plot_errors, plot_spectrum, plot_time_series, \
-                            plot_iaf, get_erp_windows, plot_erp_latency
+                            plot_iaf, get_erp_windows, plot_erp_latency, load_stim_annotations
 
 
 def analyse_results(f0: float, results_dir: str) -> None:
@@ -78,7 +78,9 @@ def analyse_results(f0: float, results_dir: str) -> None:
     # errors2, stim_ref2 = compute_errors(samples, ground_truth, hilbert_phase2, start_ts, fs, graph_config)
 
     # 8. Export to EDF
-    write_edf(edf_path, fs, ground_truth, samples, hilbert_phase, stim_ref, filtered)
+    stim_annotations = load_stim_annotations(results_dir, start_ts)
+    write_edf(edf_path, fs, ground_truth, samples, hilbert_phase, stim_ref, filtered,
+              annotations=stim_annotations)
 
     # 9. Plot errors
     plot_errors(errors)

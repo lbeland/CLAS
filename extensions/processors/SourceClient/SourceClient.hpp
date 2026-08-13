@@ -69,29 +69,21 @@ class SourceClient : public IProcessor {
     int packet_count_ = 0;
     Packet last_packet_;
 
-    // Calibrated reference time [µs, in Clock's epoch] such that
-    // hardware_time_us(n) = start_time_us_ + n * 1e6 / fs approximates
-    // the true ADC sampling time of sample n (plus the fixed transit delay floor).
-    uint64_t start_time_us_ = 0;
-
     // Offset [µs] such that: wallclock_us = clock_us + steady_to_wallclock_offset_us_
-    // Sampled once during calibration to allow post-hoc conversion from
-    // steady-clock hardware timestamps back to wall-clock time.
     int64_t steady_to_wallclock_offset_us_ = 0;
 
-    // fs_eff_ tracks crystal drift
+    // t0: calibrated reference time [µs, in Clock's epoch] of sample n0
+    uint64_t start_time_us_ = 0;
+
     double fs_eff_ = 0.0;
     uint64_t anchor_n_ = 0;
     uint64_t anchor_time_us_ = 0;
 
+    // Recursive Least Squares (RLS) parameter for sampling period
+    double theta1_ = 0.0;
     double P_ = 0.0;
-    double theta_slope_ = 0.0;
     double lambda = 1.0;
     uint64_t recal_warmup_samples_ = 0;
-
-    bool recal_anchor_set_ = false;
-    uint64_t recal_anchor_n_ = 0;
-    int64_t recal_anchor_ts_us_ = 0;
 
     uint64_t hardware_time_us_(uint64_t sample_counter) const;
     void recalibrate_fs_(uint64_t sample_counter, int64_t ts_us);

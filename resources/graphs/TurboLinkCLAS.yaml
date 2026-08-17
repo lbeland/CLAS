@@ -14,7 +14,7 @@ graph:
         n_messages: *n_messages
         store_aux: true
         calib_packets: 30000
-        fs_tau_s: 20
+        fs_tau_s: 30
       advanced:
         buffer_sizes:
           out: 2048
@@ -37,7 +37,7 @@ graph:
       class: ChannelSelector
       options:
         n_messages: *n_messages
-        channel_indices: [1]   # 1-based indices of channels to select
+        channel_indices: [3]   # 1-based indices of channels to select
         rms_threshold_uv: 20
       advanced:
         buffer_sizes:
@@ -47,7 +47,7 @@ graph:
       class: ChannelReductor
       options:
         n_messages: *n_messages
-        default_channel_index: 1  # 1-based
+        default_channel_index: 3  # 1-based
       advanced:
         buffer_sizes:
           out: 256
@@ -87,9 +87,7 @@ graph:
         n_messages: *n_messages
         # n_fft: *window_size
         iaf_read_interval: 1
-        calibrate: true
-        # filter:
-        #   bandwidth: 4
+        calibrate: true   ##########
         compensate_filter: true
       advanced:
         buffer_sizes:
@@ -99,16 +97,16 @@ graph:
       class: StimulusController
       options:
         n_messages: *n_messages
-        stim_onset_deg: 180
-        stim_dur_unit: "deg"
-        stim_dur_deg: 90
+        stim_onset_deg: 330 # pre-peak 330°, post-peak 60°, pre-trough 150°, post-trough 240°,
+        stim_dur_unit: "ms"
+        # stim_dur_deg: 90
+        stim_dur_ms: 20 
         correct_latencies: true
-        audio_latency_s: 0.0037
-        erp_latency_s: 0.062
-        stim_dur_ms: 45
-        stim_amplitude: 0.5
+        audio_latency_s: 0.005
+        erp_latency_s: 0.0 #753 ######
+        stim_amplitude: 1.0
         stim_period_ms: 0.8
-        use_background_sound: true
+        use_background_sound: false
         background_dB: 18
       advanced:
         buffer_sizes:

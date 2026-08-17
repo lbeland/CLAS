@@ -62,7 +62,7 @@ class SourceClient : public IProcessor {
     // Time constant [s] of the exponential forgetting factor
     options::Double fs_tau_s_{15.0};
     // Duration [s] of the RLS warm-up
-    options::Double recal_warmup_s_{30.0};
+    options::Double recal_warmup_s_{60.0};
 
     // Runtime state
     int sock_ = -1;
@@ -77,14 +77,20 @@ class SourceClient : public IProcessor {
 
     double fs_eff_ = 0.0;
     uint64_t anchor_n_ = 0;
-    uint64_t anchor_time_us_ = 0;
+    // Anchor time kept in double (not truncated to whole microseconds) so
+    // that repeated re-anchoring never leaks a fractional-microsecond
+    // remainder; only hardware_time_us_()'s returned/emitted timestamp is
+    // rounded to an integer.
+    double anchor_time_us_ = 0.0;
 
     // Recursive Least Squares (RLS) parameter for sampling period
     double theta1_ = 0.0;
     double P_ = 0.0;
     double lambda = 1.0;
     uint64_t recal_warmup_samples_ = 0;
+    uint64_t reanchor_interval_samples_ = 0;
 
+    double hardware_time_us_precise_(uint64_t sample_counter) const;
     uint64_t hardware_time_us_(uint64_t sample_counter) const;
     void recalibrate_fs_(uint64_t sample_counter, int64_t ts_us);
 };

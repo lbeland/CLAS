@@ -36,7 +36,10 @@ constexpr size_t PACKET_SIZE = 172;
 
 // P(n0) = C: initial RLS covariance scale, i.e. a large, poorly confident
 // prior around the 1/fs_nom initial guess.
-constexpr double CLOCK_RLS_INIT_C = 50.0;
+constexpr double CLOCK_RLS_INIT_C = 1;
+
+// Interval [s] between anchor re-basing / fs_eff_ commits
+constexpr double REANCHOR_INTERVAL_S = 10.0;
 
 uint32_t read_u32_le(const uint8_t *p)
 {
@@ -119,6 +122,7 @@ void SourceClient::Prepare(GlobalContext &context)
     double tau_s = fs_tau_s_();
     lambda = std::exp(-1.0 / (fs_() * tau_s));
     recal_warmup_samples_ = static_cast<uint64_t>(recal_warmup_s_() * fs_());
+    reanchor_interval_samples_ = static_cast<uint64_t>(REANCHOR_INTERVAL_S * fs_());
 }
 
 void SourceClient::Preprocess(ProcessingContext &context)
@@ -161,10 +165,20 @@ void SourceClient::Preprocess(ProcessingContext &context)
     LOG(INFO) << name() << " Listening on UDP port " << PORT;
 }
 
+// Full-precision, unrounded prediction: used internally (re-anchoring) so
+// that no fractional microsecond is ever discarded from the running state.
+double SourceClient::hardware_time_us_precise_(uint64_t sample_counter) const
+{
+    return anchor_time_us_ +
+        static_cast<double>(sample_counter - anchor_n_) * 1e6 / fs_eff_;
+}
+
+// Rounded (not truncated) integer microsecond timestamp for external/output
+// use. Rounding here is a one-off at the point of emission - it does not
+// feed back into anchor_time_us_, so it cannot accumulate across calls.
 uint64_t SourceClient::hardware_time_us_(uint64_t sample_counter) const
 {
-    return anchor_time_us_ + static_cast<uint64_t>(
-        static_cast<double>(sample_counter - anchor_n_) * 1e6 / fs_eff_);
+    return static_cast<uint64_t>(std::llround(hardware_time_us_precise_(sample_counter)));
 }
 
 // Recursive Least Squares (RLS) clock model, fit through the anchor (no
@@ -182,16 +196,19 @@ uint64_t SourceClient::hardware_time_us_(uint64_t sample_counter) const
 // fs_tau_s_-derived steady-state forgetting factor, letting the fit track
 // slow crystal drift.
 //
-// x(n)/y(n) are anchor-relative rather than measured from n0, and that
-// anchor is re-based to (sample_counter, model-predicted time) below every
-// time a fit is accepted - which keeps x(n) small (~1 sample) once warm-up
-// ends, instead of growing for the rest of the recording. theta1_/P_ are exactly invariant to
-// shifting the anchor (this is a through-origin fit), so re-basing loses no
-// information.
+// x(n)/y(n) are anchor-relative rather than measured from n0, so that x(n)
+// stays numerically small between re-anchors instead of growing for the
+// rest of the recording. theta1_/P_ are exactly invariant to shifting the
+// anchor (this is a through-origin fit), so re-basing loses no information
+// - anchor_time_us_ is kept as a double (hardware_time_us_precise_(), not
+// the rounded hardware_time_us_()) precisely so re-basing never discards a
+// fractional microsecond. Re-basing is still only committed every
+// REANCHOR_INTERVAL_S seconds (below) rather than every packet, simply to
+// bound how often the RLS commits a new fs_eff_/anchor.
 void SourceClient::recalibrate_fs_(uint64_t sample_counter, int64_t ts_us)
 {
     const double x = static_cast<double>(sample_counter - anchor_n_);
-    const double y = static_cast<double>(ts_us - static_cast<int64_t>(anchor_time_us_));
+    const double y = static_cast<double>(ts_us) - anchor_time_us_;
 
     const bool warming_up = sample_counter < recal_warmup_samples_;
     const double effective_lambda = warming_up ? 1.0 : lambda;
@@ -204,6 +221,11 @@ void SourceClient::recalibrate_fs_(uint64_t sample_counter, int64_t ts_us)
     if (warming_up)
         return;
 
+    // Let x(n) accumulate until the next scheduled re-anchor instead of
+    // committing a new anchor/fs_eff_ on every packet.
+    if (x < static_cast<double>(reanchor_interval_samples_))
+        return;
+
     // Crystal drift is ppm-scale; reject implausible fits (packet-loss
     // bursts, noise spikes) instead of adopting them into the anchor used
     // for scheduling - keep the last accepted fs_eff_/anchor instead.
@@ -211,9 +233,15 @@ void SourceClient::recalibrate_fs_(uint64_t sample_counter, int64_t ts_us)
     const double new_fs_eff = 1e6 / theta1_;
     if (std::isfinite(new_fs_eff) && std::abs(new_fs_eff - nominal_fs) < 0.00001 * nominal_fs)
     {
-        anchor_time_us_ = hardware_time_us_(sample_counter);
-        anchor_n_ = sample_counter;
+        // Update fs_eff_ *before* using it to place the anchor: the anchor
+        // must be extrapolated with the rate that was just fit over this
+        // interval (theta1_/new_fs_eff), not the stale rate committed at
+        // the previous re-anchor - otherwise every commit silently jumps
+        // the anchor off the fitted line by (new_fs_eff vs old fs_eff_)
+        // worth of drift accumulated over the whole interval.
         fs_eff_ = new_fs_eff;
+        anchor_time_us_ = hardware_time_us_precise_(sample_counter);
+        anchor_n_ = sample_counter;
     }
     else
     {
@@ -450,9 +478,10 @@ void SourceClient::Process(ProcessingContext &context)
             LOG(WARNING) << name() << " hardware_time_us (" << hardware_time_us << ") is in the future (now=" << ts_us << "). Clamping.";
             hardware_time_us = ts_us;
         }
-        else if ((int)ts_us - (int)hardware_time_us > 1e6)
+        else if ((int)ts_us - (int)hardware_time_us > 10 * 1e3)
         {
-            LOG(WARNING) << name() << " hardware_time_us (" << hardware_time_us << ") is more than 1 s behind (now=" << ts_us << ").";
+            LOG(WARNING) << name() << " hardware_time_us (" << hardware_time_us << ") is more than 10ms behind (now=" << ts_us << "). Clamping";
+            hardware_time_us = ts_us - 10 * 1e3;
         }
 
         data_out = data_slot->ClaimData(false);

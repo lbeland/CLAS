@@ -39,6 +39,10 @@ FIGSIZE      = (FIG_WIDTH, FIG_HEIGHT)
 def save_pgf(fig, name: str) -> None:
     fig.savefig(os.path.join(PLOTS_DIR, f"{name}.pgf"), bbox_inches="tight")
 
+def save_png(fig, name: str) -> None:
+    fig.savefig(os.path.join(PLOTS_DIR, f"{name}.png"), bbox_inches="tight", dpi=300)
+
+
 COMMON_BBOX = dict(
     facecolor="white",
     edgecolor="0.8",
@@ -118,12 +122,12 @@ def plot_errors(errors: list[dict], time_range: tuple = None,title=None) -> None
         ls    = err.get("linestyle", "-")
         vals  = err["values"]
 
-        if err["unit"] == "degrees":
-            ax_ts.plot(err["time_s"], vals, linestyle=ls, linewidth=1.2, color=color,
-                   label=f"{err['label']} ({err['unit']})", alpha=0.85)
-        else:
-            ax_ts_twin.plot(err["time_s"], vals, linestyle=ls, linewidth=1.2, color=color,
-                       label=f"{err['label']} ({err['unit']})", alpha=0.85)
+        # if err["unit"] == "degrees":
+        #     ax_ts.plot(err["time_s"], vals, linestyle=ls, linewidth=1.2, color=color,
+        #            label=f"{err['label']} ({err['unit']})", alpha=0.85)
+        # else:
+        #     ax_ts_twin.plot(err["time_s"], vals, linestyle=ls, linewidth=1.2, color=color,
+        #                label=f"{err['label']} ({err['unit']})", alpha=0.85)
 
         if np.nansum(np.abs(vals)) == 0:
             continue
@@ -154,8 +158,11 @@ def plot_errors(errors: list[dict], time_range: tuple = None,title=None) -> None
     if time_range is not None:
         ax_ts.set_xlim(time_range)
 
-    save_pgf(fig_time, "error_timeseries")
-    save_pgf(fig_polars, "error_distributions")
+    # save_pgf(fig_time, "error_timeseries")
+    # save_pgf(fig_polars, "error_distributions")
+    save_png(fig_time, "error_timeseries")
+    save_png(fig_polars, "error_distributions")
+
 
 
 # ---------------------------------------------------------------------------

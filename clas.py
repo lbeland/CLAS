@@ -23,12 +23,19 @@ STIM_PROCESSOR_NAME = "StimulusController"
 import tty
 import termios
 import sys
+import select
 
-def get_char():
+def get_char(timeout=None):
+    """Read a single keypress. If timeout is given, returns None if no key
+    is pressed within that many seconds instead of blocking indefinitely."""
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setcbreak(fd)
+        if timeout is not None:
+            ready, _, _ = select.select([sys.stdin], [], [], timeout)
+            if not ready:
+                return None
         ch = sys.stdin.read(1)  # returns immediately on any keypress
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)  # restore terminal
@@ -122,7 +129,9 @@ def main():
 
         while graph_process.poll() is None:
 
-            command = get_char()
+            command = get_char(timeout=0.5)
+            if command is None:
+                continue
             if command.strip().lower() == "s":
                 if stim_thread is not None and stim_thread.is_alive():
                     stim_stop_event.set()
@@ -163,7 +172,6 @@ def main():
                         )
                         stim_thread.start()
                         print(f"Started stimulation protocol from {stim_protocol_path} ({len(protocol)} steps).")
-            time.sleep(0.5)
 
         if stim_thread is not None and stim_thread.is_alive():
             stim_stop_event.set()
@@ -253,6 +261,17 @@ def run_stim_protocol(zmq_context, port, protocol, log_path, stop_event: threadi
             end_state = "protocol_stopped" if stop_event.is_set() else "protocol_end"
             elapsed = (datetime.now() - start_time).total_seconds()
             writer.writerow([datetime.now().isoformat(), f"{elapsed:.3f}", end_state])
+            print(f"[stim protocol] {end_state}")
+
+            if not stop_event.is_set():
+                # Protocol ran to completion (not manually stopped via 's'/'q'):
+                # stop the graph and terminate Falcon so main() can proceed
+                # straight to analyse_results without waiting for a keypress.
+                print("[stim protocol] Protocol complete, stopping graph and terminating Falcon...")
+                socket.send_multipart([b"graph", b"stop"])
+                socket.recv_multipart()
+                socket.send_multipart([b"quit"])
+                socket.recv_multipart()
     finally:
         socket.close()
 

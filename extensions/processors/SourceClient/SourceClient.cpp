@@ -467,8 +467,6 @@ void SourceClient::Process(ProcessingContext &context)
             sample_counter += 1;
         }
 
-        TimePoint after_parsing = Clock::now();
-
         const uint64_t ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
             timestamp.time_since_epoch()).count();
         recalibrate_fs_(sample_counter, static_cast<int64_t>(ts_us));
@@ -487,7 +485,6 @@ void SourceClient::Process(ProcessingContext &context)
         }
 
         data_out = data_slot->ClaimData(false);
-        TimePoint after_claim = Clock::now();
 
         std::copy(pkt.eeg.begin(), pkt.eeg.begin() + nchannels_(), eeg_vec.begin());
         data_out->set_data_sample(0, eeg_vec);
@@ -497,9 +494,7 @@ void SourceClient::Process(ProcessingContext &context)
 
         data_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us_);
 
-        TimePoint after_set_eeg = Clock::now();
         data_slot->PublishData();
-        TimePoint after_publish_eeg = Clock::now();
 
         // AUX + trigger channel
         aux_out = aux_slot->ClaimData(true);
@@ -514,7 +509,6 @@ void SourceClient::Process(ProcessingContext &context)
             aux_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us_);
         }
         aux_slot->PublishData();
-        TimePoint after_publish_aux = Clock::now();
 
         packet_count_++;
         last_packet_ = pkt;
@@ -523,11 +517,6 @@ void SourceClient::Process(ProcessingContext &context)
         if (std::chrono::duration<double, std::micro>(finished - timestamp).count() > 100)
         {
             LOG(INFO) << name() << " Processed packet " << packet_count_ << " - timings (us):"
-                      << " parse=" << std::chrono::duration<double, std::micro>(after_parsing - timestamp).count()
-                      << ", claim=" << std::chrono::duration<double, std::micro>(after_claim - after_parsing).count()
-                      << ", set_eeg=" << std::chrono::duration<double, std::micro>(after_set_eeg - after_claim).count()
-                      << ", pub_eeg=" << std::chrono::duration<double, std::micro>(after_publish_eeg - after_set_eeg).count()
-                      << ", pub_aux=" << std::chrono::duration<double, std::micro>(after_publish_aux - after_publish_eeg).count()
                       << ", total=" << std::chrono::duration<double, std::micro>(finished - timestamp).count();
         }
         if (packet_count_ % static_cast<int>(10 * fs_()) == 0)

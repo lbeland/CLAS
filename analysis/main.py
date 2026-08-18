@@ -53,9 +53,9 @@ def analyse_results(f0: float, results_dir: str) -> None:
     analyse_latencies(samples, ground_truth, graph_config)
 
     # 4. ERPCLAS-specific: ERP average plot
-    # if os.path.basename(graph_file) == "ERPCLAS.yaml":
-    windows = get_erp_windows(fs, samples, channel=1)
-    plot_erp_latency(windows, fs)
+    if os.path.basename(graph_file) == "ERPCLAS.yaml":
+        windows = get_erp_windows(fs, samples, channel=[1,2,29,4,3,27, 5, 28])
+        plot_erp_latency(windows, fs)
 
     # 5. Estimate IAF offline on the full recording
     iaf, aperiodic_params = estimate_iaf(ground_truth["raw"], fs)

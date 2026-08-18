@@ -74,7 +74,7 @@ def analyse_erp() -> None:
             edf_stem = Path(results_dir).readlink().stem if Path(results_dir).is_symlink() \
                        else Path(results_dir).stem
             write_edf(os.path.join(results_dir, edf_stem + ".edf"), fs, ground_truth, samples)
-            windows.extend(get_erp_windows(fs, samples, channel=1))
+            windows.extend(get_erp_windows(fs, samples, channel=[1]))
 
     if windows and fs is not None:
         plot_erp_latency(windows, fs)

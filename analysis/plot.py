@@ -10,7 +10,7 @@ import pytz
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import circmean, circstd
-from scipy.signal import spectrogram
+from scipy.signal import spectrogram, butter, sosfiltfilt
 import mne
 import matplotlib as mpl
 
@@ -49,6 +49,17 @@ COMMON_BBOX = dict(
     boxstyle="round,pad=0.2",
     alpha=0.85,
 )
+
+CHANNEL_NAMES = {
+    1: "Fp1",
+    2: "Fpz",
+    3: "Fz",
+    4: "F3",
+    5: "F7",
+    27: "F4",
+    29: "Fp2",
+    28: "F8"
+}
 
 
 # ---------------------------------------------------------------------------
@@ -441,81 +452,164 @@ def write_edf(
 # ERP
 # ---------------------------------------------------------------------------
 
-def get_erp_windows(fs: float, samples: dict, channel: int = 1) -> list[dict]:
-    """Extract EEG epochs around each trigger onset (-250 ms to +500 ms)."""
-    ch = channel - 1  # zero-based
+def get_erp_windows(fs: float, samples: dict, channel: list[int] = [1],
+                     bandpass: tuple[float, float] = (2.0, 30.0),
+                     reject_uv: float = 100.0) -> list[dict]:
+    """Extract EEG epochs around each trigger onset (-250 ms to +500 ms) for each channel.
 
-    if samples.get("ecHTFilter") is not None:
-        eeg_y, eeg_t = samples["ecHTFilter"]["y"], samples["ecHTFilter"]["x"]
-    elif samples.get(f"SourceClient_{ch}") is not None:
-        eeg_y, eeg_t = samples[f"SourceClient_{ch}"]["y"], samples[f"SourceClient_{ch}"]["x"]
-    elif samples.get(f"Producer_{ch}") is not None:
-        eeg_y, eeg_t = samples[f"Producer_{ch}"]["y"], samples[f"Producer_{ch}"]["x"]
-    else:
-        print(f"Error: no EEG signal found for channel {channel}.")
-        return []
+    The EEG is bandpass-filtered (default 2-30 Hz) before epoching, and any
+    epoch whose peak amplitude exceeds ``reject_uv`` (default ±100 µV) is
+    discarded. Each returned window carries a 1-based "channel" key so
+    callers can group windows by channel.
+    """
+    all_windows = []
 
-    if samples.get("SourceClient_TRIGGER") is not None:
-        trigger_y = samples["SourceClient_TRIGGER"]["y"]
-    elif samples.get("StimulusController") is not None:
-        trigger_y = samples["StimulusController"]["y"]
-    else:
-        print("Error: no trigger signal found.")
-        return []
+    for ch in channel:
+        ch0 = ch - 1  # zero-based
 
-    time_s         = (eeg_t - eeg_t[0]) / 1e6
-    trigger_binary = (trigger_y > 0.5).astype(float)
-    onsets         = get_edges(trigger_binary, "rising")
-    offsets        = get_edges(trigger_binary, "falling")
+        # if samples.get("ecHTFilter") is not None:
+        #     eeg_y, eeg_t = samples["ecHTFilter"]["y"], samples["ecHTFilter"]["x"]
+        if samples.get(f"SourceClient_{ch0}") is not None:
+            eeg_y, eeg_t = samples[f"SourceClient_{ch0}"]["y"], samples[f"SourceClient_{ch0}"]["x"]
+        elif samples.get(f"Producer_{ch0}") is not None:
+            eeg_y, eeg_t = samples[f"Producer_{ch0}"]["y"], samples[f"Producer_{ch0}"]["x"]
+        else:
+            print(f"Error: no EEG signal found for channel {ch}.")
+            continue
 
-    windows = []
-    for idx in onsets:
-        start_idx = idx - int(0.25 * fs)
-        end_idx   = idx + int(0.5  * fs)
-        if start_idx >= 0 and end_idx < len(eeg_y):
-            later_offsets = offsets[offsets > idx]
-            stim_dur_s    = (time_s[later_offsets[0]] - time_s[idx]) if len(later_offsets) else None
-            windows.append({"time_s":     time_s[start_idx:end_idx],
-                            "eeg_y":       eeg_y[start_idx:end_idx],
-                            "stim_dur_s":  stim_dur_s})
-    return windows
+        if samples.get("SourceClient_TRIGGER") is not None:
+            trigger_y = samples["SourceClient_TRIGGER"]["y"]
+        elif samples.get("StimulusController") is not None:
+            trigger_y = samples["StimulusController"]["y"]
+        else:
+            print("Error: no trigger signal found.")
+            return []
+
+        time_s         = (eeg_t - eeg_t[0]) / 1e6
+        trigger_binary = (trigger_y > 0.5).astype(float)
+        onsets         = get_edges(trigger_binary, "rising")
+        offsets        = get_edges(trigger_binary, "falling")
+
+        # Bandpass-filter the continuous EEG before epoching, so filter edge
+        # artifacts don't contaminate the epoch boundaries.
+        sos   = butter(1, bandpass, btype="band", fs=fs, output="sos")
+        eeg_y = sosfiltfilt(sos, eeg_y)
+
+        n_rejected = 0
+        for idx in onsets:
+            start_idx = idx - int(0.25 * fs)
+            end_idx   = idx + int(0.5  * fs)
+            if start_idx >= 0 and end_idx < len(eeg_y):
+                epoch = eeg_y[start_idx:end_idx]
+                if np.max(np.abs(epoch)) > reject_uv:
+                    n_rejected += 1
+                    continue
+                later_offsets = offsets[offsets > idx]
+                stim_dur_s    = (time_s[later_offsets[0]] - time_s[idx]) if len(later_offsets) else None
+                all_windows.append({"channel":    ch,
+                                    "time_s":     time_s[start_idx:end_idx],
+                                    "eeg_y":       epoch,
+                                    "stim_dur_s":  stim_dur_s})
+
+        if n_rejected:
+            print(f"Channel {ch}: rejected {n_rejected} epoch(s) with peak amplitude > ±{reject_uv:.0f} µV.")
+
+    return all_windows
 
 
-def plot_erp_latency(windows: list[dict], fs: float) -> None:
+def plot_erp_latency(windows: list[dict], fs: float) -> float | None:
+    """Plot per-channel averaged ERPs stacked vertically on a shared x-axis.
+
+    Windows are grouped by their "channel" key (windows without one, e.g.
+    from older callers, are grouped together). The reported P1 latency is
+    the mean of the per-channel P1 latencies.
+    """
     if not windows:
         print("No valid trigger windows found.")
-        return
+        return None
 
-    print(f"Found {len(windows)} valid trigger windows")
-    avg_eeg = np.mean([w["eeg_y"] for w in windows], axis=0)
-    std_eeg = np.std( [w["eeg_y"] for w in windows], axis=0)
-    time    = windows[0]["time_s"] - windows[0]["time_s"][int(0.25 * fs)]
-
+    channel_order = list(dict.fromkeys(w.get("channel") for w in windows))
+    time           = windows[0]["time_s"] - windows[0]["time_s"][int(0.25 * fs)]
     post_stim_mask = (time >= 0.02) & (time <= 0.100)
+    window_idx     = np.where(post_stim_mask)[0]
 
-    window_idx = np.where(post_stim_mask)[0]
-    p1_idx = window_idx[np.argmax(avg_eeg[window_idx])]
-    p1_latency = time[p1_idx]
-    print(f"Estimated P1 latency: {p1_latency * 1000:.1f} ms")
+    channels = []
+    for ch in channel_order:
+        ch_windows = [w for w in windows if w.get("channel") == ch]
+        avg_eeg    = np.mean([w["eeg_y"] for w in ch_windows], axis=0)
+        std_eeg    = np.std( [w["eeg_y"] for w in ch_windows], axis=0)
+        p1_idx     = window_idx[np.argmax(avg_eeg[window_idx])]
+        p1_latency = time[p1_idx]
+        channels.append({"channel": ch, "windows": ch_windows,
+                         "avg": avg_eeg, "std": std_eeg, "p1_latency": p1_latency})
+        label = f"channel {ch}" if ch is not None else "all channels"
+        print(f"Found {len(ch_windows)} valid trigger windows for {label}; "
+              f"P1 latency {p1_latency * 1000:.1f} ms")
+
+    p1_latency = float(np.mean([c["p1_latency"] for c in channels]))
+    print(f"Mean P1 latency across {len(channels)} channel(s): {p1_latency * 1000:.1f} ms")
 
     stim_durs = [w["stim_dur_s"] for w in windows if w["stim_dur_s"] is not None]
     stim_dur  = np.mean(stim_durs) if stim_durs else None
     if stim_dur is not None:
         print(f"Estimated stimulus duration: {stim_dur * 1000:.1f} ms")
 
+    # Vertical spacing between channels, large enough that ±1 SD bands don't overlap.
+    # span        = max(np.max(c["avg"] + c["std"]) - np.min(c["avg"] - c["std"]) for c in channels)
+    span        = max(np.max(c["avg"]) - np.min(c["avg"]) for c in channels)
+    offset_step = span * 1.2
+
     fig = plt.figure(figsize=FIGSIZE)
+    if stim_dur is not None:
+        plt.axvspan(0, stim_dur, color="0.6", alpha=0.2, zorder=0, label="Stimulus")
+
+    yticks, yticklabels = [], []
+    for i, c in enumerate(channels):
+        offset = -i * offset_step
+        # for w in c["windows"][:20]:
+        #     plt.plot(time, w["eeg_y"] + offset, color="0.8", linewidth=0.8, alpha=0.8)
+        plt.plot(time, c["avg"] + offset, color="tab:blue", linewidth=2,
+                 label="Average ERP" if i == 0 else None)
+        plt.fill_between(time, c["avg"] - c["std"] + offset, c["avg"] + c["std"] + offset,
+                         color="tab:blue", alpha=0.2, label="±1 SD" if i == 0 else None)
+        yticks.append(offset)
+        yticklabels.append(f"{CHANNEL_NAMES.get(c['channel'], c['channel'])}" if c["channel"] is not None else "")
+
+    plt.axvline(0, color="0.0", linestyle="--", label="Trigger onset")
+    plt.axvline(p1_latency, color="tab:red", linestyle="--",
+               label=f"Mean P1 latency ({p1_latency * 1000:.1f} ms)")
+
+    plt.xlabel("Peri-stimulus time (s)")
+    plt.ylabel("Channel" if len(channels) > 1 else "EEG amplitude (µV)")
+    if len(channels) > 1:
+        plt.yticks(yticks, yticklabels)
+    plt.legend(loc="upper right")
+
+    save_pgf(fig, "erp_latency")
+
+    # Second figure: grand average ERP pooling every window from every channel.
+    avg_pooled = np.mean([w["eeg_y"] for w in windows], axis=0)
+    std_pooled = np.std( [w["eeg_y"] for w in windows], axis=0)
+    p1_idx_pooled = window_idx[np.argmax(avg_pooled[window_idx])]
+    p1_latency_pooled = time[p1_idx_pooled]
+    print(f"Pooled P1 latency ({len(windows)} windows across {len(channels)} channel(s)): "
+          f"{p1_latency_pooled * 1000:.1f} ms")
+
+    fig_pooled = plt.figure(figsize=FIGSIZE)
     if stim_dur is not None:
         plt.axvspan(0, stim_dur, color="0.6", alpha=0.2, zorder=0, label="Stimulus")
     for w in windows[:20]:
         plt.plot(time, w["eeg_y"], color="0.8", linewidth=0.8, alpha=0.8)
-    plt.plot(time, avg_eeg, color="tab:blue", linewidth=2, label="Average ERP")
-    plt.fill_between(time, avg_eeg - std_eeg, avg_eeg + std_eeg,
-                     color="tab:blue", alpha=0.3, label="±1 SD")
+    plt.plot(time, avg_pooled, color="tab:blue", linewidth=2, label="Average ERP")
+    plt.fill_between(time, avg_pooled - std_pooled, avg_pooled + std_pooled,
+                     color="tab:blue", alpha=0.2, label="±1 SD")
     plt.axvline(0, color="0.0", linestyle="--", label="Trigger onset")
-    plt.axvline(p1_latency, color="tab:red", linestyle="--", label="P1 latency")
-
+    plt.axvline(p1_latency_pooled, color="tab:red", linestyle="--",
+               label=f"P1 latency ({p1_latency_pooled * 1000:.1f} ms)")
     plt.xlabel("Peri-stimulus time (s)")
     plt.ylabel("EEG amplitude (µV)")
+    plt.title("Grand average ERP (all channels pooled)")
     plt.legend(loc="upper right")
+    save_pgf(fig_pooled, "erp_latency_pooled")
 
-    save_pgf(fig, "erp_latency")
+    return p1_latency

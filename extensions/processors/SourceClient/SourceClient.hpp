@@ -48,7 +48,7 @@ class SourceClient : public IProcessor {
 
   protected:
     // Data ports
-    PortOut<MultiChannelType<float>> *data_out_port_;
+    PortOut<MultiChannelType<double>> *data_out_port_;
 
     // Options
     options::Double fs_{1000};

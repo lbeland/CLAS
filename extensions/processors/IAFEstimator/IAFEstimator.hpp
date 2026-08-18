@@ -42,7 +42,7 @@ class IAFEstimator : public IProcessor {
 
   protected:
     // Data ports
-    PortIn<MultiChannelType<float>>  *data_in_port_;
+    PortIn<MultiChannelType<double>>  *data_in_port_;
     PortOut<ScalarType<double>>      *data_out_port_;
 
     // Options
@@ -81,13 +81,13 @@ class IAFEstimator : public IProcessor {
     int invalid_count_ = 0;
     int invalid_threshold_ = 0;
 
-    boost::circular_buffer<float> sample_window{1}; // resized in Prepare
+    boost::circular_buffer<double> sample_window{1}; // resized in Prepare
     std::vector<double> savgol_weights_; // Savitzky-Golay smoothing weights, evaluated at t=0 (see Prepare)
 
     // FFTW resources (allocated in Prepare, freed in Unprepare)
-    fftwf_plan    fft_plan_ = nullptr;
-    float        *signal_in = nullptr;
-    fftwf_complex *freq_half = nullptr;
+    fftw_plan    fft_plan_ = nullptr;
+    double       *signal_in = nullptr;
+    fftw_complex *freq_half = nullptr;
     std::vector<double> freqs_;
 
     const uint32_t MAX_NCHANNELS = 384;

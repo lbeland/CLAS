@@ -43,7 +43,7 @@ class PhaseEstimator : public IProcessor {
 
   protected:
     // Data ports
-    PortIn<MultiChannelType<float>>   *data_in_port_;
+    PortIn<MultiChannelType<double>>   *data_in_port_;
     PortOut<MultiChannelType<double>> *data_out_port_;
 
     // Options
@@ -61,7 +61,7 @@ class PhaseEstimator : public IProcessor {
     size_t n_fft_ = 0;
     size_t window_size_ = 1;
 
-    boost::circular_buffer<float> sample_window{1}; // resized in Preprocess
+    boost::circular_buffer<double> sample_window{1}; // resized in Preprocess
     std::string coeff_file_;                         // path to bandpass filter coefficients
     std::vector<std::complex<double>> coeffs_;       // frequency-domain bandpass coefficients
     std::complex<double> c_gain_;                    // MSE-optimal calibration gain for cecHT
@@ -73,12 +73,12 @@ class PhaseEstimator : public IProcessor {
     bool valid_iaf_ = false;
 
     // FFTW resources (allocated in Preprocess, freed in Unprepare)
-    float         *signal_in = nullptr;
-    fftwf_complex *freq_half = nullptr;
-    fftwf_complex *freq = nullptr;
-    fftwf_complex *out = nullptr;
-    fftwf_plan p_;
-    fftwf_plan p_inv_;
+    double       *signal_in = nullptr;
+    fftw_complex *freq_half = nullptr;
+    fftw_complex *freq = nullptr;
+    fftw_complex *out = nullptr;
+    fftw_plan p_;
+    fftw_plan p_inv_;
 
     const uint32_t MAX_NCHANNELS = 384;
 };

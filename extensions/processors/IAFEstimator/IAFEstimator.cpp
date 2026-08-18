@@ -329,9 +329,9 @@ IAFEstimator::IAFEstimator() : IProcessor(PRIORITY_HIGH)
 
 void IAFEstimator::CreatePorts()
 {
-    data_in_port_ = create_input_port<MultiChannelType<float>>(
+    data_in_port_ = create_input_port<MultiChannelType<double>>(
         "in",
-        MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
+        MultiChannelType<double>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
         PortInPolicy(SlotRange(0, MAX_NCHANNELS)));
 
     data_out_port_ = create_output_port<ScalarType<double>>(
@@ -351,7 +351,7 @@ void IAFEstimator::CompleteStreamInfo()
 void IAFEstimator::Prepare(GlobalContext &context)
 {
     const auto &info = data_in_port_->streaminfo(0);
-    const auto &p = info.parameters<MultiChannelType<float>::Parameters>();
+    const auto &p = info.parameters<MultiChannelType<double>::Parameters>();
     LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
     fs_ = p.sample_rate;
     window_size_ = window_size_sec_() * fs_;
@@ -410,8 +410,8 @@ void IAFEstimator::Prepare(GlobalContext &context)
 
     max_analyze_bin_ = 30 / freq_resolution_ + 1; // analyze up to 30 Hz to avoid high-frequency noise
 
-    signal_in = fftwf_alloc_real(n_fft_);
-    freq_half = fftwf_alloc_complex(n_fft_ / 2 + 1);
+    signal_in = fftw_alloc_real(n_fft_);
+    freq_half = fftw_alloc_complex(n_fft_ / 2 + 1);
 
     freqs_.resize(max_analyze_bin_);
     for (size_t k = 0; k < max_analyze_bin_; ++k)
@@ -420,13 +420,13 @@ void IAFEstimator::Prepare(GlobalContext &context)
     }
 
     {
-        fftwf_import_wisdom_from_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
+        fftw_import_wisdom_from_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
         std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
-        fft_plan_ = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half, FFTW_WISDOM_ONLY);
+        fft_plan_ = fftw_plan_dft_r2c_1d(n_fft_, signal_in, freq_half, FFTW_WISDOM_ONLY);
         if (fft_plan_ == nullptr)
         {
             LOG(WARNING) << name() << " No wisdom available for FFT planning, using patient mode.";
-            fft_plan_ = fftwf_plan_dft_r2c_1d(n_fft_, signal_in, freq_half, FFTW_PATIENT);
+            fft_plan_ = fftw_plan_dft_r2c_1d(n_fft_, signal_in, freq_half, FFTW_PATIENT);
         }
     }
 }
@@ -445,7 +445,7 @@ void IAFEstimator::Preprocess(ProcessingContext &context)
 
 void IAFEstimator::Process(ProcessingContext &context)
 {
-    MultiChannelType<float>::Data *data_in;
+    MultiChannelType<double>::Data *data_in;
     ScalarType<double>::Data *data_out;
 
     auto kalman_predict = [&]() {
@@ -491,10 +491,10 @@ void IAFEstimator::Process(ProcessingContext &context)
             }
             for (int i = window_size_; i < n_fft_; ++i)
             {
-                signal_in[i] = 0.0f;
+                signal_in[i] = 0.0;
             }
 
-            fftwf_execute(fft_plan_);
+            fftw_execute(fft_plan_);
 
             std::vector<double> power(max_analyze_bin_);
             for (size_t k = 0; k < max_analyze_bin_; ++k)
@@ -611,15 +611,15 @@ void IAFEstimator::Unprepare(GlobalContext &context)
 {
     {
         std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);
-        int ret = fftwf_export_wisdom_to_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
+        int ret = fftw_export_wisdom_to_filename(context.resolve_path("fftw_wisdom.txt", "fft_wisdom").c_str());
         if (ret == 0)
         {
             LOG(WARNING) << name() << " Failed to save FFTW wisdom.";
         }
-        fftwf_destroy_plan(fft_plan_);
+        fftw_destroy_plan(fft_plan_);
     }
-    fftwf_free(signal_in);
-    fftwf_free(freq_half);
+    fftw_free(signal_in);
+    fftw_free(freq_half);
 }
 
 REGISTERPROCESSOR(IAFEstimator);

@@ -32,12 +32,12 @@ void MultiChannelFilter::Configure(const GlobalContext &context) {
 }
 
 void MultiChannelFilter::CreatePorts() {
-  data_in_port_ = create_input_port<MultiChannelType<float>>(
-      "in", MultiChannelType<float>::Capabilities(ChannelRange(1, MAX_NCHANNELS)),
+  data_in_port_ = create_input_port<MultiChannelType<double>>(
+      "in", MultiChannelType<double>::Capabilities(ChannelRange(1, MAX_NCHANNELS)),
       PortInPolicy(SlotRange(0, MAX_NCHANNELS)));
 
-  data_out_port_ = create_output_port<MultiChannelType<float>>(
-      "out", MultiChannelType<float>::Parameters(), PortOutPolicy(SlotRange(0, MAX_NCHANNELS)));
+  data_out_port_ = create_output_port<MultiChannelType<double>>(
+      "out", MultiChannelType<double>::Parameters(), PortOutPolicy(SlotRange(0, MAX_NCHANNELS)));
 }
 
 void MultiChannelFilter::CompleteStreamInfo() {
@@ -55,14 +55,14 @@ void MultiChannelFilter::CompleteStreamInfo() {
     data_out_port_->streaminfo(k).set_stream_rate(
         data_in_port_->streaminfo(k).stream_rate());
     const auto &input_info = data_in_port_->slot(k)->streaminfo();
-    const auto &input_params = input_info.parameters<MultiChannelType<float>::Parameters>();
+    const auto &input_params = input_info.parameters<MultiChannelType<double>::Parameters>();
     data_out_port_->streaminfo(k).set_parameters(input_params);
   }
 }
 
 void MultiChannelFilter::Prepare(GlobalContext &context) {
   const auto &info = data_in_port_->streaminfo(0);
-  const auto &p = info.parameters<MultiChannelType<float>::Parameters>();
+  const auto &p = info.parameters<MultiChannelType<double>::Parameters>();
   LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
   double fs = p.sample_rate;
 
@@ -83,7 +83,7 @@ void MultiChannelFilter::Prepare(GlobalContext &context) {
     filters_.push_back(std::move(
         std::unique_ptr<dsp::filter::IFilter>(filter_template_->clone())));
     const auto &slot_info = data_in_port_->streaminfo(k);
-    const auto &slot_params = slot_info.parameters<MultiChannelType<float>::Parameters>();
+    const auto &slot_params = slot_info.parameters<MultiChannelType<double>::Parameters>();
     filters_.back()->realize(slot_params.nchannels);
   }
 }
@@ -93,8 +93,8 @@ void MultiChannelFilter::Preprocess(ProcessingContext &context) {
 }
 
 void MultiChannelFilter::Process(ProcessingContext &context) {
-  MultiChannelType<float>::Data *data_in = nullptr;
-  MultiChannelType<float>::Data *data_out = nullptr;
+  MultiChannelType<double>::Data *data_in = nullptr;
+  MultiChannelType<double>::Data *data_out = nullptr;
   auto nslots = data_in_port_->number_of_slots();
   decltype(nslots) k = 0;
 

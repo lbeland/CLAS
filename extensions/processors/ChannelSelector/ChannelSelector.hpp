@@ -36,7 +36,7 @@ class ChannelSelector : public IProcessor {
 
   protected:
     // Data ports
-    PortIn<MultiChannelType<float>>  *data_in_port_;
+    PortIn<MultiChannelType<double>>  *data_in_port_;
     PortOut<ScalarType<unsigned int>> *idx_out_port_;
 
     // Options

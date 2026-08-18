@@ -34,30 +34,30 @@ ChannelReductor::ChannelReductor() : IProcessor(PRIORITY_HIGH)
 
 void ChannelReductor::CreatePorts()
 {
-    data_in_port_ = create_input_port<MultiChannelType<float>>(
+    data_in_port_ = create_input_port<MultiChannelType<double>>(
         "in",
-        MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
+        MultiChannelType<double>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
         PortInPolicy(SlotRange(0, MAX_NCHANNELS)));
 
-    data_out_port_ = create_output_port<MultiChannelType<float>>(
+    data_out_port_ = create_output_port<MultiChannelType<double>>(
         "out",
-        MultiChannelType<float>::Parameters(1, 1, 1), // Placeholder, set in CompleteStreamInfo
+        MultiChannelType<double>::Parameters(1, 1, 1), // Placeholder, set in CompleteStreamInfo
         PortOutPolicy(SlotRange(0, MAX_NCHANNELS), 200, WaitStrategy::kBlockingStrategy));
 }
 
 void ChannelReductor::CompleteStreamInfo()
 {
-    const auto &input_params = data_in_port_->slot(0)->streaminfo().parameters<MultiChannelType<float>::Parameters>();
+    const auto &input_params = data_in_port_->slot(0)->streaminfo().parameters<MultiChannelType<double>::Parameters>();
 
     // Pass through only the selected channel; keep nsamples and sample_rate from input
-    data_out_port_->streaminfo(0).set_parameters(MultiChannelType<float>::Parameters(1, input_params.nsamples, input_params.sample_rate));
+    data_out_port_->streaminfo(0).set_parameters(MultiChannelType<double>::Parameters(1, input_params.nsamples, input_params.sample_rate));
     data_out_port_->streaminfo(0).set_stream_rate(data_in_port_->streaminfo(0));
 }
 
 void ChannelReductor::Prepare(GlobalContext &context)
 {
     const auto &info = data_in_port_->streaminfo(0);
-    const auto &p = info.parameters<MultiChannelType<float>::Parameters>();
+    const auto &p = info.parameters<MultiChannelType<double>::Parameters>();
     LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
 }
 
@@ -69,8 +69,8 @@ void ChannelReductor::Preprocess(ProcessingContext &context)
 
 void ChannelReductor::Process(ProcessingContext &context)
 {
-    MultiChannelType<float>::Data *data_in = nullptr;
-    MultiChannelType<float>::Data *data_out = nullptr;
+    MultiChannelType<double>::Data *data_in = nullptr;
+    MultiChannelType<double>::Data *data_out = nullptr;
 
     while (!context.terminated())
     {

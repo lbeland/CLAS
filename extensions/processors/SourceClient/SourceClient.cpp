@@ -100,20 +100,20 @@ SourceClient::SourceClient() : IProcessor(PRIORITY_HIGH)
 
 void SourceClient::CreatePorts()
 {
-    data_out_port_ = create_output_port<MultiChannelType<float>>(
+    data_out_port_ = create_output_port<MultiChannelType<double>>(
         "out",
-        MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()),
+        MultiChannelType<double>::Parameters(nchannels_(), nsamples_(), fs_()),
         PortOutPolicy(SlotRange(2), 200, WaitStrategy::kBlockingStrategy));
 }
 
 void SourceClient::CompleteStreamInfo()
 {
     // Slot 0: EEG channels
-    data_out_port_->slot(0)->streaminfo().set_parameters(MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
+    data_out_port_->slot(0)->streaminfo().set_parameters(MultiChannelType<double>::Parameters(nchannels_(), nsamples_(), fs_()));
     data_out_port_->slot(0)->streaminfo().set_stream_rate(fs_());
 
     // Slot 1: 8 AUX channels + 1 trigger channel (9 total)
-    data_out_port_->slot(1)->streaminfo().set_parameters(MultiChannelType<float>::Parameters(9, nsamples_(), fs_()));
+    data_out_port_->slot(1)->streaminfo().set_parameters(MultiChannelType<double>::Parameters(9, nsamples_(), fs_()));
     data_out_port_->slot(1)->streaminfo().set_stream_rate(fs_());
 }
 
@@ -252,16 +252,18 @@ void SourceClient::recalibrate_fs_(uint64_t sample_counter, int64_t ts_us)
 
 void SourceClient::Process(ProcessingContext &context)
 {
-    SlotOut<MultiChannelType<float>> *data_slot = data_out_port_->slot(0);
-    SlotOut<MultiChannelType<float>> *aux_slot = data_out_port_->slot(1);
-    MultiChannelType<float>::Data *data_out = nullptr;
-    MultiChannelType<float>::Data *aux_out = nullptr;
+    SlotOut<MultiChannelType<double>> *data_slot = data_out_port_->slot(0);
+    SlotOut<MultiChannelType<double>> *aux_slot = data_out_port_->slot(1);
+    MultiChannelType<double>::Data *data_out = nullptr;
+    MultiChannelType<double>::Data *aux_out = nullptr;
     uint8_t buffer[2048];
     uint32_t first_sample_counter = 0;
     uint32_t sample_counter = 0;
 
-    std::vector<float> eeg_vec(nchannels_());
-    std::vector<float> aux_vec(9); // 8 AUX + 1 trigger
+    // Samples arrive over UDP as float32 (see parse_packet/read_f32_le); they are
+    // mapped to double immediately here so every downstream processor works in double.
+    std::vector<double> eeg_vec(nchannels_());
+    std::vector<double> aux_vec(9); // 8 AUX + 1 trigger
 
     sockaddr_in src{};
     socklen_t srclen = sizeof(src);
@@ -417,7 +419,7 @@ void SourceClient::Process(ProcessingContext &context)
             LOG(WARNING) << name() << " Missed " << missed << " packet(s). Last counter: " << sample_counter << ", current: " << pkt.sample_counter - first_sample_counter;
 
             int virt_sample_counter = sample_counter;
-            std::vector<MultiChannelType<float>::Data *> data_out_vec = data_slot->ClaimDataN(missed, false);
+            std::vector<MultiChannelType<double>::Data *> data_out_vec = data_slot->ClaimDataN(missed, false);
             for (auto &data_out : data_out_vec)
             {
                 virt_sample_counter++;
@@ -439,7 +441,7 @@ void SourceClient::Process(ProcessingContext &context)
             virt_sample_counter = sample_counter;
             if (store_aux)
             {
-                std::vector<MultiChannelType<float>::Data *> aux_out_vec = aux_slot->ClaimDataN(missed, false);
+                std::vector<MultiChannelType<double>::Data *> aux_out_vec = aux_slot->ClaimDataN(missed, false);
                 for (auto &aux_out : aux_out_vec)
                 {
                     virt_sample_counter++;
@@ -451,7 +453,7 @@ void SourceClient::Process(ProcessingContext &context)
                         hardware_time_us = ts_us;
                     }
                     std::copy(last_packet_.aux.begin(), last_packet_.aux.end(), aux_vec.begin());
-                    aux_vec[8] = (last_packet_.input_trigger >> 7) & 1 ? 1.0f : 0.0f;
+                    aux_vec[8] = (last_packet_.input_trigger >> 7) & 1 ? 1.0 : 0.0;
                     aux_out->set_data_sample(0, aux_vec);
                     aux_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us_);
                     aux_out->set_source_timestamp(micros_to_timepoint(hardware_time_us));
@@ -507,7 +509,7 @@ void SourceClient::Process(ProcessingContext &context)
         if (store_aux)
         {
             std::copy(pkt.aux.begin(), pkt.aux.end(), aux_vec.begin());
-            aux_vec[8] = (pkt.input_trigger >> 7) & 1 ? 1.0f : 0.0f;
+            aux_vec[8] = (pkt.input_trigger >> 7) & 1 ? 1.0 : 0.0;
             aux_out->set_data_sample(0, aux_vec);
             aux_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us_);
         }

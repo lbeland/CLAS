@@ -109,9 +109,9 @@ Producer::Producer() : IProcessor(PRIORITY_HIGH)
 
 void Producer::CreatePorts()
 {
-    data_out_port_ = create_output_port<MultiChannelType<float>>(
+    data_out_port_ = create_output_port<MultiChannelType<double>>(
         "out",
-        MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()),
+        MultiChannelType<double>::Parameters(nchannels_(), nsamples_(), fs_()),
         PortOutPolicy(SlotRange(1), 200, WaitStrategy::kBlockingStrategy));
 
     meta_out_port_ = create_output_port<MultiChannelType<double>>(
@@ -123,7 +123,7 @@ void Producer::CreatePorts()
 void Producer::CompleteStreamInfo()
 {
     data_out_port_->slot(0)->streaminfo().set_parameters(
-        MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
+        MultiChannelType<double>::Parameters(nchannels_(), nsamples_(), fs_()));
     data_out_port_->slot(0)->streaminfo().set_stream_rate(fs_());
 
     meta_out_port_->slot(0)->streaminfo().set_parameters(
@@ -138,10 +138,10 @@ void Producer::Preprocess(ProcessingContext &context)
 
 void Producer::Process(ProcessingContext &context)
 {
-    MultiChannelType<float>::Data *data_out = nullptr;
+    MultiChannelType<double>::Data *data_out = nullptr;
     MultiChannelType<double>::Data *meta_out = nullptr;
 
-    std::vector<float> sample_vec(nchannels_());
+    std::vector<double> sample_vec(nchannels_());
 
     double carrier_phase = 0.0;
     double modulation_phase = 0.0;
@@ -154,6 +154,7 @@ void Producer::Process(ProcessingContext &context)
     // The wallclock offset converts it to UTC µs for hardware_timestamp, matching SourceClient.
     uint64_t start_time = std::chrono::duration_cast<std::chrono::microseconds>(
         Clock::now().time_since_epoch()).count();
+    TimePoint start_time_point = Clock::now();
     int64_t steady_to_wallclock_offset_us =
         static_cast<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count()) -
@@ -162,7 +163,7 @@ void Producer::Process(ProcessingContext &context)
     // Expected wall-clock gap between consecutive packets, used only to pace emission.
     const double inter_packet_ns = (static_cast<double>(nsamples_()) / fs_()) * 1e9;
 
-    last_emit_time_ = Clock::now();
+    // last_emit_time_ = Clock::now();
 
     while (!context.terminated())
     {
@@ -171,13 +172,18 @@ void Producer::Process(ProcessingContext &context)
             break;
         }
 
-        const TimePoint target_emit_time =
-            last_emit_time_ + std::chrono::nanoseconds(static_cast<int64_t>(inter_packet_ns));
+        // const TimePoint target_emit_time =
+        //     last_emit_time_ + std::chrono::nanoseconds(static_cast<int64_t>(inter_packet_ns));
+        const TimePoint target_emit_time = start_time_point + packet_count_ * std::chrono::nanoseconds(static_cast<int64_t>(inter_packet_ns));
+
         const TimePoint now = Clock::now();
         if (target_emit_time > now)
         {
-            custom_sleep_for(std::chrono::duration_cast<std::chrono::microseconds>(
-                target_emit_time - now).count());
+            constexpr int64_t puffer = 5;
+            const int64_t remaining_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                target_emit_time - now).count();
+            const int64_t sleep_for = std::max<int64_t>(remaining_us - puffer, 0);
+            custom_sleep_for(static_cast<uint64_t>(sleep_for));
         }
 
         SignalState state = ComputeSignalState(
@@ -194,13 +200,13 @@ void Producer::Process(ProcessingContext &context)
 
         std::vector<double> meta_data = {state.amplitude, state.theta, state.inst_freq};
 
-        current_iaf_ = static_cast<float>(state.inst_freq);
+        current_iaf_ = state.inst_freq;
         iaf_state_->set(current_iaf_);
 
         // hardware_time_us is in steady_clock µs; convert to wall-clock for hardware_timestamp
         hardware_time_us = start_time + (uint64_t)packet_count_ * 1000000ULL / fs_();
 
-        std::fill(sample_vec.begin(), sample_vec.end(), static_cast<float>(state.value));
+        std::fill(sample_vec.begin(), sample_vec.end(), state.value);
 
         data_out = data_out_port_->slot(0)->ClaimData(false);
 
@@ -221,7 +227,7 @@ void Producer::Process(ProcessingContext &context)
 
         // Re-anchor from the actual emit time (not the fixed schedule), so the next
         // iteration's pacing reflects reality rather than trying to catch up.
-        last_emit_time_ = Clock::now();
+        // last_emit_time_ = Clock::now();
 
         carrier_phase = WrapPhase(carrier_phase + carrier_step);
         modulation_phase = WrapPhase(modulation_phase + modulation_step);

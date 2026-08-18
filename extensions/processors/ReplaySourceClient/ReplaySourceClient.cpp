@@ -224,6 +224,13 @@ void ReplaySourceClient::LoadFile(const std::string &filepath)
         if (fd.name == "signal" || fd.name == "scalar_data")
         {
             signal_offset_ = fd.offset;
+            signal_dtype_ = fd.dtype;
+            if (fd.dtype != "float32" && fd.dtype != "float64")
+            {
+                throw std::runtime_error(
+                    "ReplaySourceClient: unsupported signal dtype '" + fd.dtype +
+                    "' in file '" + filepath + "' (expected float32 or float64)");
+            }
 
             if (fd.dims.size() >= 2)
             {
@@ -281,16 +288,16 @@ ReplaySourceClient::ReplaySourceClient() : IProcessor(PRIORITY_HIGH)
 
 void ReplaySourceClient::CreatePorts()
 {
-    data_out_port_ = create_output_port<MultiChannelType<float>>(
+    data_out_port_ = create_output_port<MultiChannelType<double>>(
         "out",
-        MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()),
+        MultiChannelType<double>::Parameters(nchannels_(), nsamples_(), fs_()),
         PortOutPolicy(SlotRange(1), 200, WaitStrategy::kBlockingStrategy));
 }
 
 void ReplaySourceClient::CompleteStreamInfo()
 {
     data_out_port_->slot(0)->streaminfo().set_parameters(
-        MultiChannelType<float>::Parameters(nchannels_(), nsamples_(), fs_()));
+        MultiChannelType<double>::Parameters(nchannels_(), nsamples_(), fs_()));
     data_out_port_->slot(0)->streaminfo().set_stream_rate(fs_());
 }
 
@@ -335,8 +342,9 @@ void ReplaySourceClient::Process(ProcessingContext &context)
         return;
     }
 
-    MultiChannelType<float>::Data *data_out = nullptr;
+    MultiChannelType<double>::Data *data_out = nullptr;
     auto *out_slot = data_out_port_->slot(0);
+    const bool signal_is_float32 = (signal_dtype_ == "float32");
 
     const std::int64_t max_packets = n_messages_();
 
@@ -385,15 +393,31 @@ void ReplaySourceClient::Process(ProcessingContext &context)
         // Pointer to the start of the current record in the payload
         const std::uint8_t *record_ptr = payload_.data() + current_record_ * record_size_;
 
-        // Copy signal samples: layout is [nchannels][nsamples] of float32
-        const float *src = reinterpret_cast<const float *>(record_ptr + signal_offset_);
+        // Copy signal samples: layout is [nchannels][nsamples], stored as either
+        // float32 (recordings made before the float->double conversion) or
+        // float64 (current format); either way it is mapped to double on read.
         const unsigned int nch = nchannels_();
         const unsigned int ns = nsamples_();
-        for (unsigned int ch = 0; ch < nch; ++ch)
+        if (signal_is_float32)
         {
-            for (unsigned int s = 0; s < ns; ++s)
+            const float *src = reinterpret_cast<const float *>(record_ptr + signal_offset_);
+            for (unsigned int ch = 0; ch < nch; ++ch)
             {
-                data_out->set_data_sample(s, ch, src[ch * ns + s]);
+                for (unsigned int s = 0; s < ns; ++s)
+                {
+                    data_out->set_data_sample(s, ch, static_cast<double>(src[ch * ns + s]));
+                }
+            }
+        }
+        else
+        {
+            const double *src = reinterpret_cast<const double *>(record_ptr + signal_offset_);
+            for (unsigned int ch = 0; ch < nch; ++ch)
+            {
+                for (unsigned int s = 0; s < ns; ++s)
+                {
+                    data_out->set_data_sample(s, ch, src[ch * ns + s]);
+                }
             }
         }
 

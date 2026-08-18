@@ -36,7 +36,7 @@ public:
 
 protected:
     // Data ports
-    PortOut<MultiChannelType<float>> *data_out_port_;
+    PortOut<MultiChannelType<double>> *data_out_port_;
     PortOut<MultiChannelType<double>> *meta_out_port_;
 
     // Options

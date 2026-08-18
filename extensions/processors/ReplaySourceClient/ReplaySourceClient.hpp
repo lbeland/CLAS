@@ -56,7 +56,7 @@ class ReplaySourceClient : public IProcessor {
 
   protected:
     // Data ports
-    PortOut<MultiChannelType<float>> *data_out_port_;
+    PortOut<MultiChannelType<double>> *data_out_port_;
 
     // Options — replay source selection
     options::String path_{"run://"};
@@ -86,6 +86,7 @@ class ReplaySourceClient : public IProcessor {
     std::size_t record_size_{0};            // total bytes per record
     std::size_t n_records_{0};              // number of complete records in the file
     std::size_t signal_offset_{0};          // byte offset of the "signal" field
+    std::string signal_dtype_{"float32"};   // on-disk element type of the "signal" field
     std::vector<std::uint8_t> payload_;     // raw binary payload (after YAML header)
 
     // Runtime replay state

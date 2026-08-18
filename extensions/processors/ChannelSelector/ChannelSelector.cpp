@@ -40,9 +40,9 @@ ChannelSelector::ChannelSelector() : IProcessor(PRIORITY_HIGH)
 
 void ChannelSelector::CreatePorts()
 {
-    data_in_port_ = create_input_port<MultiChannelType<float>>(
+    data_in_port_ = create_input_port<MultiChannelType<double>>(
         "in",
-        MultiChannelType<float>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
+        MultiChannelType<double>::Capabilities(ChannelRange(1, 256), SampleRange(1, 10000)),
         PortInPolicy(SlotRange(0, MAX_NCHANNELS)));
 
     idx_out_port_ = create_output_port<ScalarType<unsigned int>>(
@@ -60,7 +60,7 @@ void ChannelSelector::CompleteStreamInfo()
 void ChannelSelector::Prepare(GlobalContext &context)
 {
     const auto &info = data_in_port_->streaminfo(0);
-    const auto &p = info.parameters<MultiChannelType<float>::Parameters>();
+    const auto &p = info.parameters<MultiChannelType<double>::Parameters>();
     LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
 
     fs_ = p.sample_rate;
@@ -109,7 +109,7 @@ void ChannelSelector::Preprocess(ProcessingContext &context)
 
 void ChannelSelector::Process(ProcessingContext &context)
 {
-    MultiChannelType<float>::Data *data_in = nullptr;
+    MultiChannelType<double>::Data *data_in = nullptr;
     ScalarType<unsigned int>::Data *idx_out = nullptr;
 
     const double rms_thresh_uv = rms_threshold_uv_();
@@ -130,7 +130,7 @@ void ChannelSelector::Process(ProcessingContext &context)
         // Update EMA for all selected channels so no channel goes stale
         for (unsigned int channel_idx : selected_channels_)
         {
-            const double s = static_cast<double>(data_in->data_sample(0, channel_idx));
+            const double s = data_in->data_sample(0, channel_idx);
             ema_[channel_idx] = ema_mu_ * ema_[channel_idx] + (1.0 - ema_mu_) * s * s;
         }
 

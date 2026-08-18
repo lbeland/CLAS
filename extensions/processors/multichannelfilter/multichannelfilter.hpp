@@ -39,8 +39,8 @@ class MultiChannelFilter : public IProcessor {
 
   protected:
     // Data ports
-    PortIn<MultiChannelType<float>>  *data_in_port_;
-    PortOut<MultiChannelType<float>> *data_out_port_;
+    PortIn<MultiChannelType<double>>  *data_in_port_;
+    PortOut<MultiChannelType<double>> *data_out_port_;
 
     // Options
     options::Value<YAML::Node, false> filter_def_{};

@@ -101,6 +101,7 @@ int sigterm_alsa_device_holders_(const std::string &dev)
 StimulusController::StimulusController() : IProcessor(PRIORITY_HIGH)
 {
     add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
+    add_option("max_n_stimuli", max_n_stimuli_, "Maximum number of stimuli to present (-1 = infinite). Graph is stopped automatically");
     add_option("stim_onset_deg", stim_onset_deg_, "Stimulus onset phase in degrees.");
     add_option("audio_latency_s", audio_latency_s_, "Estimated audio latency in seconds (for phase correction).");
     add_option("erp_latency_s", erp_latency_s_, "Estimated auditory evoked response potential latency in seconds (for phase correction).");
@@ -286,14 +287,14 @@ void StimulusController::Preprocess(ProcessingContext &context)
 
     if (use_background_sound_() && valid_background_)
     {
-        // Fill buffer with 1 second of background sound to avoid underruns at start
+        // Fill buffer with 5 seconds of background sound to avoid underruns at start
         int frames = (int)(5 * fs_audio_); // 5 seconds of audio
         std::vector<float> out_f(frames * audio_channels_());
         ma_data_source_read_pcm_frames(&decoder_, out_f.data(), frames, NULL);
         for (float s : out_f)
             background_sound_buffer_->try_enqueue(s);
 
-        // Get power and peak of background sound for gain normalization
+        // Get power and peak of background sound (first 5 seconds) for gain normalization
         double power_b = 0.0;
         float peak_bg = 0.0f;
         for (float sample : out_f)
@@ -407,6 +408,8 @@ void StimulusController::build_audio_buffers_()
 
     std::mt19937 rng(30); // burst will look the same for each run
     std::vector<double> mono = voss(burst_frames_precompute, num_octaves, rng);
+
+    // Scale to [-1, 1] 
     double peak = 0.0;
     power_s_ = 0.0;
     for (double v : mono)
@@ -787,14 +790,11 @@ void StimulusController::audio_thread_main_()
     std::vector<float>   out_f(buffer_size);
     std::vector<int16_t> out_i16(buffer_size);
     std::vector<int32_t> out_i32(buffer_size);
-    int queue_size_left = 0;
-    int queue_size_max = 0;
-    int queue_size_min = snd_pcm_avail(pcm_);
-    LOG(INFO) << name() << " Audio thread started, initial queue size: " << queue_size_min << " frames";
+
     snd_pcm_t *local_pcm = nullptr;
     bool do_burst = false;
     snd_pcm_sframes_t frames = 0;
-    snd_pcm_sframes_t written = 0;
+    snd_pcm_sframes_t written;
     // One-pole gain smoother scaffolding: currently disabled (alpha=1.0 means an
     // instant step to target_gain each sample, no ramping). The commented-out
     // expression below is the formula to re-enable a ~kGainRampMs ramp if needed.
@@ -856,7 +856,6 @@ void StimulusController::audio_thread_main_()
         // LOG(INFO) << name() << " Audio thread loop time: " << std::chrono::duration<double, std::milli>(Clock::now() - start_time).count() << " ms";
     }
 
-    LOG(INFO) << name() << "Max queue size:: " << queue_size_max << " frames, Min queue size: " << queue_size_min << " frames";
     // Drain only if we still have a valid handle
     {
         std::lock_guard<std::mutex> lock(audio_mutex_);
@@ -871,7 +870,6 @@ void StimulusController::audio_thread_main_()
 
 void StimulusController::Process(ProcessingContext &context)
 {
-
     MultiChannelType<double>::Data *data_in;
     MultiChannelType<double>::Data *data_out;
 
@@ -936,7 +934,7 @@ void StimulusController::Process(ProcessingContext &context)
         }
         else if ((std::isnan(last_iaf_) && std::isfinite(iaf_)) || std::abs(iaf_ - last_iaf_) > 1e-1)
         {
-            const bool frames_changed = compute_burst_params_(iaf_);
+            compute_burst_params_(iaf_);
 
             if (!randomize_stim_onset_() && min_stim_dist_sec_() == 0)
             {
@@ -1040,6 +1038,11 @@ void StimulusController::Process(ProcessingContext &context)
         if (packet_count_ % static_cast<int>(10 * fs_) == 0)
         {
             LOG(INFO) << name() << " processed " << packet_count_ << " packets, stimuli presented: " << stimuli_count_;
+        }
+        if (max_n_stimuli_() != -1 && !in_stim_window && stimuli_count_ >= max_n_stimuli_())
+        {
+            LOG(INFO) << name() << " reached maximum number of stimuli: " << max_n_stimuli_();
+            context.Terminate();
         }
 
         packet_count_++;

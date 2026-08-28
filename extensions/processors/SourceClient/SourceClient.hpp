@@ -53,7 +53,7 @@ class SourceClient : public IProcessor {
     // Options
     options::Double fs_{1000};
     options::Int nchannels_{32};
-    options::Int nsamples_{100};
+    options::Int nsamples_{1};
     options::Int n_messages_{-1};
     options::Bool store_aux_{true};
     // Number of packets used for initial start-time calibration.

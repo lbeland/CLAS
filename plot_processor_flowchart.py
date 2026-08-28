@@ -18,7 +18,6 @@ Also requires Graphviz installed on the system:
 from __future__ import annotations
 
 import argparse
-from itertools import combinations
 import re
 import sys
 from pathlib import Path
@@ -180,7 +179,6 @@ def make_processor_label(name: str, spec: Dict[str, Any]) -> str:
     """
     proc_class = spec.get("class", "Unknown")
     options = spec.get("options", {}) or {}
-    advanced = spec.get("advanced", {}) or {}
 
     option_lines = []
     for key, value in options.items():
@@ -190,22 +188,19 @@ def make_processor_label(name: str, spec: Dict[str, Any]) -> str:
         else:
             option_lines.append(f"{key}: {value}")
 
-    advanced_lines = []
-    for key, value in advanced.items():
-        if isinstance(value, dict):
-            advanced_lines.append(f"{key}: {value}")
-        else:
-            advanced_lines.append(f"{key}: {value}")
 
-    if "Serializer" in name:
+    is_serializer = "Serializer" in name
+
+    if is_serializer:
         color = "lightpink"
     else:
         color = "lightsteelblue"
 
-    rows = [
-        f'<TR><TD BGCOLOR="{color}"><B>{escape_html(name)}</B></TD></TR>',
-        f'<TR><TD ALIGN="LEFT"><B>class:</B> {escape_html(str(proc_class))}</TD></TR>',
-    ]
+    rows = [f'<TR><TD BGCOLOR="{color}"><B>{escape_html(name)}</B></TD></TR>']
+    if not is_serializer:
+        rows.append(
+            f'<TR><TD ALIGN="LEFT"><B>class:</B> {escape_html(str(proc_class))}</TD></TR>'
+        )
 
     if option_lines:
         rows.append(
@@ -214,15 +209,9 @@ def make_processor_label(name: str, spec: Dict[str, Any]) -> str:
             + "</TD></TR>"
         )
 
-    if advanced_lines:
-        rows.append(
-            f'<TR><TD ALIGN="LEFT"><B>advanced</B><BR ALIGN="LEFT"/>'
-            + "<BR ALIGN=\"LEFT\"/>".join(escape_html(line) for line in advanced_lines) + '<BR ALIGN="LEFT"/>'
-            + "</TD></TR>"
-        )
-
+    cellpadding = 4 if is_serializer else 8
     return f"""<
-<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="8">
+<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="{cellpadding}">
 {''.join(rows)}
 </TABLE>
 >"""
@@ -234,6 +223,48 @@ def escape_html(text: str) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
+
+
+def compute_flow_order(processors: Dict[str, Any], edges: List[Tuple[str, str]]) -> Dict[str, int]:
+    """
+    Assign each processor an integer position matching the rank dot's LR
+    layout will give it (longest-path-from-source level), so that
+    shared-state edges can be drawn between flow-adjacent processors
+    instead of arbitrarily (e.g. alphabetically) ordered ones.
+
+    A plain topological pop-order is not enough here: two sibling nodes at
+    the same true rank can be interleaved with a downstream node depending
+    on queue tie-breaks, which just relocates the long, rank-skipping
+    edges this is meant to avoid. Longest-path levels keep same-rank nodes
+    together.
+    """
+    adjacency: Dict[str, List[str]] = {name: [] for name in processors}
+    indegree: Dict[str, int] = {name: 0 for name in processors}
+    for src, dst in edges:
+        adjacency[src].append(dst)
+        indegree[dst] += 1
+
+    level: Dict[str, int] = {name: 0 for name in processors if indegree[name] == 0}
+    queue = list(level.keys())
+    seen = set(queue)
+    while queue:
+        node = queue.pop(0)
+        for nxt in adjacency[node]:
+            level[nxt] = max(level.get(nxt, 0), level[node] + 1)
+            indegree[nxt] -= 1
+            if indegree[nxt] == 0 and nxt not in seen:
+                seen.add(nxt)
+                queue.append(nxt)
+
+    # Any processors left out (cycles, or simply unreachable) sort after
+    # everything else, in their original declaration order.
+    decl_index = {name: idx for idx, name in enumerate(processors)}
+    unreached_level = (max(level.values()) + 1) if level else 0
+    ordered = sorted(
+        processors,
+        key=lambda name: (level.get(name, unreached_level), decl_index[name]),
+    )
+    return {name: idx for idx, name in enumerate(ordered)}
 
 
 def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
@@ -276,6 +307,7 @@ def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
         dot.node(proc_name, label=label)
 
     # Add edges from connections
+    flow_edges: List[Tuple[str, str]] = []
     for raw in connections:
         if not isinstance(raw, str):
             raise SystemExit(f"Each connection must be a string, got: {raw!r}")
@@ -289,6 +321,9 @@ def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
 
         edge_label = f"out.{src_idx} → in.{dst_idx}"
         dot.edge(src_proc, dst_proc, label=edge_label)
+        flow_edges.append((src_proc, dst_proc))
+
+    flow_order = compute_flow_order(processors, flow_edges)
 
     # Add dashed undirected links between processors that share one or more states.
     shared_state_pairs: Dict[Tuple[str, str], List[str]] = {}
@@ -314,7 +349,12 @@ def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
                 )
             processors_for_state.add(proc_name)
 
-        for left, right in combinations(sorted(processors_for_state), 2):
+        # Chain flow-adjacent processors instead of connecting every pair:
+        # a clique would include long, rank-skipping edges (e.g. the first
+        # and last processor in a 3+ way state) that graphviz has to route
+        # around the rest of the diagram, producing ugly sweeping curves.
+        ordered = sorted(processors_for_state, key=lambda name: flow_order[name])
+        for left, right in zip(ordered, ordered[1:]):
             pair = (left, right)
             shared_state_pairs.setdefault(pair, []).append(str(state_name))
 

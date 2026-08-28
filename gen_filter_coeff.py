@@ -1,8 +1,34 @@
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import butter, freqz_sos, bessel
 from scipy import fftpack
 import os
+
+# Saving to a ".pgf" filename invokes the pgf backend automatically, so the
+# default (interactive) backend stays active and plt.show() keeps working.
+mpl.rcParams.update({
+    "pgf.texsystem": "pdflatex",
+    'font.family': 'serif',
+    'text.usetex': True,
+    'pgf.rcfonts': False,
+})
+
+PLOTS_DIR = "/home/linda/Documents/MA/plots"
+os.makedirs(PLOTS_DIR, exist_ok=True)
+
+TEXTWIDTH    = 6.30045
+ASPECT_RATIO = 9 / 16
+FIG_WIDTH    = TEXTWIDTH
+FIG_HEIGHT   = FIG_WIDTH * ASPECT_RATIO
+FIGSIZE      = (FIG_WIDTH, FIG_HEIGHT)
+
+
+def save_pgf(fig, name: str) -> None:
+    fig.savefig(os.path.join(PLOTS_DIR, f"{name}.pgf"), bbox_inches="tight")
+
+def save_png(fig, name: str) -> None:
+    fig.savefig(os.path.join(PLOTS_DIR, f"{name}.png"), bbox_inches="tight", dpi=300)
 
 
 def _dirichlet_kernel(alpha, N):
@@ -104,7 +130,6 @@ def gen_filter_ecHT(filter_params, output_folder):
         # Store frequency response of bandpass filter (for PhaseEstimator)
         filt_freq = np.fft.fftfreq(length, d=1 / fs)
         _, H = freqz_sos(sos, worN=filt_freq, fs=fs)
-        coeffs = H[:, None]
 
         calib_gain = mse_optimal_calibration_gain(f0=f0, fs=fs, N=window_length, L=length, H=H)
 
@@ -134,6 +159,8 @@ def gen_filter(filter_params, fs, filter_name, output_folder):
 
         if low_cutoff == 0:
             sos = butter(N=N, Wn=high_cutoff / (fs / 2), btype="low", output="sos")
+        elif high_cutoff == 0:
+            sos = butter(N=N, Wn=low_cutoff / (fs / 2), btype="high", output="sos")
         else:
             Wn = [low_cutoff / (fs / 2), high_cutoff / (fs / 2)]
             sos = butter(N=N, Wn=Wn, btype=btype, output="sos")
@@ -177,67 +204,84 @@ def gen_filter(filter_params, fs, filter_name, output_folder):
 
     return
 
-def plot_filter_response(sos, fs):
+def plot_filter_response(sos_by_label, fs):
+    """sos_by_label: dict mapping a legend label (e.g. "N=1") to an SOS array."""
     freqs = np.arange(0, fs/2, 0.1)
-    f, H = freqz_sos(sos, worN=freqs, fs=fs)
 
-    magnitude_db = 20 * np.log10(np.maximum(np.abs(H), 1e-12))
-    phase_rad = np.angle(H, deg=True)
+    zoom_lo, zoom_hi = 7, 12
+    pad_db = 0.5
+    pad_deg = 0.5
+    mag_zoom_min, mag_zoom_max = np.inf, -np.inf
+    phase_zoom_min, phase_zoom_max = np.inf, -np.inf
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
-    fig.set_facecolor("white")
+    fig, ((ax1, ax1z), (ax2, ax2z)) = plt.subplots(2, 2, sharex="col", figsize=FIGSIZE)
 
-    ax1.plot(f, magnitude_db, linewidth=2)
-    ax1.set_title("Filter Frequency Response")
-    ax1.set_ylabel("Magnitude (dB)")
-    ax1.grid(True, alpha=0.8)
+    for label, sos in sos_by_label.items():
+        f, H = freqz_sos(sos, worN=freqs, fs=fs)
+        magnitude_db = 20 * np.log10(np.maximum(np.abs(H), 1e-12))
+        phase_deg = np.angle(H, deg=True)
+        zoom_mask = (f >= zoom_lo) & (f <= zoom_hi)
 
-    ax2.plot(f, phase_rad, 'o-',linewidth=2)
+        ax1.plot(f, magnitude_db, linewidth=1.5, label=label)
+        ax2.plot(f, phase_deg, label=label)
+        ax1z.plot(f, magnitude_db, linewidth=1.5, label=label)
+        ax2z.plot(f, phase_deg, label=label)
+
+        mag_zoom_min = min(mag_zoom_min, magnitude_db[zoom_mask].min())
+        mag_zoom_max = max(mag_zoom_max, magnitude_db[zoom_mask].max())
+        phase_zoom_min = min(phase_zoom_min, phase_deg[zoom_mask].min())
+        phase_zoom_max = max(phase_zoom_max, phase_deg[zoom_mask].max())
+
+    ax1.set_ylabel("Amplitude (dB)")
+    ax1.set_title("(a)")
+    ax1.grid(True, linewidth=0.2)
+
     ax2.set_xlabel("Frequency (Hz)")
+    ax2.set_title("(b)")
     ax2.set_ylabel("Phase (deg)")
-    ax2.grid(True, alpha=0.8)
+    ax2.grid(True, linewidth=0.3)
+    ax2.set_xlim(0, 100)
 
-    plt.tight_layout()
+    ax1z.set_title("(c)")
+    ax1z.set_xlim(zoom_lo, zoom_hi)
+    ax1z.set_ylim(mag_zoom_min - pad_db, mag_zoom_max + pad_db)
+    ax1z.grid(True, linewidth=0.3)
+
+    ax2z.set_title("(d)")
+    ax2z.set_xlabel("Frequency (Hz)")
+    ax2z.set_xlim(zoom_lo, zoom_hi)
+    ax2z.set_ylim(phase_zoom_min - pad_deg, phase_zoom_max + pad_deg)
+    ax2z.grid(True, linewidth=0.3)
+
+    handles, labels = ax1.get_legend_handles_labels()
+    fig.tight_layout(rect=[0, 0, 0.85, 1])
+    fig.legend(handles, labels, title="Order", loc="center right", ncol=1, bbox_to_anchor=(1, 0.5), frameon=True)
+
+    save_pgf(fig, "filter_response")
+    save_png(fig, "filter_response")
+    plt.show()
 
 
 if __name__ == "__main__":
     # Bandpass
-    N = 1
-    low_cutoff = 2.5
-    high_cutoff = 35
     fs = 10000
 
-    sos1 = butter(
-        N=N,
-        Wn=[low_cutoff / (fs / 2), high_cutoff / (fs / 2)],
-        btype="bandpass",
-        output="sos",
-    )
+    sos_by_label = {}
+    for N in (1, 2, 4):
+        sos_bandpass = butter(
+            N=N,
+            Wn=[5 / (fs / 2), 16 / (fs / 2)],
+            btype="bandpass",
+            output="sos",
+        )
 
-    sos2 = butter(
-        N=4,
-        Wn=[30 / (fs / 2), 70 / (fs / 2)],
-        btype="bandstop",
-        output="sos",
-    )
-    
-    plot_filter_response(np.vstack([sos1, sos2]), fs)
+        sos_bandstop = butter(
+            N=N,
+            Wn=[46 / (fs / 2), 54 / (fs / 2)],
+            btype="bandstop",
+            output="sos",
+        )
 
-    # # Bandstop
-    # N = 1
-    # low_cutoff = 48
-    # high_cutoff = 52
-    # fs = 10000
+        sos_by_label[f"{N}"] = np.vstack([sos_bandpass, sos_bandstop])
 
-    # sos = butter(
-    #     N=N,
-    #     Wn=[low_cutoff / (fs / 2), high_cutoff / (fs / 2)],
-    #     btype="bandstop",
-    #     output="sos",
-    # )
-    
-    # plot_filter_response(sos, fs)
-
-    plt.xlim(0,100)
-    plt.savefig("test.png")
-    plt.show()
+    plot_filter_response(sos_by_label, fs)

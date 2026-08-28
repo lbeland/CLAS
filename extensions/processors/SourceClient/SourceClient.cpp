@@ -475,13 +475,13 @@ void SourceClient::Process(ProcessingContext &context)
         if (hardware_time_us > ts_us)
         {
             // Calibration floor was set too high for this packet; clamp to now.
-            LOG(WARNING) << name() << " hardware_time_us (" << hardware_time_us << ") is in the future (now=" << ts_us << "). Clamping.";
+            // LOG(WARNING) << name() << " hardware_time_us (" << hardware_time_us << ") is in the future (now=" << ts_us << "). Clamping.";
             hardware_time_us = ts_us;
         }
-        else if ((int)ts_us - (int)hardware_time_us > 10 * 1e3)
+        else if ((int)ts_us - (int)hardware_time_us > 5 * 1e3)
         {
-            LOG(WARNING) << name() << " hardware_time_us (" << hardware_time_us << ") is more than 10ms behind (now=" << ts_us << "). Clamping";
-            hardware_time_us = ts_us - 10 * 1e3;
+            LOG(WARNING) << name() << " hardware_time_us (" << hardware_time_us << ") is more than 5ms behind (now=" << ts_us << "). Clamping";
+            hardware_time_us = ts_us - 5 * 1e3;
         }
 
         data_out = data_slot->ClaimData(false);

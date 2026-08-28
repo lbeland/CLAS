@@ -76,6 +76,7 @@ def main():
     with open(graph_path, "r") as f:
         graph_config = yaml.safe_load(f)
         fs = graph_config.get("graph", {}).get("defaults", {}).get("fs", None)
+        use_stim_protocol = graph_config.get("graph", {}).get("defaults", {}).get("use_stim_protocol", False)
         
         # Iterate through processors in the graph to find filter configurations and precompute filter coefficients if needed
         for processor in graph_config.get("graph", {}).get("processors", []):
@@ -127,6 +128,38 @@ def main():
         stim_thread = None
         stim_stop_event = threading.Event()
 
+        def start_stim_protocol():
+            nonlocal stim_thread
+            if stim_thread is not None and stim_thread.is_alive():
+                print("Stimulation protocol already running; press 's' or 'q' to stop it early.")
+                return
+            try:
+                protocol = load_stim_protocol(stim_protocol_path)
+            except (OSError, ValueError, KeyError) as e:
+                print(f"Failed to load stim protocol from {stim_protocol_path}: {e}")
+                return
+            shutil.copy2(stim_protocol_path, results_dir_path / stim_protocol_path.name)
+            stim_log_path = results_dir_path / f"stim_protocol_log_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+            stim_stop_event.clear()
+            stim_thread = threading.Thread(
+                target=run_stim_protocol,
+                args=(context, config["network"]["port"], protocol, stim_log_path, stim_stop_event),
+                daemon=True,
+            )
+            stim_thread.start()
+            print(f"Started stimulation protocol from {stim_protocol_path} ({len(protocol)} steps).")
+
+        if use_stim_protocol:
+            def auto_start_stim_protocol():
+                if stim_stop_event.wait(15.0):
+                    return
+                if graph_process.poll() is not None:
+                    return
+                start_stim_protocol()
+
+            threading.Thread(target=auto_start_stim_protocol, daemon=True).start()
+            print("\n use_stim_protocol is enabled; stimulation protocol will start automatically in 15s (press 'z' to start it sooner).")
+
         while graph_process.poll() is None:
 
             command = get_char(timeout=0.5)
@@ -154,24 +187,7 @@ def main():
                 socket.send_multipart([b"quit"])
                 socket.recv_multipart()
             elif command.strip().lower() == "z":
-                if stim_thread is not None and stim_thread.is_alive():
-                    print("Stimulation protocol already running; press 's' or 'q' to stop it early.")
-                else:
-                    try:
-                        protocol = load_stim_protocol(stim_protocol_path)
-                    except (OSError, ValueError, KeyError) as e:
-                        print(f"Failed to load stim protocol from {stim_protocol_path}: {e}")
-                    else:
-                        shutil.copy2(stim_protocol_path, results_dir_path / stim_protocol_path.name)
-                        stim_log_path = results_dir_path / f"stim_protocol_log_{time.strftime('%Y%m%d_%H%M%S')}.csv"
-                        stim_stop_event.clear()
-                        stim_thread = threading.Thread(
-                            target=run_stim_protocol,
-                            args=(context, config["network"]["port"], protocol, stim_log_path, stim_stop_event),
-                            daemon=True,
-                        )
-                        stim_thread.start()
-                        print(f"Started stimulation protocol from {stim_protocol_path} ({len(protocol)} steps).")
+                start_stim_protocol()
 
         if stim_thread is not None and stim_thread.is_alive():
             stim_stop_event.set()

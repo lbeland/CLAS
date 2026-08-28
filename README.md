@@ -2,6 +2,7 @@
 ```bash
 pip install -r requirements.txt
 sudo apt-get install libzmq3-dev
+sudo apt install libboost-dev   # for boost ringbuffer support
 sudo apt install gcc-14 g++-14
 
 mkdir build

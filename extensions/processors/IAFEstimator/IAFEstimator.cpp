@@ -53,7 +53,8 @@ namespace
     };
 
     // Returns the next FFT-efficient size >= n (favors factors of 2, 3, 5).
-    // From https://github.com/hayguen/pocketfft/blob/cpp/pocketfft_hdronly.h
+    // https://github.com/mreineck/ducc/blob/ducc0/src/ducc0/fft/fft.h
+    // same as used by scipy.fftpack.next_fast_len
     size_t good_size_real(size_t n)
     {
         if (n <= 6)

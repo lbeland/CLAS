@@ -17,8 +17,10 @@ from tkinter import filedialog
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from analysis.loader import load_processor_signals, extract_ground_truth
-from analysis.plot   import write_edf, get_erp_windows, plot_erp_latency
+from analysis.loader       import load_processor_signals, extract_ground_truth
+from analysis.edf_io       import write_raw_signals_edf, load_runtime
+from analysis.runtime_meta import write_runtime_metadata
+from analysis.plot         import get_erp_windows, plot_erp_latency
 
 
 def pick_folders() -> list[str]:
@@ -67,13 +69,18 @@ def analyse_erp() -> None:
             print(f"Warning: no processors in {graph_files[0]}, skipping.")
             continue
 
-        samples      = load_processor_signals(fs, results_dir, processors)
-        ground_truth = extract_ground_truth(samples)
+        raw_edf_path = os.path.join(results_dir, "raw_signals.edf")
+        meta_h5_path = os.path.join(results_dir, "runtime_metadata.h5")
+        if os.path.exists(raw_edf_path) and os.path.exists(meta_h5_path):
+            samples, ground_truth, _ = load_runtime(raw_edf_path, meta_h5_path)
+        else:
+            samples      = load_processor_signals(fs, results_dir, processors)
+            ground_truth = extract_ground_truth(samples)
+            if os.path.basename(graph_files[0]) == "ERPCLAS.yaml":
+                write_raw_signals_edf(raw_edf_path, fs, samples, ground_truth)
+                write_runtime_metadata(meta_h5_path, fs, samples, ground_truth)
 
         if os.path.basename(graph_files[0]) == "ERPCLAS.yaml":
-            edf_stem = Path(results_dir).readlink().stem if Path(results_dir).is_symlink() \
-                       else Path(results_dir).stem
-            write_edf(os.path.join(results_dir, edf_stem + ".edf"), fs, ground_truth, samples)
             windows.extend(get_erp_windows(fs, samples, channel=[1]))
 
     if windows and fs is not None:

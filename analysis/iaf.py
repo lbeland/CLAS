@@ -126,8 +126,8 @@ def estimate_iaf(raw: np.ndarray, fs: float) -> list:
     """Estimate IAF from the raw signal. Returns a list of per-window estimates."""
     config = {"alpha_band": (5, 18), "freq_range": (0.01, 30.0)}
 
-    if len(raw) / fs > 20:
-        window_samples = int(20 * fs)
+    if len(raw) / fs > 30:
+        window_samples = int(30 * fs)
         starts = list(range(0, len(raw) - window_samples, window_samples))
         last_start = len(raw) - window_samples
         if not starts or starts[-1] != last_start:
@@ -135,16 +135,24 @@ def estimate_iaf(raw: np.ndarray, fs: float) -> list:
         iaf_windowed = []
         aperiodic_params_windowed = []
         for start in tqdm(starts):
-            freqs, psd = welch(raw[start : start + window_samples], fs=fs, nperseg=int(fs * 10))
+            # freqs, psd = welch(raw[start : start + window_samples], fs=fs, nperseg=int(fs * 10))
+            freqs = np.fft.rfftfreq(len(raw[start : start + window_samples]), d=1/fs)
+            X = np.fft.rfft(raw[start : start + window_samples])
+            psd = (np.abs(X) ** 2) / (fs * len(raw[start : start + window_samples]))
+            psd[1:-1] *= 2
             iaf, aperiodic_params = combine_simple(psd, freqs, config)
             iaf_windowed.append(iaf)
             aperiodic_params_windowed.append(aperiodic_params)
-        return iaf_windowed, np.mean(np.array(aperiodic_params_windowed), axis=0)  # Return mean aperiodic params across windows
+        return iaf_windowed, np.nanmean(np.array(aperiodic_params_windowed), axis=0)  # Return mean aperiodic params across windows, ignoring windows with no approved peak
     
     else:
-        freqs, psd = welch(raw, fs=fs, nperseg=int(fs * 10))
+        # freqs, psd = welch(raw, fs=fs, nperseg=int(fs * 30))
+        freqs = np.fft.rfftfreq(len(raw), d=1/fs)
+        X = np.fft.rfft(raw)
+        psd = (np.abs(X) ** 2) / (fs * len(raw))
+        psd[1:-1] *= 2
         iaf, aperiodic_params = combine_simple(psd, freqs, config)
-        return [iaf], np.array(aperiodic_params)
+    return [iaf], np.array(aperiodic_params)
         
 
 def estimate_iaf_with_phase(hilbert_phase: np.ndarray, fs: float, f0: float) -> np.ndarray:

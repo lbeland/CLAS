@@ -97,11 +97,14 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
                 samples[f"SourceClient_{idx}"] = {"x": time, "y": channel, "source_ts": source_time}
 
             file = get_results_file(processor, slot=1, results_dir=results_dir)
+            # AUX channels are stored in slot 1 channels 0-7
             signal, time = get_signal_data(file, channel=list(range(8)), timestamps=timestamps)
             if signal is not None:
                 source_time = time["source_ts"]
                 time = time["hardware_ts"]
-                samples["SourceClient_AUX"] = {"x": time, "y": signal[:, 0] if signal.ndim > 1 else signal, "source_ts": source_time}
+                for idx, channel in enumerate(signal.T):
+                    samples[f"SourceClient_AUX_{idx}"] = {"x": time, "y": channel, "source_ts": source_time}
+            # Trigger is stored in slot 1 channel 8
             signal, time = get_signal_data(file, channel=8, timestamps=timestamps)
             if signal is not None:
                 source_time = time["source_ts"]
@@ -290,7 +293,7 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
             current = predecessors.get(current)
         return None
     
-    # plt.figure(figsize=(15, 4))
+    plt.figure(figsize=(15, 4))
 
     col = 22
     W   = col * 2 + 52
@@ -300,39 +303,39 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
     print(f"  {'From':<{col}} {'To':<{col}} {'Mean':>8} {'Median':>8} {'Std':>8} {'Max':>8} {'Idx':>8}  us")
     print(f"{'─' * W}")
 
-    # source_proc = next((p for p in topo_order if p in proc_ts), None)
-    # for proc in topo_order[1:]:
-    #     ts_proc = proc_ts.get(proc)
-    #     if ts_proc is None:
-    #         continue
-    #     ancestor = nearest_ancestor(proc)
-    #     if ancestor is None:
-    #         continue
-    #     ts_ancestor = proc_ts[ancestor]
-    #     n   = min(len(ts_ancestor), len(ts_proc))
-    #     lat = (ts_proc[:n] - ts_ancestor[:n])
-    #     plt.plot(lat, alpha=0.5, linewidth=0.5, label=f"{ancestor} → {proc}")
-    #     print(f"  {ancestor:<{col}} {proc:<{col}} "
-    #           f"{np.mean(lat):>8.2f} {np.median(lat):>8.2f} "
-    #           f"{np.std(lat):>8.2f} {np.max(lat):>8.2f} {np.argmax(lat):>8}")
+    source_proc = next((p for p in topo_order if p in proc_ts), None)
+    for proc in topo_order[1:]:
+        ts_proc = proc_ts.get(proc)
+        if ts_proc is None:
+            continue
+        ancestor = nearest_ancestor(proc)
+        if ancestor is None:
+            continue
+        ts_ancestor = proc_ts[ancestor]
+        n   = min(len(ts_ancestor), len(ts_proc))
+        lat = (ts_proc[:n] - ts_ancestor[:n])
+        plt.plot(lat, alpha=0.5, linewidth=0.5, label=f"{ancestor} → {proc}")
+        print(f"  {ancestor:<{col}} {proc:<{col}} "
+              f"{np.mean(lat):>8.2f} {np.median(lat):>8.2f} "
+              f"{np.std(lat):>8.2f} {np.max(lat):>8.2f} {np.argmax(lat):>8}")
 
-    # last_proc = next((p for p in reversed(topo_order) if p in proc_ts), None)
-    # if source_proc and last_proc and last_proc != source_proc:
-    #     ts_start = proc_ts[source_proc]
-    #     ts_end   = proc_ts[last_proc]
-    #     n     = min(len(ts_start), len(ts_end))
-    #     total = (ts_end[:n] - ts_start[:n])
-    #     plt.plot(total, alpha=0.5, linewidth=0.5, label=f"{source_proc} → {last_proc}", color="black")
-    #     print(f"{'─' * W}")
-    #     print(f"  {'TOTAL  ' + source_proc:<{col}} {last_proc:<{col}} "
-    #           f"{np.mean(total):>8.2f} {np.median(total):>8.2f} "
-    #           f"{np.std(total):>8.2f} {np.max(total):>8.2f} {np.argmax(total):>8}")
-    # print(f"{'─' * W}\n")
+    last_proc = next((p for p in reversed(topo_order) if p in proc_ts), None)
+    if source_proc and last_proc and last_proc != source_proc:
+        ts_start = proc_ts[source_proc]
+        ts_end   = proc_ts[last_proc]
+        n     = min(len(ts_start), len(ts_end))
+        total = (ts_end[:n] - ts_start[:n])
+        plt.plot(total, alpha=0.5, linewidth=0.5, label=f"{source_proc} → {last_proc}", color="black")
+        print(f"{'─' * W}")
+        print(f"  {'TOTAL  ' + source_proc:<{col}} {last_proc:<{col}} "
+              f"{np.mean(total):>8.2f} {np.median(total):>8.2f} "
+              f"{np.std(total):>8.2f} {np.max(total):>8.2f} {np.argmax(total):>8}")
+    print(f"{'─' * W}\n")
 
-    # plt.legend(loc="upper left", fontsize=9)
-    # plt.xlabel("Sample Index")
-    # plt.ylabel("Latency (us)")
-    # plt.ylim(0, 1000)
+    plt.legend(loc="upper left", fontsize=9)
+    plt.xlabel("Sample Index")
+    plt.ylabel("Latency (us)")
+    plt.ylim(0, 1000)
     # plt.savefig("latency_analysis.png", dpi=300, bbox_inches="tight")
 
     # Latency between computed stimulus onset (StimulusController) and the

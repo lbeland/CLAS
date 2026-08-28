@@ -6,11 +6,10 @@ import csv
 import datetime
 import glob
 import os
-import pytz
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import circmean, circstd
-from scipy.signal import spectrogram, butter, sosfiltfilt
+from scipy.signal import spectrogram, butter, sosfiltfilt, welch, periodogram, windows
 import mne
 import matplotlib as mpl
 
@@ -58,8 +57,20 @@ CHANNEL_NAMES = {
     5: "F7",
     27: "F4",
     29: "Fp2",
-    28: "F8"
+    28: "F8",
+    9: "C3",
+    25: "C4",
+    6: "E1",
+    30: "E2",
+    10: "Cz",
+    26: "FCz",
+    12: "M1",
+    23: "M2",
 }
+
+# E1/E2 are EOG (eye) channels, not scalp positions -- excluded from CSD/
+# surface-Laplacian computations even though they're in CHANNEL_NAMES.
+EOG_CHANNEL_NAMES = ("E1", "E2")
 
 
 # ---------------------------------------------------------------------------
@@ -98,20 +109,24 @@ def _circ_stats(phi_rad):
 # Error plots
 # ---------------------------------------------------------------------------
 
-def plot_errors(errors: list[dict], time_range: tuple = None,title=None) -> None:
+def plot_errors(errors: list[dict], plot_time=False, time_range: tuple = None,title=None) -> None:
     """Plot error time series and polar histograms; save to output_path."""
     if not errors:
         print("No errors to plot.")
         return
 
-    fig_time      = plt.figure(figsize=FIGSIZE)
-    fig_time.suptitle(f"Error time series - {title if title else ''}", fontsize=12)
-    ax_ts         = fig_time.add_subplot(111)
-    ax_ts_twin = ax_ts.twinx()  # Twin axis for amplitude if needed
-    fig_polars = plt.figure(figsize=FIGSIZE)
+    if plot_time:
+        fig_time      = plt.figure(figsize=FIGSIZE)
+        fig_time.suptitle(f"Error time series - {title if title else ''}", fontsize=12)
+        ax_ts         = fig_time.add_subplot(111)
+        ax_ts_twin = ax_ts.twinx()  # Twin axis for amplitude if needed
+    deg_indices  = [i for i, err in enumerate(errors) if err["unit"] == "degrees"]
+    n_polar_rows = 2 if len(deg_indices) > 4 else 1
+    n_polar_cols = int(np.ceil(len(deg_indices) / n_polar_rows)) if deg_indices else 1
+    fig_polars = plt.figure(figsize=(FIG_WIDTH, FIG_HEIGHT * n_polar_rows))
     fig_polars.suptitle(f"Error distributions {' - ' + title if title else ''}", fontsize=12)
-    ax_polars  = [fig_polars.add_subplot(1, len(errors), i + 1, projection="polar")
-                  for i in range(len(errors))]
+    ax_polars  = {i: fig_polars.add_subplot(n_polar_rows, n_polar_cols, j + 1, projection="polar")
+                  for j, i in enumerate(deg_indices)}
 
     colors        = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     bin_width_deg = 10
@@ -119,12 +134,15 @@ def plot_errors(errors: list[dict], time_range: tuple = None,title=None) -> None
     bins          = np.arange(-180, 181, bin_width_deg)
     centers       = (np.radians(bins[:-1]) + np.radians(bins[1:])) / 2
 
-    hists = []
-    for err in errors:
-        vals = err["values"][~np.isnan(err["values"])][int(0.2*len(err["values"])):int(0.8*len(err["values"]))]  # exclude first and last 20% to avoid edge effects
-        hists.append(np.histogram(vals, bins=bins)[0] / max(1, vals.size) * 100)
+    hists       = {}
+    trimmed_rad = {}
+    for i in deg_indices:
+        vals = errors[i]["values"]
+        vals = vals[~np.isnan(vals)][int(0.05*len(vals)):int(0.95*len(vals))]  # exclude first and last 20% to avoid edge effects
+        hists[i]       = np.histogram(vals, bins=bins)[0] / max(1, vals.size) * 100
+        trimmed_rad[i] = np.radians(vals)
 
-    r_max   = max(h.max() for h in hists) * 1.05
+    r_max   = max(h.max() for h in hists.values()) * 1.05 if hists else 5
     r_max   = max(r_max, 5)
     r_ticks = [t for t in [10, 20, 30] if t < r_max]
 
@@ -133,17 +151,19 @@ def plot_errors(errors: list[dict], time_range: tuple = None,title=None) -> None
         ls    = err.get("linestyle", "-")
         vals  = err["values"]
 
-        # if err["unit"] == "degrees":
-        #     ax_ts.plot(err["time_s"], vals, linestyle=ls, linewidth=1.2, color=color,
-        #            label=f"{err['label']} ({err['unit']})", alpha=0.85)
-        # else:
-        #     ax_ts_twin.plot(err["time_s"], vals, linestyle=ls, linewidth=1.2, color=color,
-        #                label=f"{err['label']} ({err['unit']})", alpha=0.85)
+        if plot_time:
+            if err["unit"] == "degrees":
+                ax_ts.plot(err["time_s"], vals, linestyle=ls, linewidth=1.2, color=color,
+                    label=f"{err['label']} ({err['unit']})", alpha=0.85)
+            else:
+                ax_ts_twin.plot(err["time_s"], vals, linestyle=ls, linewidth=1.2, color=color,
+                        label=f"{err['label']} ({err['unit']})", alpha=0.85)
 
+        if err["unit"] != "degrees":
+            continue
         if np.nansum(np.abs(vals)) == 0:
             continue
-        vals_rad = np.radians(vals[~np.isnan(vals)])
-        mu_u, sd_u, _, _ = _circ_stats(vals_rad)
+        mu_u, sd_u, _, _ = _circ_stats(trimmed_rad[i])
 
         ax_polars[i].bar(centers, hists[i], width=bin_width_rad,
                          color=color, edgecolor="0", linewidth=0.75)
@@ -157,21 +177,23 @@ def plot_errors(errors: list[dict], time_range: tuple = None,title=None) -> None
         )
         ax_polars[i].set_title(err["label"], fontsize=10)
 
-    # Take legend entries from both axes and combine them
-    handles_ts, labels_ts = ax_ts.get_legend_handles_labels()
-    handles_twin, labels_twin = ax_ts_twin.get_legend_handles_labels()
-    ax_ts.set_xlabel("Time (s)")
-    ax_ts.set_ylabel("Error")
-    ax_ts_twin.set_ylabel("Error (Hz)")
-    # Set one global legend with all entries
-    ax_ts.legend(handles_ts + handles_twin, labels_ts + labels_twin, frameon=True, fontsize=8, loc="upper right")
-    ax_ts.set_title("Error over time")
-    if time_range is not None:
-        ax_ts.set_xlim(time_range)
+    if plot_time:
+        # Take legend entries from both axes and combine them
+        handles_ts, labels_ts = ax_ts.get_legend_handles_labels()
+        handles_twin, labels_twin = ax_ts_twin.get_legend_handles_labels()
+        ax_ts.set_xlabel("Time (s)")
+        ax_ts.set_ylabel("Error")
+        ax_ts_twin.set_ylabel("Error (Hz)")
+        # Set one global legend with all entries
+        ax_ts.legend(handles_ts + handles_twin, labels_ts + labels_twin, frameon=True, fontsize=8, loc="upper right")
+        ax_ts.set_title("Error over time")
+        if time_range is not None:
+            ax_ts.set_xlim(time_range)
 
     # save_pgf(fig_time, "error_timeseries")
     # save_pgf(fig_polars, "error_distributions")
-    save_png(fig_time, "error_timeseries")
+    if plot_time:
+        save_png(fig_time, "error_timeseries")
     save_png(fig_polars, "error_distributions")
 
 
@@ -223,7 +245,7 @@ def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, star
                            label=f"Mean = {np.nanmean(error):.3f} Hz")
             ax_err.set_ylabel("Error (Hz)")
             ax_err.set_xlabel("Time (s)")
-            ax_err.legend(frameon=True, fontsize=8)
+            ax_err.legend(loc="upper right")
             ax_err.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
     ax.set_ylabel("Frequency (Hz)")
@@ -236,7 +258,7 @@ def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, star
 
     handles, labels     = ax.get_legend_handles_labels()
     handles_r, labels_r = ax_r.get_legend_handles_labels() if ax_r is not None else ([], [])
-    ax.legend(handles + handles_r, labels + labels_r, frameon=True, fontsize=8)
+    ax.legend(handles + handles_r, labels + labels_r, loc="upper right")
 
     ax.set_ylim(0,20)
 
@@ -248,26 +270,57 @@ def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, star
 # Spectrum and time-series plots
 # ---------------------------------------------------------------------------
 
-def plot_spectrum(raw: np.ndarray, samples: dict, fs: float) -> None:
+def plot_spectrum(raw: np.ndarray, samples: dict, filtered: np.ndarray, fs: float, aperiodic_params: tuple = None, X_white: np.ndarray = None) -> None:
     """Plot FFT magnitude spectrum of raw and filtered signals."""
     freqs = np.fft.rfftfreq(len(raw), d=1 / fs)
+    slope, intercept = aperiodic_params
 
-    fig = plt.figure(figsize=FIGSIZE)
+    # aperiodic_params were fit to a density-scaled PSD (Welch), where
+    # Pxx(f) = 2*|X(f)|^2 / (fs*n). Rescale the intercept to raw FFT power
+    # units: L(f) ~ |X(f)|^2. Take sqrt(L) to compare against the amplitude
+    # spectrum plotted below (same convention as compute_hilbert_reference).
+    n = len(raw)
+    intercept_fft = intercept + np.log10(fs * n / 2)
+    L = freqs[1:] ** slope * 10 ** intercept_fft  # skip f=0
+
+    # plt.figure()
+    # plt.plot(np.log10(freqs[1:]), np.log10(np.abs(np.fft.rfft(raw))[1:]), label="Raw", alpha=0.7, color="blue")
+    # plt.plot(np.log10(freqs[1:]), np.log10(np.sqrt(L)), label="Aperiodic fit", alpha=0.7, color="red", linestyle="--")
+
+
+    nrows = 2 if X_white is not None else 1
+    fig, axes = plt.subplots(nrows, 1, figsize=FIGSIZE, squeeze=False, sharex=True)
+    ax = axes[0, 0]
     X = np.abs(np.fft.rfft(raw))
-    plt.plot(freqs, X, label="Raw", alpha=0.7, color="blue")
+    ax.plot(freqs, X, label="Raw", alpha=0.7, color="blue")
 
     if samples.get("ecHTFilter") is not None:
-        filt        = samples["ecHTFilter"]["y"]
+        filt        = samples["ecHTFilter"]["y"] #[300000:400000]
+        taper = windows.tukey(len(filt), alpha=0.01)
+        filt_wind = filt *taper
         freqs_filt  = np.fft.rfftfreq(len(filt), d=1 / fs)
-        plt.plot(freqs_filt, np.abs(np.fft.rfft(filt)),
-                 label="Filtered", alpha=0.7, color="orange")
+        ax.plot(freqs_filt, np.abs(np.fft.rfft(filt_wind)), label="Filtered (online)", alpha=0.7, color="orange")
 
-    plt.xlim(0, 20)
-    plt.ylim(0, X[np.argmin(np.abs(freqs-10))]*5)
-    plt.xlabel("Frequency (Hz)")
-    plt.ylabel("Magnitude")
-    plt.title("Spectrum")
-    plt.legend(facecolor="white", frameon=True)
+    ax.plot(freqs[1:], np.sqrt(L), label="Aperiodic fit", alpha=0.7, color="red", linestyle="--")
+
+    if X_white is not None:
+        ax2 = axes[1, 0]
+        ax2.set_ylabel("Magnitude")
+        ax2.plot(freqs, np.abs(X_white), label="Whitened", alpha=0.7, color="purple")
+        ax2.plot(freqs, np.abs(np.fft.rfft(filtered)), label="Filtered (offline)", alpha=0.7, color="green")
+        ax2.set_ylim(0, np.max(X_white[(freqs >= 5) & (freqs <= 10)]) * 5)
+        ax2.legend(loc="upper right")
+    else:
+        ax.plot(freqs, np.abs(np.fft.rfft(filtered)), label="Filtered (offline)", alpha=0.7, color="green")
+
+    ax.set_xlim(0, 100)
+    # Use the maximum between 5-10Hz as xlim
+    ax.set_ylim(0, np.max(X[(freqs >= 5) & (freqs <= 10)]) * 5)
+    ax.set_ylabel("Magnitude")
+    ax.set_title("Spectrum")
+    (ax2 if X_white is not None else ax).set_xlabel("Frequency (Hz)")
+    # get legend handler from both axis and combine them
+    ax.legend(loc="upper right")
 
     # fig = plt.figure(figsize=FIGSIZE)
     # f, t, Sxx = spectrogram(raw, fs=fs, nperseg=int(fs*10))
@@ -387,89 +440,74 @@ def load_stim_annotations(results_dir: str, start_ts: float) -> "mne.Annotations
     return mne.Annotations(onset=onsets, duration=durations, description=descriptions)
 
 
-def write_edf(
-    filepath: str,
-    fs: float,
-    ground_truth: dict,
-    samples: dict,
-    hilbert_phase: np.ndarray = None,
-    stim_ref: np.ndarray = None,
-    filtered: np.ndarray = None,
-    annotations: "mne.Annotations | None" = None,
-) -> None:
-    """Write all pipeline signals to an EDF file."""
-    raw  = ground_truth["raw"]
-    time = ground_truth["time"]
-    n    = len(raw)
-
-    channels = [("Raw", "eeg", raw)]
-
-    if filtered is not None:
-        channels.append(("Filt_off", "misc", filtered[:n]))
-    if samples.get("ecHTFilter") is not None:
-        channels.append(("Filt_on",  "misc", samples["ecHTFilter"]["y"][:n]))
-    if ground_truth.get("true_inst_freq") is not None:
-        channels.append(("IAF_true_Hz", "stim", ground_truth["true_inst_freq"][:n]))
-    if samples.get("IAFEstimator") is not None:
-        channels.append(("IAF_est_Hz",  "stim", np.nan_to_num(samples["IAFEstimator"]["y"])[:n]))
-    if hilbert_phase is not None:
-        channels.append(("Hilbert_phi", "stim", hilbert_phase[:n]))
-    if ground_truth.get("true_phase") is not None:
-        channels.append(("True_phi",    "stim", ground_truth["true_phase"][:n]))
-    if samples.get("PhaseEstimator_phase") is not None:
-        phase_est = np.nan_to_num(samples["PhaseEstimator_phase"]["y"], nan=-2 * np.pi)
-        channels.append(("Online_phi", "stim", phase_est[:n]))
-    if stim_ref is not None:
-        channels.append(("Target_Stim", "stim", stim_ref[:n]))
-    if samples.get("StimulusController") is not None:
-        channels.append(("Stimulus", "stim", samples["StimulusController"]["y"][:n]))
-    if samples.get("SourceClient_TRIGGER") is not None:
-        channels.append(("Trigger", "stim", samples["SourceClient_TRIGGER"]["y"][:n]))
-    if samples.get("SourceClient_AUX") is not None:
-        channels.append(("AUX", "misc", samples["SourceClient_AUX"]["y"][:n]))
-
-    for key in sorted(k for k in samples if k.startswith("SourceClient_") and k.split("_")[1].isdigit()):
-        ch_idx = int(key.split("_")[1])
-        channels.append((f"EEG_{ch_idx + 1}", "eeg", samples[key]["y"][:n]))
-
-    min_len  = min(len(ch[2]) for ch in channels)
-    info     = mne.create_info([ch[0] for ch in channels], sfreq=fs,
-                               ch_types=[ch[1] for ch in channels], verbose=False)
-    raw_mne  = mne.io.RawArray([ch[2][:min_len] for ch in channels], info, verbose=False)
-    raw_mne.apply_function(lambda x: x * 1e-6, picks="eeg")
-    start_dt = datetime.datetime.fromtimestamp(
-        time[0] / 1e6, tz=pytz.timezone("Europe/Berlin")
-    ).replace(tzinfo=datetime.timezone.utc)
-    raw_mne.set_meas_date(start_dt)
-    if annotations is not None:
-        raw_mne.set_annotations(annotations)
-    raw_mne.export(filepath, fmt="edf", add_ch_type=True,
-                   physical_range="channelwise", overwrite=True, verbose=False)
-    print("EDF written.")
+# EDF/HDF5 export lives in analysis/edf_io.py (write_raw_signals_edf/load_runtime/
+# write_analysis_edf) and analysis/runtime_meta.py (write_runtime_metadata/load_runtime_metadata).
 
 
 # ---------------------------------------------------------------------------
 # ERP
 # ---------------------------------------------------------------------------
 
+def apply_csd_transform(fs: float, samples: dict, channel: list[int]) -> dict[int, np.ndarray]:
+    """Jointly re-reference every requested channel with a known scalp
+    position (see CHANNEL_NAMES) using the CSD (surface Laplacian)
+    transform, returning {channel: csd_y}.
+
+    Channels without a known position, and EOG channels (E1/E2), are
+    omitted -- callers should fall back to the as-recorded signal for those.
+    """
+    scalp_channels = [ch for ch in channel
+                       if ch in CHANNEL_NAMES and CHANNEL_NAMES[ch] not in EOG_CHANNEL_NAMES]
+    if not scalp_channels:
+        return {}
+
+    ys = []
+    for ch in scalp_channels:
+        ch0   = ch - 1
+        entry = samples.get(f"SourceClient_{ch0}") or samples.get(f"Producer_{ch0}")
+        ys.append(entry["y"])
+
+    min_len = min(len(y) for y in ys)
+    data    = np.array([y[:min_len] for y in ys]) * 1e-6  # uV -> V, mne's expected EEG unit
+
+    info = mne.create_info([CHANNEL_NAMES[ch] for ch in scalp_channels], sfreq=fs,
+                            ch_types="eeg", verbose=False)
+    raw  = mne.io.RawArray(data, info, verbose=False)
+    raw.set_montage("standard_1020")
+    raw  = mne.preprocessing.compute_current_source_density(raw, copy=False)
+
+    csd_data = raw.get_data() * 1e6  # back to uV, matching the untransformed samples
+    return {ch: csd_data[i] for i, ch in enumerate(scalp_channels)}
+
+
 def get_erp_windows(fs: float, samples: dict, channel: list[int] = [1],
                      bandpass: tuple[float, float] = (2.0, 30.0),
-                     reject_uv: float = 100.0) -> list[dict]:
+                     reject_uv: float = 10000.0, apply_csd: bool = False) -> list[dict]:
     """Extract EEG epochs around each trigger onset (-250 ms to +500 ms) for each channel.
 
     The EEG is bandpass-filtered (default 2-30 Hz) before epoching, and any
     epoch whose peak amplitude exceeds ``reject_uv`` (default ±100 µV) is
     discarded. Each returned window carries a 1-based "channel" key so
     callers can group windows by channel.
+
+    If ``apply_csd`` is True, channels with a known scalp position are
+    jointly re-referenced with a CSD (surface Laplacian) transform before
+    epoching (see apply_csd_transform); channels without one (e.g. E1/E2)
+    fall back to their as-recorded signal.
     """
-    all_windows = []
+    all_windows    = []
+    csd_by_channel = apply_csd_transform(fs, samples, channel) if apply_csd else {}
 
     for ch in channel:
         ch0 = ch - 1  # zero-based
 
+        if ch in csd_by_channel:
+            entry = samples.get(f"SourceClient_{ch0}") or samples.get(f"Producer_{ch0}")
+            eeg_y = csd_by_channel[ch]
+            eeg_t = entry["x"][:len(eeg_y)]
         # if samples.get("ecHTFilter") is not None:
         #     eeg_y, eeg_t = samples["ecHTFilter"]["y"], samples["ecHTFilter"]["x"]
-        if samples.get(f"SourceClient_{ch0}") is not None:
+        elif samples.get(f"SourceClient_{ch0}") is not None:
             eeg_y, eeg_t = samples[f"SourceClient_{ch0}"]["y"], samples[f"SourceClient_{ch0}"]["x"]
         elif samples.get(f"Producer_{ch0}") is not None:
             eeg_y, eeg_t = samples[f"Producer_{ch0}"]["y"], samples[f"Producer_{ch0}"]["x"]

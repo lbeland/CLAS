@@ -1,7 +1,12 @@
 venv/*
-build/*
+*/venv_iaf/*
+**/build/*
+.vscode/
+__pycache__/
 
 *.csv
+*.bin
+*.h5
 
 fftw-3.3.10
 
@@ -11,3 +16,15 @@ _last_run_group
 
 *.filter
 *.svg
+*/filters/
+
+
+LICENSE
+
+results/
+
+CMakeFiles
+
+# cecHT_ext overlay: results/ is already ignored above (regenerable, ~12 GB);
+# keep the committed figures despite the repo-wide *.png / *.csv ignores.
+!IAF_Estimation/cecHT_ext/figures/*.png

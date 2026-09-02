@@ -1,0 +1,3 @@
+[submodule "IAF_Estimation/cecHT"]
+	path = IAF_Estimation/cecHT
+	url = https://github.com/eikeosmers/cecHT.git

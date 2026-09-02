@@ -1,0 +1,15 @@
+# Upstream cecHT deps (kept in sync with ../cecHT/requirements.txt)
+fooof
+joblib
+matplotlib
+mne
+numpy
+pandas
+philistine
+scipy
+tqdm
+
+# CLAS overlay extras
+sdft            # jurihock/sdft -- sliding-DFT forward transform (echt_ext.transform_sdft)
+tqdm-joblib     # progress bar around the joblib pool in eeg/eeg_phase.py
+moabb           # Rodrigues2017 loader (upstream helpers.load_rodrigues2017)

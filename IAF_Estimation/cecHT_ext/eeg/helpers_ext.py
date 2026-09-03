@@ -89,7 +89,7 @@ def estimate_paf(data, info, fmin=7.5, fmax=14,
 
     # window start times; when the segment is (about) one window long
     # `np.arange` is empty -- fall back to a single window covering all of it
-    starts = np.arange(0, duration - segment_duration, step)
+    starts = np.arange(0, duration - segment_duration+1, step)
     if starts.size == 0:
         starts = np.array([0.0])
 
@@ -169,7 +169,7 @@ def echt_vs_hilbert(data, fs, filt_order, f0, l_freq, h_freq, win_len,
 def load_ds004148(edf_dir, max_subjects=None, channel_name="Fz-FCz"):
     """Load ds004148 eyes-closed resting-state EDFs into windowed segments."""
     edf_dir = Path(edf_dir)
-    edf_files = sorted(edf_dir.glob("*session1*task-eyesclosed_eeg.edf"))
+    edf_files = sorted(edf_dir.glob("*task-eyesclosed_eeg.edf"))
     if max_subjects is not None:
         edf_files = edf_files[:max_subjects]
 

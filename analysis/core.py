@@ -31,8 +31,8 @@ def compute_hilbert_reference(
     X_white = None
     n = len(raw)
     taper = windows.tukey(n, alpha=0.01)
-    raw *= taper
-    if aperiodic_params is not None:
+    raw = raw * taper
+    if (aperiodic_params is not None) and (all(np.isfinite(aperiodic_params))):
         # Use aperiodic parameters to adjust the bandpass filter
         slope, intercept = aperiodic_params
         freqs = np.fft.rfftfreq(n, d=1/fs)
@@ -49,10 +49,10 @@ def compute_hilbert_reference(
         X_white = np.ones_like(X)
         X_white[1:] = X[1:] / np.maximum(1e-12,np.sqrt( np.array(L[1:])))
 
-        raw_white = np.fft.irfft(X_white, n=n)
+        raw = np.fft.irfft(X_white, n=n)
 
     sos      = butter(4, [f0-3, f0+3], btype="band", fs=fs, output="sos")
-    filtered = sosfiltfilt(sos, raw_white if aperiodic_params is not None else raw)
+    filtered = sosfiltfilt(sos, raw)
 
     return filtered, np.angle(hilbert(filtered)), X_white
 
@@ -121,6 +121,13 @@ def compute_errors(
             h_err = np.angle(np.exp(1j * (true_phase[:n] - hilbert_phase[:n])), deg=True)
             errors.append({"label": "Hilbert ref error", "time_s": t, "values": h_err,
                            "unit": "degrees", "linestyle": "--"})
+
+            # Online estimate vs the offline Hilbert estimate, as if Hilbert
+            # were ground truth. When there's no true_phase this is identical
+            # to "Phase error", so it's only added here to avoid a duplicate.
+            oh_err = np.angle(np.exp(1j * (hilbert_phase[:n] - phi)), deg=True)
+            errors.append({"label": "Online vs Hilbert", "time_s": t, "values": oh_err,
+                           "unit": "degrees", "linestyle": ":"})
 
     # IAF error
     if samples.get("IAFEstimator") is not None and true_inst_freq is not None:

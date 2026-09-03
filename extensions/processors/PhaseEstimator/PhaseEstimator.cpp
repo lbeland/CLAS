@@ -111,7 +111,7 @@ PhaseEstimator::PhaseEstimator() : IProcessor(PRIORITY_HIGH)
     add_option("calibrate", calibrate_, "Whether to apply MSE-optimal calibration gain to cecHT.");
     add_option("iaf_read_interval", iaf_read_interval_, "Packets between shared IAF polling steps.");
     add_option("filter", filter_def_, "Filter definition.", false);
-    add_option("compensate_filter", compensate_filter_, "Whether to compensate the phase distortion of the preceding bandpass filter.", true);
+    add_option("compensate_filter", compensate_filter_, "Whether to compensate the phase distortion of the preceding bandpass filter.", false);
 
     iaf_state_ = create_follower_state<double>(
         "iaf", std::numeric_limits<double>::quiet_NaN(), Permission::NONE,
@@ -343,7 +343,7 @@ void PhaseEstimator::Process(ProcessingContext &context)
         if (packet_count_ % iaf_read_interval_() == 0)
         {
             double new_f0 = iaf_state_->get();
-            if (std::isnan(new_f0))
+            if (std::isnan(new_f0) || new_f0 < 5.0 || new_f0 > 18.0)
             {
                 valid_iaf_ = false;
             }

@@ -16,7 +16,7 @@ via [`_bootstrap.py`](_bootstrap.py).
 | `eeg/helpers_ext.py` | per-window IAF, `load_ds004148`, `time_s` in the IAF CSV (ecHT phase-error part currently commented out) |
 | `eeg/simple_iaf.py` | `combine_simple` (+ helpers) copied verbatim from `IAF_Estimation/IAF_tests.py`; `simple_paf` adapter |
 | `eeg/run_pipeline.py` | driver: `ds004148`, `--iaf-method {fooof,simple}`, writes `iaf_per_segment.csv` |
-| `eeg/plot_results.py` | IAF CV plots: one run dir (CV hist, std-vs-mean, CV-vs-mean-SNR) or two (fooof-vs-simple comparison) |
+| `eeg/plot_results.py` | IAF variability plots: one run dir (SD hist, std-vs-mean, SD-vs-mean-SNR) or two (fooof-vs-simple comparison) |
 | `simulations/harmonic_experiments_sdft.py` | c-ecHT batch-FFT vs sliding-DFT sweep figure |
 | `figures/` | generated figures (tracked) |
 | `results/` | pipeline outputs — **git-ignored** (see `../../.gitignore`), kept on disk |
@@ -41,13 +41,13 @@ python IAF_Estimation/cecHT_ext/eeg/run_pipeline.py --dataset ds004148 --edf-dir
 #   --iaf-method {fooof,simple}   'simple' = combine_simple from IAF_tests.py
 #   --out-dir DIR                 override the destination
 
-# IAF variability (coefficient of variation) — one run dir:
+# IAF variability (per-participant SD, Hz) — one run dir:
 python IAF_Estimation/cecHT_ext/eeg/plot_results.py IAF_Estimation/cecHT_ext/results/ds004148_Fz_fooof
-# ...or compare two methods (writes a Bland–Altman + CV comparison):
+# ...or compare two methods (writes a Bland–Altman + SD comparison):
 python IAF_Estimation/cecHT_ext/eeg/plot_results.py \
     IAF_Estimation/cecHT_ext/results/ds004148_Fz_fooof \
     IAF_Estimation/cecHT_ext/results/ds004148_Fz_simple
-#   ^ iaf_cv_per_file.csv into the run dir(s); figures (.pgf + .pdf) into MA/plots/
+#   ^ iaf_stats_per_file.csv into the run dir(s); figures (.pgf + .pdf) into MA/plots/
 
 # ECHT filter comparison
 python IAF_Estimation/cecHT_ext/filtertestCecHT.py

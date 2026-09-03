@@ -102,9 +102,11 @@ def load_and_analyse(f0: float, results_dir: str) -> "RecordingAnalysis | None":
     filtered, hilbert_phase, X_white = compute_hilbert_reference(raw, fs, f0, aperiodic_params=aperiodic_params)
     iaf_continuous = estimate_iaf_with_phase(hilbert_phase, fs, f0)
 
-    # Compute errors
+    # Compute errors (compute_errors also builds a per-onset ECHT phase
+    # reference from `filtered` for the "Stim onset error (ECHT)" series)
     start_ts = ground_truth["time"][0]
-    errors, stim_ref = compute_errors(samples, ground_truth, hilbert_phase, start_ts, fs, graph_config)
+    errors, stim_ref = compute_errors(samples, ground_truth, hilbert_phase, start_ts, fs,
+                                      graph_config, filtered=filtered)
 
     # # Producer ground truth (true_inst_freq known) + short enough for JADE's DTW cost to be feasible
     # if ground_truth["true_inst_freq"] is not None and len(raw) / fs <= 20:
@@ -356,6 +358,6 @@ def analyse_snr_sweep(sweep_dir: str, f0: float = 10, trim_frac: float = 0.05) -
 
 if __name__ == "__main__":
     # analyse_all_results(f0=10)
-    analyse_results(f0=10, results_dir="results/CLAS_felix/felix_180_p1_20260903_142844")
+    analyse_results(f0=10, results_dir="results/CLAS_felix/felix_330_20260903_145040")
     # analyse_pooled_errors(f0=10) #, names=["victor", "dorothea"])
     # analyse_snr_sweep("results/snr_sweep", f0=10)

@@ -136,9 +136,22 @@ def plot_errors(errors: list[dict], plot_time=False, time_range: tuple = None,ti
 
     hists       = {}
     trimmed_rad = {}
+
+    # Trim edge transients by a *time* window rather than a sample-count
+    # fraction: take the wall-clock span covered by the first/last 5% of the
+    # phase-error series (errors[0]) and apply that same [t_lo, t_hi] window to
+    # every series. This trims each one by the same amount of time regardless
+    # of its own sampling rate, so sparse series (e.g. the stimulus-edge
+    # errors, one value per stimulus) aren't sliced away to nothing.
+    ref_t      = np.asarray(errors[0]["time_s"], dtype=float)
+    lo_idx     = int(0.05 * len(ref_t))
+    hi_idx     = min(int(0.95 * len(ref_t)), len(ref_t) - 1)
+    t_lo, t_hi = ref_t[lo_idx], ref_t[hi_idx]
     for i in deg_indices:
-        vals = errors[i]["values"]
-        vals = vals[~np.isnan(vals)][int(0.05*len(vals)):int(0.95*len(vals))]  # exclude first and last 20% to avoid edge effects
+        t    = np.asarray(errors[i]["time_s"], dtype=float)
+        vals = np.asarray(errors[i]["values"], dtype=float)
+        keep = ~np.isnan(vals) & (t >= t_lo) & (t <= t_hi)  # drop NaNs and the edge-transient windows
+        vals = vals[keep]
         hists[i]       = np.histogram(vals, bins=bins)[0] / max(1, vals.size) * 100
         trimmed_rad[i] = np.radians(vals)
 
@@ -178,6 +191,9 @@ def plot_errors(errors: list[dict], plot_time=False, time_range: tuple = None,ti
         ax_polars[i].set_title(err["label"], fontsize=10)
 
     if plot_time:
+        # Plot trim edges
+        ax_ts.axvline(x=t_lo, color="0.5", linewidth=0.8, linestyle="--")
+        ax_ts.axvline(x=t_hi, color="0.5", linewidth=0.8, linestyle="--")
         # Take legend entries from both axes and combine them
         handles_ts, labels_ts = ax_ts.get_legend_handles_labels()
         handles_twin, labels_twin = ax_ts_twin.get_legend_handles_labels()
@@ -196,6 +212,61 @@ def plot_errors(errors: list[dict], plot_time=False, time_range: tuple = None,ti
         save_png(fig_time, "error_timeseries")
     save_png(fig_polars, "error_distributions")
 
+
+
+# ---------------------------------------------------------------------------
+# SNR sweep
+# ---------------------------------------------------------------------------
+
+def plot_snr_sweep(sweep_data: dict[str, list[dict]], output_name: str = "snr_sweep") -> None:
+    """Plot phase-error mean vs SNR, one line per noise type, on shared axes.
+
+    sweep_data maps a noise-type label ("white", "pink", ...) to a list of
+    per-run dicts with keys "snr_db" plus "<key>_mean" / "<key>_std" (in
+    degrees) for each error series. Three side-by-side panels sharing a y-axis:
+      1. ecHT online phase error (mean +/- 1 SD band per noise type),
+      2. offline Hilbert reference error (same),
+      3. ecHT online estimate minus the Hilbert offline estimate, i.e. the
+         online error taking Hilbert as ground truth (key "cmp").
+    """
+    fig, (ax_online, ax_hilb, ax_cmp) = plt.subplots(
+        1, 3, figsize=(FIG_WIDTH * 1.7, FIG_HEIGHT * 0.95), sharey=True)
+    colors = {"white": "tab:blue", "pink": "tab:red"}
+
+    def _series(runs, key):
+        runs = sorted(runs, key=lambda r: r["snr_db"])
+        snr  = np.array([r["snr_db"]      for r in runs], dtype=float)
+        mean = np.array([r[f"{key}_mean"] for r in runs], dtype=float)
+        std  = np.array([r[f"{key}_std"]  for r in runs], dtype=float)
+        return snr, mean, std
+
+    def _draw(ax, runs, key, color, *, linestyle="-", band=True, label=None):
+        snr, mean, std = _series(runs, key)
+        if not np.any(np.isfinite(mean)):
+            return
+        ax.plot(snr, mean, linestyle=linestyle, marker="o", color=color,
+                linewidth=1.5, markersize=3, label=label)
+        if band:
+            ax.fill_between(snr, mean - std, mean + std, color=color, alpha=0.25, linewidth=0)
+
+    for noise_type, runs in sorted(sweep_data.items()):
+        color = colors.get(noise_type)
+        _draw(ax_online, runs, "phase",   color, label=f"{noise_type} noise")
+        _draw(ax_hilb,   runs, "hilbert", color, label=f"{noise_type} noise")
+        _draw(ax_cmp,    runs, "cmp",     color, label=f"{noise_type} noise")
+
+    for ax, title in ((ax_online, "ecHT online phase error"),
+                      (ax_hilb,   "Hilbert offline error"),
+                      (ax_cmp,    r"ecHT online $-$ Hilbert offline")):
+        ax.axhline(0, color="0.5", linewidth=0.8, linestyle="--")
+        ax.set_xlabel("In-band SNR (dB)")
+        ax.set_title(title)
+        ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
+
+    ax_online.set_ylabel(r"Phase error (degrees)")
+    ax_online.legend(loc="upper right")
+    fig.tight_layout()
+    save_pgf(fig, output_name)
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +297,7 @@ def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, star
             ax_r   = ax.twinx()
             ax_r.plot(time_s, ground_truth["true_amplitude"],
                       linestyle="--", linewidth=1.2, alpha=0.6, color="tab:gray", label="True amplitude")
-            ax_r.set_ylabel("Amplitude", color="tab:gray")
+            ax_r.set_ylabel("Amplitude")
     else:
         ax.plot(time_s, iaf_continuous, linewidth=1.5, alpha=0.8, label="Estimated IAF (Hilbert)")
 
@@ -308,7 +379,7 @@ def plot_spectrum(raw: np.ndarray, samples: dict, filtered: np.ndarray, fs: floa
         ax2.set_ylabel("Magnitude")
         ax2.plot(freqs, np.abs(X_white), label="Whitened", alpha=0.7, color="purple")
         ax2.plot(freqs, np.abs(np.fft.rfft(filtered)), label="Filtered (offline)", alpha=0.7, color="green")
-        ax2.set_ylim(0, np.max(X_white[(freqs >= 5) & (freqs <= 10)]) * 5)
+        ax2.set_ylim(0, np.max(np.abs(X_white)[(freqs >= 5) & (freqs <= 10)]) * 5)
         ax2.legend(loc="upper right")
     else:
         ax.plot(freqs, np.abs(np.fft.rfft(filtered)), label="Filtered (offline)", alpha=0.7, color="green")
@@ -323,7 +394,7 @@ def plot_spectrum(raw: np.ndarray, samples: dict, filtered: np.ndarray, fs: floa
     ax.legend(loc="upper right")
 
     # fig = plt.figure(figsize=FIGSIZE)
-    # f, t, Sxx = spectrogram(raw, fs=fs, nperseg=int(fs*10))
+    # f, t, Sxx = spectrogram(raw, fs=fs, nperseg=int(fs*30))
     # plt.pcolormesh(t, f, np.log(Sxx), shading='nearest')
     # plt.colorbar(label='Intensity (log scale)')
     # plt.ylim(0, 50)

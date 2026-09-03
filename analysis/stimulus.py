@@ -97,43 +97,78 @@ def compute_reference_stimulus(
     return stim_ref, onset_phases, offset_phases
 
 
+def _edge_phase_errors(
+    phase: np.ndarray,
+    iaf: np.ndarray,
+    edge_idx: np.ndarray,
+    target_rad,
+    erp_latency_s: float,
+    time_us: np.ndarray,
+    start_ts: float,
+) -> "dict | None":
+    """Wrapped phase error (degrees) at each sample in ``edge_idx``: the
+    erp-latency-corrected reference ``phase`` there minus ``target_rad`` (a
+    scalar or an array aligned with ``edge_idx``). Sign: actual - target.
+
+    Edges whose result is non-finite are dropped -- e.g. a sparse ``phase``
+    that is NaN away from its evaluation points, or a NaN IAF feeding an
+    ``target_rad`` array. Returns None if nothing survives.
+    """
+    edge_idx = np.asarray(edge_idx, dtype=int)
+    if edge_idx.size == 0:
+        return None
+    # nan_to_num on the correction term only: a missing IAF should not by
+    # itself discard an onset when erp_latency_s is 0 (0 * nan == nan).
+    corr = 2.0 * np.pi * erp_latency_s * np.nan_to_num(iaf[edge_idx], nan=0.0)
+    vals = np.angle(np.exp(1j * (phase[edge_idx] + corr - target_rad)), deg=True)
+    keep = np.isfinite(vals)
+    if not keep.any():
+        return None
+    return {"time_s": (time_us[edge_idx][keep] - start_ts) / 1e6,
+            "values": np.asarray(vals)[keep]}
+
+
 def compute_stimulus_edge_errors(
-    ref_signal: np.ndarray,
-    actual_signal: np.ndarray,
+    trigger_binary: np.ndarray,
     time_us: np.ndarray,
     phase: np.ndarray,
+    iaf: np.ndarray,
+    config: StimulusConfig,
     start_ts: float,
 ) -> tuple[dict | None, dict | None]:
+    """Phase error at each stimulus trigger edge, measured directly against the
+    phase the controller targets.
+
+    For every rising edge of ``trigger_binary`` the error is the wrapped
+    difference between the erp-latency-corrected reference ``phase`` at that
+    sample and ``stim_onset_deg``; for every falling edge it is measured
+    against ``stim_onset_deg`` plus the nominal burst length -- ``stim_dur_deg``
+    when ``stim_dur_unit == "deg"``, else ``2*pi*iaf*stim_dur_ms/1000`` (this
+    mirrors ``compute_reference_stimulus``, whose reconstructed edges sit at
+    exactly those target phases). Sign: actual - target, positive == overshoot.
+
+    Returns (onset_error, offset_error) dicts with ``time_s`` / ``values``
+    (degrees), or None for an edge kind with nothing to score.
     """
-    Compare rising/falling edges of actual_signal against ref_signal.
-    Edges are matched by nearest index; unmatched extras are discarded.
+    n = min(len(trigger_binary), len(time_us), len(phase), len(iaf))
+    trigger_binary = np.asarray(trigger_binary)[:n]
+    time_us        = np.asarray(time_us)[:n]
+    phase          = np.asarray(phase, dtype=float)[:n]
+    iaf            = np.asarray(iaf, dtype=float)[:n]
 
-    Returns (onset_error, offset_error) dicts with:
-        time_s  : time of the actual edge in seconds from start_ts
-        values  : phase error in degrees (actual − reference)
-    """
-    n = min(len(ref_signal), len(actual_signal), len(time_us), len(phase))
-    ref_signal    = ref_signal[:n]
-    actual_signal = actual_signal[:n]
-    time_us       = time_us[:n]
-    phase         = phase[:n]
+    onset_rad = np.deg2rad(config.stim_onset_deg)
+    rising    = get_edges(trigger_binary, "rising")
+    falling   = get_edges(trigger_binary, "falling")
 
-    def match_and_diff(ref_idx, act_idx, label):
-        if len(ref_idx) == 0 or len(act_idx) == 0:
-            return None
-        if len(ref_idx) != len(act_idx):
-            print(f"Warning: {label} edge count mismatch — "
-                  f"ref={len(ref_idx)}, actual={len(act_idx)}. Matching by nearest index.")
-        times, errs = [], []
-        for i in act_idx:
-            j   = int(np.argmin(np.abs(ref_idx - i)))
-            err = float(np.angle(np.exp(1j * (phase[i] - phase[ref_idx[j]])), deg=True))
-            times.append((time_us[i] - start_ts) / 1e6)
-            errs.append(err)
-        return {"time_s": np.array(times), "values": np.array(errs)}
+    if config.stim_dur_unit == "deg":
+        dur_rad = np.deg2rad(config.stim_dur_deg)
+    elif falling.size:
+        dur_rad = 2.0 * np.pi * iaf[falling] * (config.stim_dur_ms / 1000.0)
+    else:
+        dur_rad = 0.0
 
-    onset_err  = match_and_diff(get_edges(ref_signal,    "rising"),
-                                get_edges(actual_signal, "rising"),  "onset")
-    offset_err = match_and_diff(get_edges(ref_signal,    "falling"),
-                                get_edges(actual_signal, "falling"), "offset")
+    onset_err  = _edge_phase_errors(phase, iaf, rising,  onset_rad,
+                                    config.erp_latency_s, time_us, start_ts)
+    offset_err = _edge_phase_errors(phase, iaf, falling, onset_rad + dur_rad,
+                                    config.erp_latency_s, time_us, start_ts)
     return onset_err, offset_err

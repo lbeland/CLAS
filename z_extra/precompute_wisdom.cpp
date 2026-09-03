@@ -57,6 +57,8 @@ static const unsigned PLANNER_FLAG = FFTW_MEASURE;
 
 // ── HELPERS (identical to the anonymous-namespace helpers in PhaseEstimator) ─
 
+// https://github.com/mreineck/ducc/blob/ducc0/src/ducc0/fft/fft.h
+// same as used by scipy.fftpack.next_fast_len
 static size_t good_size_real(size_t n)
 {
     if (n <= 6)

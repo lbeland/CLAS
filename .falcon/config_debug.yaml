@@ -17,4 +17,4 @@ network:
 server_side_storage:
   custom: {}
   environment: ./
-  resources: /home/linda/Documents/CLAS/resources
+  resources: ./resources

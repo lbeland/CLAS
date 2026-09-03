@@ -1,7 +1,7 @@
 graph:
   name: CLAS
   defaults:
-    n_messages: &n_messages 20000000
+    n_messages: &n_messages 100000
     window_size: &window_size 100000
     fs: &fs 10000
     threadpriority: &threadpriority 100
@@ -15,9 +15,9 @@ graph:
         n_messages: *n_messages
         carrier_amplitude: 3
         carrier_frequency: 10.334
-        modulation_type: "amplitude"
-        modulation_amplitude: 2
-        modulation_frequency: 0.017
+        modulation_type: "phase"
+        modulation_amplitude: 5
+        modulation_frequency: 0.05
       advanced:
         buffer_sizes:
           out: 1024
@@ -83,10 +83,9 @@ graph:
         calc_interval: 100
         window_size_sec: 10
         max_invalid_sec: 3
-        # kalman_estimator_std: 0.088
-        kalman_iaf_std: 0.4
+        kalman_iaf_std: 0.1
         kalman_full: true
-        f_min: 5.0
+        f_min: 7.0
         f_max: 16.0
       advanced:
         buffer_sizes:
@@ -100,8 +99,6 @@ graph:
         # n_fft: *window_size
         iaf_read_interval: 1
         calibrate: true
-        filter:
-          bandwidth: 4
         compensate_filter: true
       advanced:
         buffer_sizes:
@@ -113,15 +110,15 @@ graph:
       options:
         n_messages: *n_messages
         stim_onset_deg: 0
-        stim_dur_unit: "deg"
-        stim_dur_deg: 90
+        stim_dur_unit: "ms"
+        stim_dur_deg: 45
+        stim_dur_ms: 20
         correct_latencies: false
-        audio_latency_s: 0.0 #0.04
+        audio_latency_s: 0.0 #0.004
         erp_latency_s: 0
-        stim_dur_ms: 25
         stim_period_ms: 1
         stim_amplitude: 0.5
-        use_background_sound: true
+        use_background_sound: false
         background_dB: 18
       advanced:
         buffer_sizes:

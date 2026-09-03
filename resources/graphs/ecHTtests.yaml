@@ -1,8 +1,7 @@
 graph:
   name: CLAS
   defaults:
-    n_messages: &n_messages 50000
-    window_size: &window_size 2000
+    n_messages: &n_messages 200000
     fs: &fs 10000
   processors:
     Producer:
@@ -12,55 +11,65 @@ graph:
         nchannels: 1
         nsamples: 1
         n_messages: *n_messages
+        inter_packet_sleep: false
         carrier_amplitude: 3.0
         carrier_frequency: 10.0
-        modulation_type: "phase"
-        modulation_amplitude: 2
-        modulation_frequency: 0.1
+        # Signal mode (mutually exclusive):
+        #   none | amplitude | phase | phase_jump | freq_step | chirp
+        modulation_type: "none"
+        modulation_amplitude: 2      # amplitude/phase: modulation depth
+        modulation_frequency: 0.1    # amplitude/phase: modulation rate (Hz)
+        mod_period_s: 3.0            # phase_jump/freq_step: unperturbed segment length (s)
+        phase_jump_angle: 3.14159265358979  # phase_jump: jump angle (rad)
+        freq_step_size: -2          # freq_step: frequency offset while toggled (Hz)
+        chirp_slope: 1.0             # chirp: linear frequency slope (Hz/s)
+        # Imperfections applied to every mode:
+        noise_color: "white"        # white | pink (Voss-McCartney 1/f)
+        snr_db: -10.0                 # in-band SNR (dB): carrier power vs noise power in noise_band_hz
+        noise_band_hz: 4.0          # width of the SNR reference band around carrier_frequency (Hz)
+        burst_on_s: 1.0             # bursty signal: ON duration (s)
+        burst_off_s: 0.0            # bursty signal: OFF duration (s); 0 = always on
       advanced:
         buffer_sizes:
           out: 32
         thread_core: 7
+    ecHTFilter:
+      class: MultiChannelFilter
+      options:
+        filter:
+          N: [1, 1]
+          low_cutoff: [5, 46]
+          high_cutoff: [16, 54]
+          btype: [bandpass, bandstop]
+          name: ecHTfilter
+        # n_messages: *n_messages  # default
+      advanced:
+        buffer_sizes:
+          out: 256
+        thread_core: 10
     PhaseEstimator:
       class: PhaseEstimator
       options:
         n_messages: *n_messages
-        # n_fft: *window_size
         iaf_read_interval: 1
         calibrate: true
-        filter:
-          bandwidth: 4
+        compensate_filter: true
       advanced:
         buffer_sizes:
           out: 32
         thread_core: 8
-    Consumer:   # Only for measurement of latency/throughput
-      class: Consumer
-      options:
-        n_messages: *n_messages
-        window_size: *window_size
-        output_file: /home/linda/Documents/CLAS/rt_c_results/10_1
-      advanced:
-        thread_core: 9
-    Serializer(1-2):    # one serializer per output stream
+    Serializer(1-3):    # one serializer per output stream
       class: FileSerializer
       options:
-        path: run://
-        encoding: binary
-        throttle/enabled: false
-        overwrite: false 
-        format: full
         n_messages: *n_messages
   connections:
-  - Producer.out.0 = PhaseEstimator.in
-  - PhaseEstimator.out.0 = Consumer.in
-
+  - Producer.out.0 = ecHTFilter.in
+  - ecHTFilter.out.0 = PhaseEstimator.in
   - Producer.out.0 = Serializer1.in
-  - Producer.out.1 = Serializer1.in
-  - Producer.out.2 = Serializer1.in
-  - Producer.out.3 = Serializer1.in
+  - Producer.meta_out.0 = Serializer1.in   # ground truth: [amplitude, theta, inst_freq], NaN while burst-off
   - PhaseEstimator.out.0 = Serializer2.in
   - PhaseEstimator.out.1 = Serializer2.in
+  - ecHTFilter.out.0 = Serializer3.in
 
   states:
   - IAF: [Producer.iaf, PhaseEstimator.iaf]

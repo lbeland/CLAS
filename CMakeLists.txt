@@ -110,9 +110,9 @@ target_link_libraries(${YAMLCPP} yaml-cpp)
 FetchContent_GetProperties(cppzmq)
 if(NOT cppzmq_POPULATED)
 	message(STATUS "Populating zmq-cpp...")
+	# Must be set before FetchContent_MakeAvailable to take effect.
+	set(CPPZMQ_BUILD_TESTS OFF CACHE BOOL "Whether or not to build the tests" FORCE)
 	FetchContent_MakeAvailable(cppzmq)
-	# Add here options for cppzmq building
-	set(CPPZMQ_BUILD_TESTS OFF CACHE BOOL "Whether or not to build the tests")
 	message(STATUS "Done.")
 endif()
 

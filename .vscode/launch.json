@@ -16,11 +16,11 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/debug/falcon/falcon",
             "args": [
-                "SimulateCLAS.yaml",
+                "ReplayCLAS.yaml",
                 "--config",
-                "${workspaceFolder}/.falcon/config.yaml"
+                "${workspaceFolder}/.falcon/config_debug.yaml"
             ],
-            "cwd": "${workspaceFolder}/build/debug/falcon",
+            "cwd": "${workspaceFolder}",
             "MIMode": "gdb",
             "miDebuggerPath": "/usr/bin/gdb",
             "preLaunchTask": "make",

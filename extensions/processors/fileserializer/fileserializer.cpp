@@ -148,8 +148,8 @@ void FileSerializer::Process(ProcessingContext &context) {
       }
 
       if (!throttle_()) {
-        LOG_IF(WARNING, (nread > 0.5 * upstream_buffer_size_[k]))
-            << name() << ": buffer is more than half full (stream " << k << ")";
+        // LOG_IF(WARNING, (nread > 0.5 * upstream_buffer_size_[k]))
+        //     << name() << ": buffer is more than half full (stream " << k << ")";
         for (auto &it : data) {
           serializer_->Serialize(*(streams_[k]), it, k, packetid_[k]++,
                                  data_port_->slot(k)->upstream_address().processor(),

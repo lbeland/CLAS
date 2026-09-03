@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
-cd build
+cd build/debug
 make -j$(nproc 2>/dev/null || sysctl -n hw.logicalcpu)
-mkdir -p debug
-cp falcon/falcon debug/
+mkdir -p debug/debug
+cp falcon/falcon debug/debug/

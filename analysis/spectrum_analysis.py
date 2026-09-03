@@ -90,7 +90,7 @@ def discover_condition_runs(
     """
     runs_by_condition = {deg: [] for deg in stim_onset_degs}
 
-    session_dirs = sorted(d for d in glob.glob(os.path.join(base_dir, "CLAS_*")) if os.path.isdir(d))
+    session_dirs = sorted(d for d in glob.glob(os.path.join(base_dir, "CLAS*")) if os.path.isdir(d))
     if len(session_dirs) > 1:
         print(f"Pooling across {len(session_dirs)} CLAS* session folders: "
               f"{[os.path.basename(d) for d in session_dirs]}")
@@ -365,7 +365,7 @@ def plot_log_power_change(
     freqs: np.ndarray,
     log_ratio: np.ndarray,
     channel: str,
-    xlim: tuple = (6, 13),
+    xlim: tuple = (4, 13),
 ) -> None:
     """Plot mean +/- SEM log10(on / off) power ratio per frequency bin."""
     fig  = plt.figure(figsize=FIGSIZE)

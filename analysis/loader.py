@@ -16,6 +16,15 @@ from .plot import FIGSIZE, save_pgf
 RESULTS_DIR = "_last_run"
 
 
+def _iter_channels(signal: np.ndarray):
+    """Yield (n_samples,) columns from `signal`, whether it's 1D (single channel,
+    as returned by get_signal_data's squeeze) or 2D (n_samples, n_channels)."""
+    signal = np.asarray(signal)
+    if signal.ndim == 1:
+        return [signal]
+    return signal.T
+
+
 def _resolve_results_root(results_dir=None) -> Path:
     candidates = []
     if results_dir is not None:
@@ -70,12 +79,12 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
     for processor in processors:
         if processor == "Producer":
             file = get_results_file(processor, slot=0, results_dir=results_dir)
-            signal, time = get_signal_data(file, channel=list(range(10)), timestamps=timestamps)
+            signal, time = get_signal_data(file, channel=0, timestamps=timestamps)
             if signal is None:
                 continue
             source_time = time["source_ts"]
             time = time["hardware_ts"]
-            for idx, channel in enumerate(signal.T):
+            for idx, channel in enumerate(_iter_channels(signal)):
                 samples[f"{processor}_{idx}"] = {"x": time, "y": channel, "source_ts": source_time}
 
             file = get_results_file(processor, name=".meta_out", slot=0, results_dir=results_dir)
@@ -83,7 +92,7 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
             if signal is None:
                 continue
             time = time["hardware_ts"]
-            for idx, channel in enumerate(signal.T):
+            for idx, channel in enumerate(_iter_channels(signal)):
                 samples[f"{processor}_meta_{idx}"] = {"x": time, "y": channel}
 
         elif processor == "SourceClient":
@@ -93,7 +102,7 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
                 continue
             source_time = time["source_ts"]
             time = time["hardware_ts"]
-            for idx, channel in enumerate(signal.T):
+            for idx, channel in enumerate(_iter_channels(signal)):
                 samples[f"SourceClient_{idx}"] = {"x": time, "y": channel, "source_ts": source_time}
 
             file = get_results_file(processor, slot=1, results_dir=results_dir)
@@ -102,7 +111,7 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
             if signal is not None:
                 source_time = time["source_ts"]
                 time = time["hardware_ts"]
-                for idx, channel in enumerate(signal.T):
+                for idx, channel in enumerate(_iter_channels(signal)):
                     samples[f"SourceClient_AUX_{idx}"] = {"x": time, "y": channel, "source_ts": source_time}
             # Trigger is stored in slot 1 channel 8
             signal, time = get_signal_data(file, channel=8, timestamps=timestamps)

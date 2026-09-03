@@ -1,14 +1,16 @@
 """Simple (aperiodic-subtracted, Savgol-smoothed) IAF estimator.
 
-`combine_simple` and its helpers (`gaussian_peak`, `bic_peak_test_simple`,
-`approve_peak`) are copied **verbatim** from
-``IAF_Estimation/IAF_tests.py`` (the ``combine_simple`` branch of
-``run_algorithms``) so the pipeline's ``--iaf-method simple`` uses exactly that
-algorithm. Keep them byte-for-byte in sync with IAF_tests.py.
+`gaussian_peak`, `bic_peak_test_simple`, `approve_peak` are copied verbatim from
+``IAF_Estimation/IAF_tests.py``. `combine_simple` is that file's ``combine_simple``
+branch of ``run_algorithms`` **plus** a per-window SNR (peak power vs. aperiodic
+power within ±2σ of the peak, following
+``extensions/processors/IAFEstimator/IAFEstimator.cpp``); it now returns
+``(est_pf, snr)``.
 
 `simple_paf` is the thin adapter the EEG pipeline calls: it builds the same
 one-sided periodogram PSD that ``IAF_tests.run_window_analysis`` feeds to
-``combine_simple`` and returns the peak alpha frequency (or ``np.nan``).
+``combine_simple`` and returns ``(peak_alpha_freq, snr)`` (``(nan, nan)`` if no
+peak is approved).
 """
 
 import numpy as np
@@ -119,7 +121,7 @@ def combine_simple(psd, freq_bins, config):
     std_gauss = fwhm / (2 * np.sqrt(2 * np.log(2)))
     if std_gauss > 2:
         # print(std_gauss)
-        return np.nan
+        return np.nan, np.nan
     popt = [amp_guess, est_pf, std_gauss]
 
     gaussian = gaussian_peak(freqs, *popt) + floor_value
@@ -127,10 +129,23 @@ def combine_simple(psd, freq_bins, config):
     peak_approved = approve_peak(freqs, log_psd, psd_flat, psd_smooth, popt, gaussian, aperiodic_simple, config["alpha_band"], floor_value=floor_value)
 
     if not peak_approved:
-        return np.nan
+        return np.nan, np.nan
 
-    return est_pf
-# --- end verbatim -------------------------------------------------------------
+    # per-window SNR: fitted peak power vs aperiodic (1/f) power within +-2 sigma
+    # of the peak, cf. extensions/processors/IAFEstimator/IAFEstimator.cpp
+    within_2s = np.abs(freqs - est_pf) <= 2.0 * std_gauss
+    if np.any(within_2s):
+        aper_lin = np.power(10.0, aperiodic_simple[within_2s])        # linear 1/f power
+        peak_excess = float(amp_guess - 1.0)                          # flat-PSD height above the 1/f floor
+        gauss_excess = gaussian_peak(freqs[within_2s], peak_excess, est_pf, std_gauss)
+        signal_power = float(np.sum(aper_lin * gauss_excess))
+        noise_power = float(np.sum(aper_lin))
+        snr = signal_power / max(noise_power, np.finfo(float).tiny)
+    else:
+        snr = np.nan
+
+    return est_pf, snr
+# --- end -------------------------------------------------------------------------
 
 
 def _periodogram(window, fs):
@@ -145,7 +160,7 @@ def _periodogram(window, fs):
 
 
 def simple_paf(window, fs, alpha_band=(7.5, 14.0), freq_range=(0.1, 30.0)):
-    """Peak alpha frequency of ``window`` via :func:`combine_simple`.
+    """Peak alpha frequency and SNR of ``window`` via :func:`combine_simple`.
 
     Parameters
     ----------
@@ -156,11 +171,13 @@ def simple_paf(window, fs, alpha_band=(7.5, 14.0), freq_range=(0.1, 30.0)):
 
     Returns
     -------
-    float   estimated PAF in Hz, or ``np.nan`` if no peak is approved.
+    (paf_hz, snr) : (float, float)
+        ``(nan, nan)`` if no peak is approved.
     """
     freq_bins, psd = _periodogram(window, fs)
     config = {"freq_range": tuple(freq_range), "alpha_band": tuple(alpha_band)}
     try:
-        return float(combine_simple(psd, freq_bins, config))
+        paf, snr = combine_simple(psd, freq_bins, config)
+        return float(paf), float(snr)
     except Exception:  # noqa: BLE001 - match the pipeline's per-window robustness
-        return np.nan
+        return np.nan, np.nan

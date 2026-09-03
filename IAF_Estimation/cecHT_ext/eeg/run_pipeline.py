@@ -1,24 +1,27 @@
-"""Compute EEG phase-estimation errors for ecHT across datasets (CLAS overlay).
+"""Per-window individual-alpha-frequency (IAF) pipeline across EEG datasets (CLAS overlay).
 
-Same idea as upstream ``EEG/eeg_phase.py`` but:
+Based on upstream ``EEG/eeg_phase.py`` but:
 - adds the ``ds004148`` dataset,
-- uses the per-window IAF / f0-tracking pipeline from :mod:`helpers_ext`,
 - ``--iaf-method {fooof,simple}`` selects the per-window PAF estimator
   (``simple`` = ``combine_simple`` from ``IAF_Estimation/IAF_tests.py``),
 - shows a progress bar and pins worker CPU affinity,
 - ``--subjects`` is honoured by every loader.
 
-Outputs (default: ``cecHT_ext/results/<dataset>_<channel>_<method>/``; override
+The ecHT phase-error analysis is currently disabled in :mod:`helpers_ext`
+(``process_segment`` / ``aggregate_and_save``); only the IAF series is produced.
+
+Output (default: ``cecHT_ext/results/<dataset>_<channel>_<method>/``; override
 with ``--out-dir``):
-- phase_error_per_file.csv   per-segment circular statistics
-- phase_error_all.npz        concatenated phase-error samples (deg)
-- iaf_per_segment.csv        per-segment IAF estimates (with ``time_s``)
+- iaf_per_segment.csv   per-window IAF estimates (file, segment_index, had_alpha,
+                        paf_hz, time_s)
+
+Then plot / compare with ``eeg/plot_results.py``.
 
 Example
 -------
     python <cecHT_ext>/eeg/run_pipeline.py --dataset ds004148 \
         --edf-dir /path/to/ds004148 --channel Fz --iaf-method fooof
-    # -> writes into cecHT_ext/results/ds004148_Fz_fooof/
+    # -> writes cecHT_ext/results/ds004148_Fz_fooof/iaf_per_segment.csv
 """
 
 import os
@@ -45,9 +48,10 @@ except ImportError:  # pragma: no cover - fall back to no progress bar
 import helpers_ext as H  # noqa: E402
 
 _RESULTS_ROOT = pathlib.Path(__file__).resolve().parents[1] / "results"
+_IAF_NAME = "iaf_per_segment.csv"
+# phase-error output names (analysis disabled; kept for when it is re-enabled)
 _CSV_NAME = "phase_error_per_file.csv"
 _NPZ_NAME = "phase_error_all.npz"
-_IAF_NAME = "iaf_per_segment.csv"
 _N_JOBS = -1
 
 # Effective channel when ``--channel`` is not given (mirrors each loader's default).
@@ -99,16 +103,15 @@ def main(
         else default_out_dir(dataset, channel, iaf_method)
     )
     out_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = str(out_dir / _CSV_NAME)
-    npz_path = str(out_dir / _NPZ_NAME)
     iaf_csv_path = str(out_dir / _IAF_NAME)
+    csv_path = str(out_dir / _CSV_NAME)   # unused (phase-error analysis disabled)
+    npz_path = str(out_dir / _NPZ_NAME)   # unused (phase-error analysis disabled)
     print(f"Output dir: {out_dir}")
 
     if dataset == "hmc":
         if edf_dir is None:
             raise ValueError("--edf-dir is required for the HMC dataset")
-        segments = H.load_hmc(edf_dir=edf_dir, max_subjects=max_subjects,
-                              channel_name=channel)
+        segments = H.load_hmc(edf_dir=edf_dir, channel_name=channel)
 
     elif dataset == "rodrigues2017":
         segments = H.load_rodrigues2017(conditions=conditions, channel_name=[channel])
@@ -151,7 +154,7 @@ if __name__ == "__main__":
                    help="Per-window IAF estimator: 'fooof' (upstream) or 'simple' "
                         "(combine_simple from IAF_tests.py). (default: simple)")
     p.add_argument("--subjects", type=int, default=None,
-                   help="Max number of subjects (default: all).")
+                   help="Max number of subjects, ds004148 only (default: all).")
     p.add_argument("--conditions", nargs="*", default="EC",
                    help="Conditions to include, e.g. EC EO (Rodrigues2017 only).")
     p.add_argument("--bw", type=float, default=0.5,

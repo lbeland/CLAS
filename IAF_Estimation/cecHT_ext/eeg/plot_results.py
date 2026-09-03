@@ -1,179 +1,280 @@
-"""Three-panel EEG phase-estimate figure (CLAS overlay).
+"""Alpha-frequency (IAF) variability plots from ``run_pipeline.py`` output.
 
-Same figure as upstream ``EEG/eeg_plot.py`` (polar A/B + phase-error-vs-IAF-CV C)
-with local tweaks:
-- participant id regex ``(s\\w+?)(?=_)`` (matches the ds004148 ``sub-XX`` ids),
-- also writes ``iaf_cv_per_file.csv`` and ``iaf_change_rate_per_file.csv``,
-- ``save_base`` defaults to ``phase_error_ds004148``.
+Reads ``iaf_per_segment.csv`` (columns: file, segment_index, had_alpha, paf_hz,
+time_s) from one or two run directories and reports the per-participant
+coefficient of variation (CV) of the IAF,
 
-Reads ``phase_error_all.npz`` / ``phase_error_per_file.csv`` /
-``iaf_per_segment.csv`` from a run directory (default: current directory; pass a
-path as the first argument, e.g. a ``cecHT_ext/results/<...>/`` folder produced by
-``run_pipeline.py``) and writes the figure + CSVs back into it.
+    CV_p = std(IAF_p) / mean(IAF_p)
+
+over the sliding IAF windows of that participant's recording.
+
+Usage
+-----
+    # single method
+    python plot_results.py  RESULTS/ds004148_Fz_fooof
+
+    # compare two methods (e.g. fooof vs simple)
+    python plot_results.py  RESULTS/ds004148_Fz_fooof  RESULTS/ds004148_Fz_simple
+    python plot_results.py  DIR_A DIR_B --labels fooof simple
+
+Writes ``iaf_cv_per_file.csv`` (+ ``iaf_change_rate_per_file.csv`` in single
+mode) into each run dir; figures go to ``MA/plots`` as ``.pgf`` + ``.pdf``
+(repo convention, cf. ``analysis/plot.py`` / ``IAF_Estimation/plot_iaf_tests.py``).
 """
 
-import sys
+import argparse
+import os
 import pathlib
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-import _bootstrap  # noqa: E402,F401  -> puts the cecHT submodule on sys.path
+import numpy as np
+import pandas as pd
+import matplotlib as mpl
+mpl.use("pgf")
+mpl.rcParams.update({
+    "pgf.texsystem": "pdflatex",
+    "font.family": "serif",
+    "text.usetex": True,
+    "pgf.rcfonts": False,
+})
+import matplotlib.pyplot as plt  # noqa: E402
 
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
-
-from utils import make_figure  # noqa: E402
-
-NPZ_PATH = "phase_error_all.npz"
-PHASE_CSV = "phase_error_per_file.csv"
-IAF_CSV = "iaf_per_segment.csv"
-
+_IAF_CSV = "iaf_per_segment.csv"
 _PARTICIPANT_RE = r"(s\w+?)(?=_)"
 
+# LaTeX symbol for the per-window IAF estimate (text.usetex is on).
+_F0 = r"$\tilde{f}_0$"
+
+PLOTS_DIR = "/home/linda/Documents/MA/plots"
+os.makedirs(PLOTS_DIR, exist_ok=True)
+
+# figure sizing, matching analysis/plot.py
+TEXTWIDTH = 6.30045
+ASPECT_RATIO = 9 / 16
+FIG_WIDTH = TEXTWIDTH
+FIG_HEIGHT = FIG_WIDTH * ASPECT_RATIO
+FIGSIZE = (FIG_WIDTH, FIG_HEIGHT)
+
+
+def _tex(s):
+    """Escape LaTeX-special chars in dynamic label text (usetex mode)."""
+    s = str(s)
+    for a, b in (("\\", r"\textbackslash{}"), ("_", r"\_"), ("%", r"\%"),
+                 ("&", r"\&"), ("#", r"\#"), ("$", r"\$")):
+        s = s.replace(a, b)
+    return s
+
+
+def _save(fig, name):
+    """Save ``<name>.pgf`` and ``<name>.pdf`` into ``MA/plots`` (repo convention)."""
+    for ext in ("pgf", "pdf"):
+        fig.savefig(os.path.join(PLOTS_DIR, f"{name}.{ext}"), bbox_inches="tight")
+    plt.close(fig)
+    print(f"  figure -> {PLOTS_DIR}/{name}.{{pgf,pdf}}")
+
 
 # --------------------------------------------------------------------------
-# IAF helpers
+# data reduction
 # --------------------------------------------------------------------------
-def compute_iaf_cv_per_file(iaf_csv: str):
-    df = pd.read_csv(iaf_csv)
-
-    mask_valid = (
+def _valid(df):
+    """Rows with a usable per-window IAF, tagged with a ``participant`` id."""
+    if "snr" not in df.columns:          # csv from an older run / fooof method
+        df = df.assign(snr=np.nan)
+    m = (
         (df["segment_index"] >= 0)
         & (df["had_alpha"] == 1)
         & np.isfinite(df["paf_hz"])
     )
-    df_valid = df.loc[mask_valid].copy()
-    if df_valid.empty:
-        raise RuntimeError("No valid segments with alpha found")
+    d = df.loc[m].copy()
+    d["participant"] = d["file"].str.extract(_PARTICIPANT_RE, expand=False)
+    return d
 
-    df_valid["participant"] = df_valid["file"].str.extract(_PARTICIPANT_RE, expand=False)
 
-    stats = (
-        df_valid
-        .groupby("participant")["paf_hz"]
-        .agg(mean_iaf_hz="mean", std_iaf_hz="std", n_segments="count")
+def cv_per_participant(df):
+    """mean / std / n / CV of the per-window IAF (+ mean SNR), one row per participant."""
+    d = _valid(df)
+    if d.empty:
+        raise RuntimeError("no valid alpha segments in iaf_per_segment.csv")
+    g = (
+        d.groupby("participant")
+        .agg(
+            mean_iaf_hz=("paf_hz", "mean"),
+            std_iaf_hz=("paf_hz", "std"),
+            n_segments=("paf_hz", "count"),
+            mean_snr=("snr", "mean"),
+            median_snr=("snr", "median"),
+        )
         .reset_index()
-        .rename(columns={"participant": "file"})
     )
-    stats["cv_iaf"] = stats["std_iaf_hz"] / stats["mean_iaf_hz"]
-    return stats
+    g["cv_iaf"] = g["std_iaf_hz"] / g["mean_iaf_hz"]
+    return g
 
 
-def compute_iaf_change_rate(iaf_csv: str):
-    """Per-recording rate of IAF change (Hz/s) between consecutive windows."""
-    df = pd.read_csv(iaf_csv)
-
-    mask_valid = (
-        (df["segment_index"] >= 0)
-        & (df["had_alpha"] == 1)
-        & np.isfinite(df["paf_hz"])
-    )
-    df_valid = df.loc[mask_valid].copy()
-
+def change_rate_per_participant(df):
+    """Rate of IAF change (|Δf|/Δt, Hz/s) between consecutive windows."""
+    d = _valid(df)
     rows = []
-    for file, grp in df_valid.groupby("file"):
+    for pid, grp in d.groupby("participant"):
         grp = grp.sort_values("time_s")
-        pafs = grp["paf_hz"].values
-        times = grp["time_s"].values
-        if len(pafs) < 2:
+        p = grp["paf_hz"].to_numpy()
+        t = grp["time_s"].to_numpy()
+        if len(p) < 2:
             continue
-        dt = np.diff(times)
-        dp = np.abs(np.diff(pafs))
-        rate = dp / dt
+        rate = np.abs(np.diff(p)) / np.diff(t)
         rows.append(dict(
-            file=file,
-            mean_rate_hz_per_s=np.mean(rate),
-            median_rate_hz_per_s=np.median(rate),
-            std_rate_hz_per_s=np.std(rate),
-            n_windows=len(pafs),
+            participant=pid,
+            mean_rate_hz_per_s=float(np.mean(rate)),
+            median_rate_hz_per_s=float(np.median(rate)),
+            std_rate_hz_per_s=float(np.std(rate)),
+            n_windows=int(len(p)),
         ))
     return pd.DataFrame(rows)
 
 
+def _describe_cv(cv, label=""):
+    cv = np.asarray(cv, dtype=float)
+    q1, med, q3 = np.percentile(cv, [25, 50, 75])
+    sd = cv.std(ddof=1) if cv.size > 1 else float("nan")
+    print(f"  CV [{label:6s}]  n={cv.size:3d}  "
+          f"median={med:.4f} ({med * 100:.2f} %)  IQR=[{q1:.4f}, {q3:.4f}]  "
+          f"mean={cv.mean():.4f} ± {sd:.4f}")
+    return med
+
+
+def _label_for(run_dir):
+    """'ds004148_Fz-FCz_simple' -> 'simple'; fall back to the dir name."""
+    parts = pathlib.Path(run_dir).name.split("_")
+    for cand in ("fooof", "simple"):
+        if cand in parts:
+            return cand
+    return pathlib.Path(run_dir).name
+
+
 # --------------------------------------------------------------------------
-# Figure
+# single method
 # --------------------------------------------------------------------------
-def plot_phase_error(
-    phase_err_unc_deg_all,
-    phase_err_cal_deg_all,
-    phase_csv_path=PHASE_CSV,
-    iaf_csv_path=IAF_CSV,
-    save_base="phase_error_ds004148",
-):
-    phase_err_unc_rad = np.radians(np.asarray(phase_err_unc_deg_all))
-    phase_err_cal_rad = np.radians(np.asarray(phase_err_cal_deg_all))
+def plot_single(run_dir, label):
+    run_dir = pathlib.Path(run_dir)
+    df = pd.read_csv(run_dir / _IAF_CSV)
 
-    phase_df = pd.read_csv(phase_csv_path)
-    iaf_stats = compute_iaf_cv_per_file(iaf_csv_path)
-    iaf_stats.to_csv("iaf_cv_per_file.csv", index=False)
+    cv = cv_per_participant(df)
+    rate = change_rate_per_participant(df)
+    cv.to_csv(run_dir / "iaf_cv_per_file.csv", index=False)
+    rate.to_csv(run_dir / "iaf_change_rate_per_file.csv", index=False)
 
-    iaf_change_rate = compute_iaf_change_rate(iaf_csv_path)
-    print(iaf_change_rate.describe())
-    iaf_change_rate.to_csv("iaf_change_rate_per_file.csv", index=False)
+    cvp = cv["cv_iaf"].to_numpy() * 100.0
+    snr = cv["mean_snr"].to_numpy()
+    has_snr = np.isfinite(snr).any()
 
-    phase_df["participant"] = phase_df["file"].str.extract(_PARTICIPANT_RE, expand=False)
+    print(f"\n[{label}]  {len(df)} window rows, {cv['participant'].nunique()} participants")
+    _describe_cv(cv["cv_iaf"], label)
+    if not rate.empty:
+        print(f"  |Δf|/Δt   {rate['mean_rate_hz_per_s'].mean():.4f} Hz/s  "
+              f"(mean over participants of the per-recording mean step-to-step change)")
+    if has_snr:
+        ok = np.isfinite(snr) & np.isfinite(cvp)
+        r = np.corrcoef(snr[ok], cvp[ok])[0, 1] if ok.sum() > 2 else float("nan")
+        print(f"  mean SNR  median={np.nanmedian(snr):.3f}   "
+              f"corr(mean SNR, CV) = {r:+.3f}  (n={int(ok.sum())})")
 
-    phase_subject = phase_df.groupby("participant").agg({
-        "mean_unc_deg": "mean",
-        "mean_cal_deg": "mean",
-        "n_samples": "sum",
-    }).reset_index()
+    fig, ax = plt.subplots(1, 2, figsize=FIGSIZE)
 
-    trial_mu_unc = np.radians(phase_subject["mean_unc_deg"].to_numpy(dtype=float))
-    trial_mu_cal = np.radians(phase_subject["mean_cal_deg"].to_numpy(dtype=float))
-    trial_nwin = phase_subject["n_samples"].to_numpy(dtype=float)
+    ax[0].hist(cvp, bins=20, edgecolor="black", alpha=0.85)
+    ax[0].axvline(np.nanmedian(cvp), color="C1", lw=2,
+                  label=f"median {np.nanmedian(cvp):.2f}" r"\,\%")
+    ax[0].set_xlabel(r"CV (\%)")
+    ax[0].set_ylabel("participants")
+    ax[0].legend()
 
-    merged = phase_subject.merge(iaf_stats, left_on="participant", right_on="file", how="left")
-    if merged.empty:
-        raise RuntimeError("No overlapping recordings after aggregating to subject level.")
+    # ax[1].scatter(cv["mean_iaf_hz"], cv["std_iaf_hz"], s=20, alpha=0.7)
+    # ax[1].set_xlabel(f"mean {_F0} (Hz)")
+    # ax[1].set_ylabel(f"{_F0} std (Hz)")
 
-    x_cv = merged["cv_iaf"].values
-    y_unc = merged["mean_unc_deg"].values
-    y_cal = merged["mean_cal_deg"].values
+    if has_snr:
+        ax[1].scatter(snr, cvp, s=20, alpha=0.7)
+        ax[1].set_xlabel("mean SNR")
+        ax[1].set_ylabel(r"CV (\%)")
+    else:
+        ax[1].text(0.5, 0.5, "no SNR\n(fooof method)", ha="center", va="center",
+                   transform=ax[1].transAxes)
+        ax[1].set_xticks([])
+        ax[1].set_yticks([])
 
-    make_figure(
-        err_unc_rad=phase_err_unc_rad,
-        err_cal_rad=phase_err_cal_rad,
-        trial_freq_cv=x_cv,
-        trial_abs_unc_rad=np.radians(y_unc),
-        trial_abs_cal_rad=np.radians(y_cal),
-        trial_mu_unc=trial_mu_unc,
-        trial_mu_cal=trial_mu_cal,
-        trial_nwin=trial_nwin,
-        save_base=save_base,
-        n_perm=int(1e5),
-        perm_seed=0,
-        panel_c_xlabel="IAF CV",
-        panel_c_title=r"$\mathbf{c}$ Phase error vs. IAF variability",
-    )
+    fig.tight_layout()
+    _save(fig, f"iaf_cv_{label}")
 
 
-def main(npz_path=NPZ_PATH, phase_csv_path=PHASE_CSV, iaf_csv_path=IAF_CSV):
-    data = np.load(npz_path)
-    if "phase_err_unc_deg_all" not in data.files or "phase_err_cal_deg_all" not in data.files:
-        raise KeyError(
-            "NPZ file must contain 'phase_err_unc_deg_all' and 'phase_err_cal_deg_all'."
-        )
+# --------------------------------------------------------------------------
+# comparison of two methods
+# --------------------------------------------------------------------------
+def plot_compare(dir_a, dir_b, labels):
+    la, lb = labels
+    dir_a, dir_b = pathlib.Path(dir_a), pathlib.Path(dir_b)
+    da = pd.read_csv(dir_a / _IAF_CSV)
+    db = pd.read_csv(dir_b / _IAF_CSV)
 
-    phase_err_unc_deg_all = data["phase_err_unc_deg_all"]
-    phase_err_cal_deg_all = data["phase_err_cal_deg_all"]
-    print(f"Loaded {phase_err_unc_deg_all.size} uncalibrated samples "
-          f"and {phase_err_cal_deg_all.size} calibrated samples from {npz_path}")
+    # per-window agreement: match windows by (recording, window centre time)
+    va, vb = _valid(da), _valid(db)
+    for v in (va, vb):
+        v["time_s"] = v["time_s"].round(6)
+    m = va.merge(vb, on=["file", "time_s"], suffixes=(f"_{la}", f"_{lb}"))
+    pa = m[f"paf_hz_{la}"].to_numpy()
+    pb = m[f"paf_hz_{lb}"].to_numpy()
+    diff = pa - pb
+    md, sd = float(np.nanmean(diff)), float(np.nanstd(diff, ddof=1))
+    loa = (md - 1.96 * sd, md + 1.96 * sd)
 
-    plot_phase_error(
-        phase_err_unc_deg_all,
-        phase_err_cal_deg_all,
-        phase_csv_path=phase_csv_path,
-        iaf_csv_path=iaf_csv_path,
-    )
+    # per-participant CV for each method
+    cva = cv_per_participant(da)
+    cvb = cv_per_participant(db)
+    cva.to_csv(dir_a / "iaf_cv_per_file.csv", index=False)
+    cvb.to_csv(dir_b / "iaf_cv_per_file.csv", index=False)
+    cvm = cva.merge(cvb, on="participant", suffixes=(f"_{la}", f"_{lb}"))
+
+    print(f"\n[compare]  {la} vs {lb}   ({len(m)} matched windows, "
+          f"{cvm['participant'].nunique()} participants)")
+    print(f"  per-window IAF  {la}-{lb}:  mean diff = {md:+.3f} Hz   "
+          f"SD = {sd:.3f} Hz   95% LoA = [{loa[0]:+.3f}, {loa[1]:+.3f}] Hz")
+    med_a = _describe_cv(cvm[f"cv_iaf_{la}"], la)
+    med_b = _describe_cv(cvm[f"cv_iaf_{lb}"], lb)
+
+    fig, ax = plt.subplots(1, 2, figsize=FIGSIZE)
+
+    # (1) per-window difference histogram
+    ax[0].hist(diff, bins=60, edgecolor="black")
+    ax[0].axvline(md, color="C1", lw=2, label=f"mean {md:+.3f} Hz")
+    ax[0].set_xlabel(f"per-window {_F0}: {_tex(la)} $-$ {_tex(lb)} (Hz)")
+    ax[0].set_ylabel("windows")
+    ax[0].legend(fontsize=8)
+
+    # (2) per-participant CV, method vs method
+    ca = cvm[f"cv_iaf_{la}"].to_numpy() * 100.0
+    cb = cvm[f"cv_iaf_{lb}"].to_numpy() * 100.0
+    ax[1].plot(ca, cb, "o", alpha=0.7)
+    lim = [0, float(np.nanmax([ca, cb])) * 1.05]
+    ax[1].plot(lim, lim, "k--", lw=1)
+    ax[1].set_xlabel(rf"CV {_tex(la)} (\%), median {med_a * 100:.2f}")
+    ax[1].set_ylabel(rf"CV {_tex(lb)} (\%), median {med_b * 100:.2f}")
+
+    fig.tight_layout()
+    _save(fig, f"iaf_cv_compare_{la}_vs_{lb}")
 
 
+# --------------------------------------------------------------------------
 if __name__ == "__main__":
-    import argparse
-    import os
-
-    p = argparse.ArgumentParser(description="Plot phase-error results from a run directory.")
-    p.add_argument("dir", nargs="?", default=".",
-                   help="Run directory holding phase_error_all.npz etc. (default: .).")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("run_dir", type=pathlib.Path, nargs="+",
+                   help="one run dir (single-method CV) or two (method comparison)")
+    p.add_argument("--labels", nargs=2, metavar=("A", "B"),
+                   help="labels for the two run dirs (default: inferred from names)")
     args = p.parse_args()
-    os.chdir(args.dir)
-    main()
+
+    if len(args.run_dir) == 1:
+        d = args.run_dir[0]
+        plot_single(d, _label_for(d))
+    elif len(args.run_dir) == 2:
+        a, b = args.run_dir
+        labels = args.labels or [_label_for(a), _label_for(b)]
+        plot_compare(a, b, labels)
+    else:
+        p.error("give one or two run directories")

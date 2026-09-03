@@ -6,7 +6,7 @@ there. This module only redefines the pieces the CLAS work needed:
 * per-window IAF with window-centre timestamps (``estimate_paf`` returns a tuple)
 * window length ``round(2*fs/f0)`` instead of the fixed ``round(0.512*fs)``
 * ``echt_vs_hilbert`` driven by :mod:`phase_track` with a per-sample ``f0_seq``
-* an ``ds004148`` loader (+ ``max_subjects`` for ``hmc``)
+* an ``ds004148`` loader (``load_hmc`` / ``load_rodrigues2017`` are upstream)
 * ``process_segment`` with a low-pass-only pre-filter and interpolated ``f0_seq``
 * ``time_s`` carried through into ``iaf_per_segment.csv``
 """
@@ -53,8 +53,9 @@ iaf = _h.iaf
 _fail = _h._fail
 IafResult = _h.IafResult
 get_first_stage_change_end = _h.get_first_stage_change_end
-load_rodrigues2017 = _h.load_rodrigues2017
 HMC_EXCLUDE_SUBJECTS = _h.HMC_EXCLUDE_SUBJECTS
+load_hmc = _h.load_hmc
+load_rodrigues2017 = _h.load_rodrigues2017
 
 
 # --------------------------------------------------------------------------
@@ -74,8 +75,9 @@ def estimate_paf(data, info, fmin=7.5, fmax=14,
 
     Returns
     -------
-    (median_paf | None, pafs: list[float], times: list[float])
-        ``times`` are window centres in seconds.
+    (median_paf | None, pafs: list[float], times: list[float], snrs: list[float])
+        ``times`` are window centres in seconds; ``snrs`` is per-window SNR for
+        ``method="simple"`` (``nan`` for ``method="fooof"``).
     """
     if method not in ("fooof", "simple"):
         raise ValueError(f"unknown IAF method: {method!r}")
@@ -85,21 +87,37 @@ def estimate_paf(data, info, fmin=7.5, fmax=14,
     duration = raw_tmp.times[-1]
     segment_duration = min(duration, segment_duration)
 
-    pafs, times = [], []
-    for tmin in np.arange(0, duration - segment_duration, step):
-        seg = raw_tmp.copy().crop(tmin=tmin, tmax=tmin + segment_duration)
-        if method == "fooof":
-            res = iaf(seg, fmin=fmin, fmax=fmax, pink_max_r2=0.9, resolution=0.1)
-            paf = res.PeakAlphaFrequency
-        else:
-            paf = simple_paf(seg.get_data()[0], fs, alpha_band=(fmin, fmax))
+    # window start times; when the segment is (about) one window long
+    # `np.arange` is empty -- fall back to a single window covering all of it
+    starts = np.arange(0, duration - segment_duration, step)
+    if starts.size == 0:
+        starts = np.array([0.0])
+
+    pafs, times, snrs = [], [], []
+    for tmin in starts:
+        tmax = min(tmin + segment_duration, duration)
+        seg = raw_tmp.copy().crop(tmin=tmin, tmax=tmax)
+        n_win = seg.n_times
+        try:
+            if method == "fooof":
+                # upstream iaf() uses n_fft = int(fs / resolution) and MNE's
+                # Welch rejects n_fft > n_times; cap the resolution for short
+                # windows (e.g. the ~10 s Rodrigues2017 blocks) so it stays <=.
+                res_hz = max(0.1, fs / n_win * 1.05)
+                r = iaf(seg, fmin=fmin, fmax=fmax, pink_max_r2=0.9, resolution=res_hz)
+                paf, snr = r.PeakAlphaFrequency, np.nan
+            else:
+                paf, snr = simple_paf(seg.get_data()[0], fs, alpha_band=(fmin, fmax))
+        except Exception:  # noqa: BLE001 - a single bad window must not kill the segment
+            continue
         if paf is not None and np.isfinite(paf) and paf > 0:
             pafs.append(float(paf))
             times.append(tmin + segment_duration / 2)  # centre of window
+            snrs.append(float(snr) if snr is not None else np.nan)
 
     if not pafs:
-        return None, [], []
-    return float(np.median(pafs)), pafs, times
+        return None, [], [], []
+    return float(np.median(pafs)), pafs, times, snrs
 
 
 def params_from_f0(fs, f0, bw_factor=0.5):
@@ -146,25 +164,12 @@ def echt_vs_hilbert(data, fs, filt_order, f0, l_freq, h_freq, win_len,
 
 
 # --------------------------------------------------------------------------
-# Dataset loaders
+# Dataset loaders  (load_hmc / load_rodrigues2017 are upstream, re-exported above)
 # --------------------------------------------------------------------------
-def load_hmc(edf_dir, max_subjects=None, channel_name="EEG O2-M1",
-             window_dur=30, step_dur=15):
-    """Upstream :func:`helpers.load_hmc` + optional ``max_subjects`` cap."""
-    kwargs = dict(window_dur=window_dur, step_dur=step_dur)
-    if channel_name is not None:
-        kwargs["channel_name"] = channel_name
-    segments = _h.load_hmc(edf_dir, **kwargs)
-    if max_subjects is not None:
-        keep = list(dict.fromkeys(s["subject"] for s in segments))[:max_subjects]
-        segments = [s for s in segments if s["subject"] in keep]
-    return segments
-
-
 def load_ds004148(edf_dir, max_subjects=None, channel_name="Fz-FCz"):
     """Load ds004148 eyes-closed resting-state EDFs into windowed segments."""
     edf_dir = Path(edf_dir)
-    edf_files = sorted(edf_dir.glob("*task-eyesclosed_eeg.edf"))
+    edf_files = sorted(edf_dir.glob("*session1*task-eyesclosed_eeg.edf"))
     if max_subjects is not None:
         edf_files = edf_files[:max_subjects]
 
@@ -216,10 +221,14 @@ def load_ds004148(edf_dir, max_subjects=None, channel_name="Fz-FCz"):
 # Per-segment processing
 # --------------------------------------------------------------------------
 def process_segment(seg, iaf_window=10, bw_factor=0.5, filt_order=1, iaf_method="fooof"):
-    """Per-window IAF / f0 tracking + ecHT phase errors for one segment.
+    """Per-window IAF estimates for one segment.
 
     ``iaf_method`` ("fooof" | "simple") selects the per-window PAF estimator
     (see :func:`estimate_paf`).
+
+    NOTE: the ecHT phase-error analysis is currently disabled -- only the IAF
+    variability is needed. Re-enable the commented block below (and the matching
+    block in :func:`aggregate_and_save`) to restore it.
     """
     mne.set_log_level("ERROR")
     sid = f"s{seg['subject']}_{seg.get('condition', '')}_b{seg.get('block_idx', 0)}"
@@ -237,37 +246,41 @@ def process_segment(seg, iaf_window=10, bw_factor=0.5, filt_order=1, iaf_method=
                     butter(4, [46, 54], fs=fs, btype="stop", output="sos")]:
             x = sosfiltfilt(sos, x)
 
-        mean_paf, pafs, times = estimate_paf(
-            x, info, segment_duration=iaf_window, step=1, method=iaf_method
+        # step size of 1 seconds
+        mean_paf, pafs, times, snrs = estimate_paf(
+            x, info, segment_duration=iaf_window, method=iaf_method, step=1,
         )
         if mean_paf is None:
             return _fail(sid, "no_alpha: no valid PAF")
 
-        f0_seq = interp1d(
-            times, pafs, kind="nearest",
-            bounds_error=False, fill_value="extrapolate",
-        )(np.arange(x.size) / fs)
-
-        win_len, l_freq, h_freq = params_from_f0(fs, mean_paf, bw_factor)
-        if win_len < 3 or win_len >= x.size:
-            return _fail(sid, f"invalid window length ({win_len=}, N={x.size})")
-
-        # Acausal reference on the full recording, then slice
-        sos = butter(filt_order, [l_freq, h_freq], fs=fs, btype="band", output="sos")
-        ref = hilbert(sosfiltfilt(sos, seg["full_data"]))
-        ref_seg = ref[seg["sample_start"]:seg["sample_end"]]
-
-        pe_unc, pe_cal = echt_vs_hilbert(
-            x, fs, filt_order, mean_paf, l_freq, h_freq, win_len,
-            ref_analytic_signal=ref_seg, f0_seq=f0_seq,
-        )
+        # --- ecHT phase-error analysis (disabled: only IAF variability wanted) ---
+        # f0_seq = interp1d(
+        #     times, pafs, kind="nearest",
+        #     bounds_error=False, fill_value="extrapolate",
+        # )(np.arange(x.size) / fs)
+        #
+        # win_len, l_freq, h_freq = params_from_f0(fs, mean_paf, bw_factor)
+        # if win_len < 3 or win_len >= x.size:
+        #     return _fail(sid, f"invalid window length ({win_len=}, N={x.size})")
+        #
+        # # Acausal reference on the full recording, then slice
+        # sos = butter(filt_order, [l_freq, h_freq], fs=fs, btype="band", output="sos")
+        # ref = hilbert(sosfiltfilt(sos, seg["full_data"]))
+        # ref_seg = ref[seg["sample_start"]:seg["sample_end"]]
+        #
+        # pe_unc, pe_cal = echt_vs_hilbert(
+        #     x, fs, filt_order, mean_paf, l_freq, h_freq, win_len,
+        #     ref_analytic_signal=ref_seg, f0_seq=f0_seq,
+        # )
+        pe_unc = pe_cal = None
+        # -----------------------------------------------------------------------
 
         return dict(
             seg_id=sid, ok=True, reason="",
             phase_err_unc=pe_unc, phase_err_cal=pe_cal,
             iaf_segments=[
-                dict(segment_index=i, had_alpha=1, paf_hz=p, time_s=t)
-                for i, (p, t) in enumerate(zip(pafs, times))
+                dict(segment_index=i, had_alpha=1, paf_hz=p, time_s=t, snr=snr)
+                for i, (p, t, snr) in enumerate(zip(pafs, times, snrs))
             ],
         )
 
@@ -276,10 +289,15 @@ def process_segment(seg, iaf_window=10, bw_factor=0.5, filt_order=1, iaf_method=
 
 
 def aggregate_and_save(results, csv_path, npz_path, iaf_csv_path):
-    """Upstream :func:`helpers.aggregate_and_save` + a ``time_s`` IAF column."""
-    all_unc, all_cal = [], []
-    per_file_rows, iaf_rows = [], []
+    """Write ``iaf_per_segment.csv`` (file, segment_index, had_alpha, paf_hz, time_s, snr).
+
+    ``csv_path`` / ``npz_path`` are accepted for signature compatibility but are
+    unused while the ecHT phase-error analysis is disabled (see the commented
+    block below and in :func:`process_segment`).
+    """
+    iaf_rows = []
     no_alpha, errors = [], []
+    n_valid = 0
 
     for r in results:
         if not r["ok"]:
@@ -287,29 +305,16 @@ def aggregate_and_save(results, csv_path, npz_path, iaf_csv_path):
             bucket.append((r["seg_id"], r["reason"]))
             continue
 
+        n_valid += 1
         iaf_rows.extend(
             dict(file=r["seg_id"], segment_index=s["segment_index"],
                  had_alpha=s["had_alpha"], paf_hz=s["paf_hz"],
-                 time_s=s.get("time_s"))
+                 time_s=s.get("time_s"), snr=s.get("snr"))
             for s in r.get("iaf_segments", [])
         )
 
-        pe_unc, pe_cal = r["phase_err_unc"], r["phase_err_cal"]
-        all_unc.append(pe_unc)
-        all_cal.append(pe_cal)
-
-        m_u, s_u, plv_u, pli_u = _circ_stats(np.radians(pe_unc))
-        m_c, s_c, plv_c, pli_c = _circ_stats(np.radians(pe_cal))
-        per_file_rows.append(dict(
-            file=r["seg_id"], n_samples=pe_unc.size,
-            mean_unc_deg=np.degrees(m_u), std_unc_deg=np.degrees(s_u),
-            plv_unc=plv_u, pli_unc=pli_u,
-            mean_cal_deg=np.degrees(m_c), std_cal_deg=np.degrees(s_c),
-            plv_cal=plv_c, pli_cal=pli_c,
-        ))
-
     print(f"\n=== Summary ===\n"
-          f"  Total: {len(results)}   Valid: {len(all_unc)}   "
+          f"  Total: {len(results)}   Valid: {n_valid}   "
           f"No alpha: {len(no_alpha)}   Errors: {len(errors)}")
     for label, items in [("No alpha", no_alpha), ("Errors", errors)]:
         for path, reason in items:
@@ -318,26 +323,37 @@ def aggregate_and_save(results, csv_path, npz_path, iaf_csv_path):
     os.makedirs(os.path.dirname(iaf_csv_path) or ".", exist_ok=True)
     with open(iaf_csv_path, "w", newline="") as f:
         w = csv.DictWriter(
-            f, fieldnames=["file", "segment_index", "had_alpha", "paf_hz", "time_s"]
+            f, fieldnames=["file", "segment_index", "had_alpha", "paf_hz", "time_s", "snr"]
         )
         w.writeheader()
         w.writerows(iaf_rows)
     print(f"IAF estimates -> {iaf_csv_path}")
 
-    if not all_unc:
-        print("No valid phase-error data.")
-        return
-
-    fields = ["file", "n_samples",
-              "mean_unc_deg", "std_unc_deg", "plv_unc", "pli_unc",
-              "mean_cal_deg", "std_cal_deg", "plv_cal", "pli_cal"]
-    with open(csv_path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
-        w.writeheader()
-        w.writerows(per_file_rows)
-    print(f"Per-file stats  -> {csv_path}")
-
-    np.savez(npz_path,
-             phase_err_unc_deg_all=np.concatenate(all_unc),
-             phase_err_cal_deg_all=np.concatenate(all_cal))
-    print(f"Phase errors    -> {npz_path}")
+    # --- ecHT phase-error aggregation (disabled) ----------------------------
+    # all_unc, all_cal, per_file_rows = [], [], []
+    # for r in results:
+    #     if not r["ok"]:
+    #         continue
+    #     pe_unc, pe_cal = r["phase_err_unc"], r["phase_err_cal"]
+    #     all_unc.append(pe_unc)
+    #     all_cal.append(pe_cal)
+    #     m_u, s_u, plv_u, pli_u = _circ_stats(np.radians(pe_unc))
+    #     m_c, s_c, plv_c, pli_c = _circ_stats(np.radians(pe_cal))
+    #     per_file_rows.append(dict(
+    #         file=r["seg_id"], n_samples=pe_unc.size,
+    #         mean_unc_deg=np.degrees(m_u), std_unc_deg=np.degrees(s_u),
+    #         plv_unc=plv_u, pli_unc=pli_u,
+    #         mean_cal_deg=np.degrees(m_c), std_cal_deg=np.degrees(s_c),
+    #         plv_cal=plv_c, pli_cal=pli_c,
+    #     ))
+    # fields = ["file", "n_samples",
+    #           "mean_unc_deg", "std_unc_deg", "plv_unc", "pli_unc",
+    #           "mean_cal_deg", "std_cal_deg", "plv_cal", "pli_cal"]
+    # with open(csv_path, "w", newline="") as f:
+    #     w = csv.DictWriter(f, fieldnames=fields)
+    #     w.writeheader()
+    #     w.writerows(per_file_rows)
+    # np.savez(npz_path,
+    #          phase_err_unc_deg_all=np.concatenate(all_unc),
+    #          phase_err_cal_deg_all=np.concatenate(all_cal))
+    # ---------------------------------------------------------------------

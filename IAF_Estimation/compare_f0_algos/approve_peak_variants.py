@@ -1,12 +1,12 @@
 """
 Variants of `approve_peak` for comparing peak-rejection strategies in
 combine_simple. Each factory function returns a function with the exact
-signature IAF_tests.combine_simple expects to call:
+signature iaf_compare.algorithms.combine_simple expects to call:
 
     approve_peak(freqs, psd_safe, psd_flat, psd_smooth, popt, gaussian,
                  aperiodic_simple, alpha_band) -> bool
 
-Variable units (see IAF_tests.combine_simple for derivation):
+Variable units (see iaf_compare.algorithms.combine_simple for derivation):
     psd_safe          raw PSD, linear power units, full freq_range
     aperiodic_simple  fitted aperiodic floor, LOG10 scale (so 10**aperiodic_simple
                        is the floor in linear units)
@@ -16,7 +16,7 @@ Variable units (see IAF_tests.combine_simple for derivation):
     popt              [amp, center_freq, std] of the fitted gaussian bump
 """
 import numpy as np
-from IAF_tests import bic_peak_test_simple
+from iaf_compare.algorithms import bic_peak_test_simple
 
 
 def _alpha_mask(freqs, alpha_band):
@@ -25,8 +25,7 @@ def _alpha_mask(freqs, alpha_band):
 
 
 def _snr_band_mask(freqs, popt):
-    """Mask used for SNR integration: peak center +/- 1 std (matches the
-    style of the SNR test already sketched in IAF_reject_tests.approve_peak)."""
+    """Mask used for SNR integration: peak center +/- 1 std."""
     _, paf, std_gauss = popt
     return (freqs >= (paf - std_gauss)) & (freqs <= (paf + std_gauss))
 

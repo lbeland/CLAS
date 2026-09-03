@@ -1,53 +1,51 @@
 """
 Compare different `approve_peak` rejection strategies for combine_simple.
+Was IAF_reject_tests.py.
 
 For each strategy in approve_peak_variants.build_strategy_registry():
-  1. monkey-patch IAF_tests.approve_peak (and combine_simple's closure over it,
-     since combine_simple calls approve_peak by name from its own module's
-     globals -- see the "importing a function that calls another function"
-     discussion: patching IAF_tests.approve_peak is what makes
-     IAF_tests.combine_simple pick it up, because combine_simple's call
-     `approve_peak(...)` resolves via IAF_tests.__dict__ at call time)
-  2. run the full with-peak + no-peak condition sweep (mirrors
-     IAF_reject_tests.py's sweeps_with_peak / sweeps_no_peak)
+  1. monkey-patch iaf_compare.algorithms.approve_peak. combine_simple calls
+     approve_peak by name from its own module's globals, so rebinding
+     iaf_compare.algorithms.approve_peak is what makes combine_simple pick it
+     up (the call `approve_peak(...)` resolves via algorithms.__dict__ at call
+     time). run_window_analysis likewise calls algorithms.run_algorithms
+     through the module object, so rebinding that swaps the algorithm set.
+  2. run the full with-peak + no-peak condition sweep
   3. pool fp/fn/n across seeds per condition (NOT mean of per-condition
-     fail_rate -- see earlier discussion) and store mae/rmse for tp samples
-  4. collect one summary row per (strategy, condition) into a single CSV/h5
-     so you can compare strategies head-to-head afterward.
+     fail_rate) and store mae/rmse for tp samples
+  4. collect one summary row per (strategy, condition) into a single CSV so
+     strategies can be compared head-to-head afterward.
 
-Run with: python IAF_reject_compare.py
+Run with: python reject_compare.py
 """
 import numpy as np
 import pandas as pd
-from pathlib import Path
 from multiprocessing import Pool
 from tqdm import tqdm
-import h5py
 
-import IAF_tests
-from IAF_tests import process_condition, save_conditions_latex_table
+from iaf_compare import algorithms
+from iaf_compare.pipeline import process_condition
+from iaf_compare.metrics import compute_pooled_metrics
+from iaf_compare.paths import REJECT_DIR, ensure_output_dirs
 from approve_peak_variants import build_strategy_registry
 
 # tqdm spins up a background "monitor" thread the first time it's used, and
 # that thread persists for the rest of the process. Every Pool() created
-# afterward then sees a multi-threaded parent and prints:
-#   "This process is multi-threaded, use of fork() may lead to deadlocks"
+# afterward then sees a multi-threaded parent and warns about fork() deadlocks.
 # We loop over many strategies, each creating its own Pool(), so without this
-# the warning would fire on every strategy after the first. The monitor
-# thread isn't used for anything here (it's for detecting stalled iterators),
-# so disabling it is safe.
+# the warning would fire on every strategy after the first. The monitor thread
+# isn't used for anything here, so disabling it is safe.
 tqdm.monitor_interval = 0
 
-BASE_FOLDER = Path(".")
 N_SEEDS = 20
 N_WORKERS = 5
 
-# Only compare combine_simple's behavior under each strategy -- fooof and
-# other algorithms don't depend on approve_peak, so running them N_strategies
-# times would just waste compute on identical results.
+
+# Only compare combine_simple's behavior under each strategy -- fooof and other
+# algorithms don't depend on approve_peak, so running them N_strategies times
+# would just waste compute on identical results.
 def run_algorithms_combine_simple_only(window, psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, freq_mt, config):
     return {
-        "combine_simple": IAF_tests.combine_simple(psd, freq_bins, config),
+        "combine_simple": algorithms.combine_simple(psd, freq_bins, config),
     }
 
 
@@ -66,7 +64,7 @@ def build_conditions():
         "stationarity":         "constant",   # "constant" | "burst"
         "aperiodic_exponent":   2.0,
         "n_peaks":              1,
-        "peak_bw":              0.5,
+        "peak_width":           0.5,  # was "peak_bw" -- generate_signal reads "peak_width"
         "peak_snr_db":          20.0,
         "window_length_sec":    10,
         "noise_lv":             0.2,          # Std dev of the per-bin log10-power noise (gen_noise)
@@ -74,10 +72,10 @@ def build_conditions():
     default_no_peak = {**default_with_peak, "n_peaks": 0}
 
     sweeps_with_peak = {
-        "peak_snr_db":           [0, 5, 10],
-        "peak_bw":              [0.1, 0.5, 1.0, 2.0, 4.0],
+        "peak_snr_db":          [0, 5, 10],
+        "peak_width":           [0.1, 0.5, 1.0, 2.0, 4.0],  # was "peak_bw"
         "aperiodic_exponent":   [0, 1, 2, 3],
-        "peak_freq":            sorted([6,8,12,14] + [default_with_peak["peak_freq"]]),
+        "peak_freq":            sorted([6, 8, 12, 14] + [default_with_peak["peak_freq"]]),
         "stationarity":         ["constant", "burst"],
         "noise_lv":             [0, 0.2, 1.0],
     }
@@ -90,13 +88,12 @@ def build_conditions():
     conditions = []
 
     for sweeps, default in ((sweeps_with_peak, default_with_peak),
-                             (sweeps_no_peak, default_no_peak)):
+                            (sweeps_no_peak, default_no_peak)):
         for param, values in sweeps.items():
             for val in values:
                 config = {**fixed, **default, param: val}
                 # Generate each signal at exactly window_length_sec -- one
-                # signal == one window == one trial, no sliding (see
-                # IAF_tests.run_window_analysis).
+                # signal == one window == one trial, no sliding.
                 config["signal_length_sec"] = config["window_length_sec"]
                 key = tuple(sorted(config.items(), key=lambda kv: str(kv)))
                 if key not in seen:
@@ -111,11 +108,12 @@ def init_worker(strategy_name):
     survives regardless of whether multiprocessing uses fork or spawn."""
     from approve_peak_variants import build_strategy_registry
     registry = build_strategy_registry()
-    IAF_tests.approve_peak = registry[strategy_name]
-    IAF_tests.run_algorithms = run_algorithms_combine_simple_only
+    algorithms.approve_peak = registry[strategy_name]
+    algorithms.run_algorithms = run_algorithms_combine_simple_only
 
 
 def main():
+    ensure_output_dirs()
     conditions = build_conditions()
     print(f"Total conditions: {len(conditions)}")
 
@@ -141,19 +139,18 @@ def main():
             ))
 
         # Pool every seed of the same condition before scoring -- fp/fn/mae/
-        # rmse are only meaningful pooled over all seeds, not per single
-        # trial (see IAF_tests.compute_pooled_metrics).
+        # rmse are only meaningful pooled over all seeds, not per single trial.
         pooled = {}
         for cond_idx, config, gt, estimates_per_algo, _ in results:
             condition_key = tuple(sorted(config.items(), key=lambda kv: str(kv)))
             samples = pooled.setdefault(condition_key, {"est": [], "gt": [], "config": config,
-                                                          "condition_id": cond_idx // N_SEEDS})
+                                                        "condition_id": cond_idx // N_SEEDS})
             samples["est"].append(float(estimates_per_algo["combine_simple"]))
             samples["gt"].append(gt)
 
         for samples in pooled.values():
             config = samples["config"]
-            metrics = IAF_tests.compute_pooled_metrics(samples["est"], samples["gt"])
+            metrics = compute_pooled_metrics(samples["est"], samples["gt"])
             all_rows.append({
                 "strategy": strategy_name,
                 "condition_id": samples["condition_id"],
@@ -167,7 +164,7 @@ def main():
             })
 
     df = pd.DataFrame(all_rows)
-    df.to_csv(BASE_FOLDER / "strategy_comparison_raw.csv", index=False)
+    df.to_csv(REJECT_DIR / "strategy_comparison_raw.csv", index=False)
 
     # --- Headline comparison: pool across seeds AND across all no-peak
     # conditions to get one false-positive rate per strategy, and pool across
@@ -184,10 +181,10 @@ def main():
         fp_total, n_np_total = np_grp["fp"].sum(), np_grp["n"].sum()
         fn_total, n_wp_total = wp_grp["fn"].sum(), wp_grp["n"].sum()
         fp_wp_total = wp_grp["fp"].sum()  # fp can still happen in n_peaks>0
-                                            # conditions with n_peaks>1 if one
-                                            # of several peaks is spuriously
-                                            # found where none exists in that
-                                            # window -- keep separate from fn
+        #                                   conditions with n_peaks>1 if one of
+        #                                   several peaks is spuriously found
+        #                                   where none exists in that window --
+        #                                   keep separate from fn
         mae_vals = wp_grp["mae"].dropna()
 
         summary_rows.append({
@@ -201,7 +198,7 @@ def main():
         })
 
     summary = pd.DataFrame(summary_rows).sort_values("false_positive_rate_no_peak")
-    summary.to_csv(BASE_FOLDER / "strategy_comparison_summary.csv", index=False)
+    summary.to_csv(REJECT_DIR / "strategy_comparison_summary.csv", index=False)
     print("\n=== Summary (sorted by false positive rate) ===")
     print(summary.to_string(index=False))
 

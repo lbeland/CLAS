@@ -1,12 +1,21 @@
+"""Figures + summary tables from outputs/iaf_results.h5. Was plot_iaf_tests.py.
+
+HDF5 loading now lives in iaf_compare.io_hdf5 (shared with the rest of the
+package). Figures are written to iaf_compare.paths.FIGURE_DIR -- point
+FIGURE_DIR at another directory below if you need them elsewhere.
+"""
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-from matplotlib.patches import PathPatch
 import seaborn as sns
-from pathlib import Path
-import h5py
 import matplotlib as mpl
+
+from iaf_compare.paths import RESULTS_H5, FIGURE_DIR, ensure_output_dirs
+from iaf_compare.io_hdf5 import (
+    load_metrics, load_samples_for_plot, load_spectra_by_hue,
+    load_timeseries_by_hue, filter_df, params_excluding,
+)
 
 mpl.use("pgf")
 mpl.rcParams.update({
@@ -16,128 +25,8 @@ mpl.rcParams.update({
     'pgf.rcfonts': False,
 })
 
-BASE_FOLDER = Path(__file__).parent
 PALETTE = sns.color_palette("tab10")
 
-def params_excluding(base_params, exclude_key):
-    """Return a copy of base_params with exclude_key removed if present.
-
-    This lets us reuse `default_filter` while allowing the removed key
-    to be used as a hue in plotting calls.
-    """
-    p = dict(base_params)
-    p.pop(exclude_key, None)
-    return p
-
-def load_metrics(path="iaf_results.h5"):
-    """Load just the aggregated metrics into a DataFrame."""
-    rows = []
-    with h5py.File(path, "r") as hf:
-        for cond_id, grp in hf["conditions"].items():
-            config = dict(grp.attrs)
-            for algo, algo_grp in grp.items():
-                if algo in ["ground_truth", "first_window", "spectrum_psd", "spectrum_freq_bins"]:
-                    continue
-                rows.append({
-                    "condition_id": cond_id,
-                    **config,
-                    "algorithm": algo,
-                    **dict(algo_grp.attrs)
-                })
-    return pd.DataFrame(rows)
-
-def load_samples_for_plot(hdf_path, df_metrics, **filter_kwargs):
-    """
-    Filter conditions first, then load only matching samples from HDF5.
-    Much more efficient than loading everything and filtering after.
-    Each condition's estimates/errors span all its seeds (nan where a
-    seed had no estimate/error), so this explodes to one row per seed.
-    """
-    df_filtered = filter_df(df_metrics, **filter_kwargs)
-
-    rows = []
-    with h5py.File(hdf_path, "r") as hf:
-        for _, row in df_filtered.iterrows():
-            cond_id = f"{int(row['condition_id']):04d}"
-            algo = row["algorithm"]
-            try:
-                errors = hf[f"conditions/{cond_id}/{algo}/errors"][:]
-                estimates = hf[f"conditions/{cond_id}/{algo}/estimates"][:]
-                row_dict = row.to_dict()
-                for err, est in zip(errors, estimates):
-                    rows.append({**row_dict, "error": err,
-                                 "abs_error": abs(err), "estimate": est})
-            except KeyError:
-                pass
-    return pd.DataFrame(rows)
-
-def load_spectra_by_hue(hdf_path, df_filtered, hue):
-    """
-    Load first found spectrum per unique hue value.
-    Returns dict: hue_value -> (freq_bins, mean_psd)
-    """
-    spectra = {}
-    with h5py.File(hdf_path, "r") as hf:
-        for hue_val, group in df_filtered.groupby(hue):
-            psds = []
-            freq_bins = None
-            seen = set()
-            for _, row in group.iterrows():
-                cond_id = f"{int(row['condition_id']):04d}"
-                if cond_id in seen:
-                    continue
-                seen.add(cond_id)
-                try:
-                    grp = hf[f"conditions/{cond_id}"]
-                    psds.append(grp["spectrum_psd"][:])
-                    if freq_bins is None:
-                        freq_bins = grp["spectrum_freq_bins"][:]
-                except KeyError:
-                    pass
-            if psds:
-                spectra[hue_val] = (freq_bins, psds[0])
-    return spectra
-
-def load_timeseries_by_hue(hdf_path, df_filtered, hue):
-    """
-    Load first found timeseries per unique hue value.
-    Returns dict: hue_value -> (freq_bins, mean_psd)
-    """
-    window = {}
-    with h5py.File(hdf_path, "r") as hf:
-        for hue_val, group in df_filtered.groupby(hue):
-            timeseries = []
-            seen = set()
-            for _, row in group.iterrows():
-                cond_id = f"{int(row['condition_id']):04d}"
-                if cond_id in seen:
-                    continue
-                seen.add(cond_id)
-                try:
-                    grp = hf[f"conditions/{cond_id}"]
-                    timeseries.append(grp["first_window"][:])
-                except KeyError:
-                    pass
-            if timeseries:
-                window[hue_val] = timeseries[0]
-    return window
-
-def filter_df(df, **kwargs):
-    """
-    Filter DataFrame to rows matching all keyword conditions.
-
-    Examples
-    --------
-    filter_df(df, noise_type="none", mod_freq=0.0, mod_amp=0.5)
-    filter_df(df, noise_type=["pink", "white"])  # multiple allowed values
-    """
-    mask = pd.Series(True, index=df.index)
-    for col, val in kwargs.items():
-        if isinstance(val, (list, tuple)):
-            mask &= df[col].isin(val)
-        else:
-            mask &= (df[col] == val)
-    return df[mask]
 
 def print_detection_table(df_metrics, **filter_kwargs):
     df = filter_df(df_metrics, **filter_kwargs)
@@ -156,12 +45,14 @@ def print_detection_table(df_metrics, **filter_kwargs):
     grouped.columns = ["Miss/FN (%)", "False alarm/FP (%)", "Correct rejection (%)", "MAE"]
     grouped = grouped[["MAE", "Miss/FN (%)", "False alarm/FP (%)", "Correct rejection (%)"]]
 
-    print(f"\n=== Detection Rates ===")
+    print("\n=== Detection Rates ===")
     print(f"Filter: {filter_kwargs}  |  Conditions matched: {df['condition_id'].nunique()}\n")
     print(grouped.to_string())
 
+
 def make_pivot(df, index, columns, values="mae", agg="mean"):
     return df.pivot_table(index=index, columns=columns, values=values, aggfunc=agg)
+
 
 def plot_line(df, x, y="mae", hue="algorithm",
               style=None, estimator="mean", ci="sd", title=None):
@@ -173,24 +64,25 @@ def plot_line(df, x, y="mae", hue="algorithm",
     plt.title(title if title else f"{y} vs {x}")
     plt.tight_layout()
 
+
 def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
              title=None, freq_max=30, save_name=None):
- 
+
     if hue is not None:
         fig = plt.figure(figsize=(15, 6))
         # Split figure into left (1/3) and right (2/3)
         gs = gridspec.GridSpec(1, 2, figure=fig,
                                width_ratios=[1, 4], wspace=0.1, hspace=0.1)
- 
+
         # Split left column into top (timeseries) and bottom (spectrum)
         gs_left = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs[0],
                                                    hspace=0.4)
-        ax_ts   = fig.add_subplot(gs_left[0])
+        ax_ts = fig.add_subplot(gs_left[0])
         ax_spec = fig.add_subplot(gs_left[1])
-        ax_box  = fig.add_subplot(gs[1])
- 
+        ax_box = fig.add_subplot(gs[1])
+
         palette = sns.color_palette(n_colors=df[hue].nunique(), palette=PALETTE)
- 
+
         # --- Timeseries panel ---
         timeseries = load_timeseries_by_hue(hdf_path, df, hue)
         for (hue_val, ts), color in zip(timeseries.items(), palette):
@@ -201,24 +93,24 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
         ax_ts.set_xlabel("Time (s)")
         ax_ts.set_ylabel("Amplitude")
         ax_ts.set_title("Example Window")
- 
+
         # --- Spectrum panel ---
         spectra = load_spectra_by_hue(hdf_path, df, hue)
         for (hue_val, (freq_bins, mean_psd)), color in zip(spectra.items(), palette):
             mask = freq_bins <= freq_max
             ax_spec.semilogy(freq_bins[mask][1:], mean_psd[mask][1:],
-                         color=color, linewidth=1.4, alpha=0.85, label=str(hue_val))
+                             color=color, linewidth=1.4, alpha=0.85, label=str(hue_val))
         ax_spec.set_xlabel("Frequency (Hz)")
         ax_spec.set_ylabel("log(Power)")
         ax_spec.set_title("Example Spectrum")
- 
+
     else:
         fig, ax_box = plt.subplots(figsize=(10, 5))
         palette = PALETTE
- 
+
     # --- Box plot panel ---
     # x_order = ["stupid_max", "parabolic_max", "fooof","philistine","combine"]
-    x_order = ["Maximum", "FOOOF","RestingIAF", "combine_simple","simple_mt"]
+    x_order = ["Maximum", "FOOOF", "RestingIAF", "combine_simple", "simple_mt"]
     # x_order = ["stupid_max", "fooof","philistine","combine_simple", "simple_mt"]
 
     hue_order = sorted(df[hue].unique()) if hue is not None else None
@@ -229,24 +121,24 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
                 medianprops={"color": "black", "linewidth": 1.3},
                 meanprops={"marker": "+", "markeredgecolor": "black",
                            "markersize": "7"})
- 
+
     ax_box.minorticks_on()
     ax_box.grid(axis="y", alpha=0.9)
-    
+
     if ax_box.get_legend() is not None:
         handles, labels = ax_box.get_legend_handles_labels()
         ax_box.legend_.remove()  # Remove legend from box plot (we'll add a common one later if hue is present)
-    
+
     # Expand ylim to make room for labels BEFORE computing offset
     y_min, y_max = ax_box.get_ylim()
     y_range = y_max - y_min
     ax_box.set_ylim(y_min, y_max + y_range * 0.15)
     y_offset = y_max + y_range * 0.02
- 
+
     # x_order categories always map to integer tick positions 0, 1, 2, ...
     # regardless of which boxes actually got drawn.
     xtick_pos = {x_val: i for i, x_val in enumerate(x_order)}
- 
+
     if hue is not None:
         # fp/fn/n are stored once per (condition_id, algorithm), already
         # pooled over every seed of that condition, and broadcast onto
@@ -257,7 +149,7 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
         per_condition = df.drop_duplicates(subset=[x, hue, "condition_id"])
         pooled = per_condition.groupby([x, hue])[["fp", "fn", "n"]].sum()
         grouped = (pooled["fp"] + pooled["fn"]) / pooled["n"] * 100
- 
+
         # seaborn skips drawing a box entirely for any (x, hue) combo with zero
         # non-NaN y-values (e.g. a true fail_rate of 0%, all true negatives).
         # That means len(patches) can be less than len(x_order)*len(hue_order),
@@ -276,17 +168,17 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
                 offsets.append(xc - round(xc))
             if offsets:
                 hue_offset[hue_val] = np.mean(offsets)
- 
+
         for x_val in x_order:
             for hue_val in hue_order:
                 if hue_val not in hue_offset:
                     continue  # this hue level has no boxes anywhere; skip
- 
+
                 try:
                     fail_rate = grouped.loc[(x_val, hue_val)]
                 except KeyError:
                     fail_rate = np.nan
- 
+
                 if pd.notna(fail_rate):
                     label_x = xtick_pos[x_val] + hue_offset[hue_val]
                     ax_box.text(
@@ -296,10 +188,10 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
                         fontsize=7, fontweight="bold",
                         color="red" if fail_rate == 100 else "black"
                     )
- 
+
         fig.legend(handles, labels, loc="lower center", ncol=len(hue_order),
                    bbox_to_anchor=(0.5, 0.0), frameon=True, title=hue.replace("_", " "))
- 
+
     else:
         per_condition = df.drop_duplicates(subset=[x, "condition_id"])
         pooled = per_condition.groupby(x)[["fp", "fn", "n"]].sum()
@@ -312,28 +204,30 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
                 fail_rate = grouped.loc[x_val]
             except KeyError:
                 fail_rate = np.nan
- 
+
             if pd.notna(fail_rate):
                 ax_box.text(
                     xtick_pos[x_val], y_offset,
                     f"{int(fail_rate)}%",
                     ha="center", va="bottom",
                     fontsize=7, fontweight="bold"
-        )
-                
+                )
+
     ax_box.set_xlabel(x)
     ax_box.set_ylabel(y + "[Hz]")
-    ax_box.set_title(title if title else f"{y} distribution",fontdict={"fontsize": 18})
-    
+    ax_box.set_title(title if title else f"{y} distribution", fontdict={"fontsize": 18})
+
     # Adjust layout to make room for bottom legend (only when hue is present)
     if hue is not None:
         fig.subplots_adjust(left=0.05, right=0.98, bottom=0.25)
     else:
         fig.subplots_adjust(left=0.06, right=0.98)
 
-    plt.savefig(f"/home/linda/Documents/MA/plots/{save_name or hue}.pgf", dpi=300, bbox_inches="tight")
-    plt.savefig(f"/home/linda/Documents/MA/plots/{save_name or hue}.pdf", dpi=300, bbox_inches="tight")
+    stem = save_name or hue
+    plt.savefig(FIGURE_DIR / f"{stem}.pgf", dpi=300, bbox_inches="tight")
+    plt.savefig(FIGURE_DIR / f"{stem}.pdf", dpi=300, bbox_inches="tight")
     plt.close(fig)
+
 
 def plot_bar(df, x="algorithm", y="mae", agg="mean", hue=None, title=None):
     plt.figure(figsize=(8, 5))
@@ -345,6 +239,7 @@ def plot_bar(df, x="algorithm", y="mae", agg="mean", hue=None, title=None):
     plt.xticks(rotation=30)
     plt.tight_layout()
 
+
 def plot_facet_line(df, x, y="mae", hue="algorithm",
                     col=None, row=None, estimator="mean"):
     g = sns.FacetGrid(df, col=col, row=row, height=4, aspect=1.2, sharey=True)
@@ -353,10 +248,12 @@ def plot_facet_line(df, x, y="mae", hue="algorithm",
     g.set_axis_labels(x, y)
     plt.tight_layout()
 
-if __name__ == "__main__":
-    HDF_PATH = BASE_FOLDER / "iaf_results.h5"
+
+def main():
+    ensure_output_dirs()
+    HDF_PATH = RESULTS_H5
     df_metrics = load_metrics(HDF_PATH)  # fast, always load this
-    default_filter =  {
+    default_filter = {
         "peak_freq":            10.32,
         # Peak shape in frequency domain
         "stationarity":         "constant",   # "constant" | "burst"
@@ -364,7 +261,7 @@ if __name__ == "__main__":
         "aperiodic_exponent":   2.0,          # β — slope of 1/f^β
         # Peak(s)
         "n_peaks":              1,
-        "peak_width":              0.5,          # Gaussian σ in Hz
+        "peak_width":           0.5,          # Gaussian σ in Hz
         # KEY PARAM: peak power relative to aperiodic floor at aperiodic_ref_freq
         "peak_snr_db":          10.0,
         # Analysis
@@ -378,9 +275,7 @@ if __name__ == "__main__":
     # of one shared parent signal per condition/seed). Restricting to the
     # latter means wl5/wl10/wl20 are all strictly matched to the same
     # underlying signal instances -- without it, window_length_sec == default
-    # (10s) would silently mix in unrelated "base" trials (different signal
-    # draws entirely), which is why its example window/spectrum wouldn't
-    # visually nest inside the 5s/20s ones the way it should.
+    # (10s) would silently mix in unrelated "base" trials.
     has_trial_source = "trial_source" in df_metrics.columns
     window_length_sweep_filter = params_excluding(default_filter, "window_length_sec")
     if has_trial_source:
@@ -388,10 +283,9 @@ if __name__ == "__main__":
 
     # Window length is its own cross-cutting sweep (evaluated against every
     # condition below, sharing a parent signal per condition/seed -- see
-    # IAF_tests.py's process_window_length_condition), not a value fixed by
-    # default_filter. This one plot compares directly across window
-    # lengths; everything else below is repeated separately PER window
-    # length so "effect of peak SNR" etc. can be seen at each one.
+    # iaf_compare.pipeline.process_window_length_condition), not a value fixed
+    # by default_filter. This one plot compares directly across window lengths;
+    # everything else below is repeated separately PER window length.
     plot_box(
         load_samples_for_plot(HDF_PATH, df_metrics, **window_length_sweep_filter),
         HDF_PATH,
@@ -492,10 +386,6 @@ if __name__ == "__main__":
         print(f"\n=== MAE Summary (in mHz), window_length_sec={window_length_sec} ===")
         print(summary.to_string())
 
-    # # Print Conditions where " + error_label.upper() + " > 4Hz for any algorithm
-    # high_error = df_metrics[df_metrics[error_label] > 4]
-    # print("Conditions with " + error_label.upper() + " > 4Hz:")
-    # print(high_error[["algorithm", error_label] + [col for col in df_metrics.columns if col not in ['condition_id', 'algorithm', error_label,"fs", "signal_length_sec", "freq_range", "alpha_band",
-    #     "SG_window", "SG_poly", "pink_ax_r2"]]])
 
-    # plt.show()
+if __name__ == "__main__":
+    main()

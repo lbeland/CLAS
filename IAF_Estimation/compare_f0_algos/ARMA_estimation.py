@@ -111,4 +111,4 @@ axes[1].set_ylabel('Frequency (Hz)'); axes[1].set_xlabel('Time (s)')
 axes[1].legend(fontsize=10); axes[1].grid(True, alpha=0.3)
 
 plt.tight_layout()
-plt.show()
+plt.savefig('arma_kalman_fm.png', dpi=300)

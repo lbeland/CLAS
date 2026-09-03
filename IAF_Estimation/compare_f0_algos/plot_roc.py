@@ -1,17 +1,21 @@
 """
-ROC-style comparison of approve_peak rejection strategies.
+ROC-style comparison of approve_peak rejection strategies. Was plot_strategy_roc.py.
 
 Plots false_positive_rate_no_peak (x) vs false_negative_rate_with_peak (y)
-for every strategy in strategy_comparison_summary.csv. The Pareto-optimal
-strategies (no other strategy beats them on BOTH axes simultaneously) are
-highlighted and connected as the empirical frontier -- pick your operating
-point from that frontier based on how costly a false positive is relative
-to a false negative for your actual use case, rather than from a single
-blended metric.
+for every strategy in outputs/reject/strategy_comparison_summary.csv. The
+Pareto-optimal strategies (no other strategy beats them on BOTH axes
+simultaneously) are highlighted and connected as the empirical frontier --
+pick your operating point from that frontier based on how costly a false
+positive is relative to a false negative for your actual use case, rather
+than from a single blended metric.
 """
+from collections import defaultdict
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
+
+from iaf_compare.paths import REJECT_DIR, ensure_output_dirs
 
 
 def pareto_frontier(df, x_col, y_col):
@@ -31,10 +35,10 @@ def pareto_frontier(df, x_col, y_col):
     return frontier.sort_values(x_col)
 
 
-def plot_strategy_roc(csv_path, output_path="strategy_roc.png",
-                       x_col="false_positive_rate_no_peak",
-                       y_col="false_negative_rate_with_peak",
-                       label_col="strategy"):
+def plot_strategy_roc(csv_path, output_path,
+                      x_col="false_positive_rate_no_peak",
+                      y_col="false_negative_rate_with_peak",
+                      label_col="strategy"):
     df = pd.read_csv(csv_path)
     frontier = pareto_frontier(df, x_col, y_col)
     on_frontier = df[label_col].isin(frontier[label_col])
@@ -55,9 +59,7 @@ def plot_strategy_roc(csv_path, output_path="strategy_roc.png",
 
     # Label frontier points prominently; label dominated points only with a
     # lighter touch and slight jitter-free offset alternation to reduce
-    # overlap in dense clusters (e.g. several near-identical points stacked
-    # together when multiple strategies tie on both axes).
-    from collections import defaultdict
+    # overlap in dense clusters.
     seen_positions = defaultdict(int)
 
     for _, row in df.iterrows():
@@ -107,4 +109,6 @@ def plot_strategy_roc(csv_path, output_path="strategy_roc.png",
 
 
 if __name__ == "__main__":
-    plot_strategy_roc("strategy_comparison_summary.csv")
+    ensure_output_dirs()
+    plot_strategy_roc(REJECT_DIR / "strategy_comparison_summary.csv",
+                      REJECT_DIR / "strategy_roc.png")

@@ -18,7 +18,7 @@ PLOTS_DIR = "/home/linda/Documents/MA/plots"
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
 TEXTWIDTH    = 6.30045
-ASPECT_RATIO = 9 / 16
+ASPECT_RATIO = 3/4
 FIG_WIDTH    = TEXTWIDTH
 FIG_HEIGHT   = FIG_WIDTH * ASPECT_RATIO
 FIGSIZE      = (FIG_WIDTH, FIG_HEIGHT)
@@ -214,7 +214,7 @@ def plot_filter_response(sos_by_label, fs):
     mag_zoom_min, mag_zoom_max = np.inf, -np.inf
     phase_zoom_min, phase_zoom_max = np.inf, -np.inf
 
-    fig, ((ax1, ax1z), (ax2, ax2z)) = plt.subplots(2, 2, sharex="col", figsize=FIGSIZE)
+    fig, ((ax1, ax1z), (ax2, ax2z)) = plt.subplots(2, 2, sharex="col", figsize=FIGSIZE, layout="constrained")
 
     for label, sos in sos_by_label.items():
         f, H = freqz_sos(sos, worN=freqs, fs=fs)
@@ -232,13 +232,13 @@ def plot_filter_response(sos_by_label, fs):
         phase_zoom_min = min(phase_zoom_min, phase_deg[zoom_mask].min())
         phase_zoom_max = max(phase_zoom_max, phase_deg[zoom_mask].max())
 
-    ax1.set_ylabel("Amplitude (dB)")
+    ax1.set_ylabel("Amplitude [dB]")
     ax1.set_title("(a)")
     ax1.grid(True, linewidth=0.2)
 
-    ax2.set_xlabel("Frequency (Hz)")
+    ax2.set_xlabel("Frequency [Hz]")
     ax2.set_title("(b)")
-    ax2.set_ylabel("Phase (deg)")
+    ax2.set_ylabel("Phase [deg]")
     ax2.grid(True, linewidth=0.3)
     ax2.set_xlim(0, 100)
 
@@ -248,14 +248,13 @@ def plot_filter_response(sos_by_label, fs):
     ax1z.grid(True, linewidth=0.3)
 
     ax2z.set_title("(d)")
-    ax2z.set_xlabel("Frequency (Hz)")
+    ax2z.set_xlabel("Frequency [Hz]")
     ax2z.set_xlim(zoom_lo, zoom_hi)
     ax2z.set_ylim(phase_zoom_min - pad_deg, phase_zoom_max + pad_deg)
     ax2z.grid(True, linewidth=0.3)
 
     handles, labels = ax1.get_legend_handles_labels()
-    fig.tight_layout(rect=[0, 0, 0.85, 1])
-    fig.legend(handles, labels, title="Order", loc="center right", ncol=1, bbox_to_anchor=(1, 0.5), frameon=True)
+    fig.legend(handles, labels, title="Fitler order", loc="outside lower center", ncol=3, frameon=True)
 
     save_pgf(fig, "filter_response")
     save_png(fig, "filter_response")

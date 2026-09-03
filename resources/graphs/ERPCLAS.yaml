@@ -87,8 +87,9 @@ graph:
         randomize_stim_onset: true
         min_stim_dist_sec: 0.75
         max_stim_dist_sec: 1.35  # 750ms-1350ms random inter-stimulus interval
+        max_n_stimuli: 510
       advanced:
-        thread_core: 18
+        thread_core: [18,9]
     Serializer(1-5):    # one serializers per output stream
       class: FileSerializer
       options:
@@ -100,7 +101,7 @@ graph:
       advanced:
         buffer_sizes:
           out: 1048
-        thread_core: [19, 20,21,22]
+        thread_core: [19,20,21,22]
     
   connections:
   - SourceClient.out.0 = ChannelReductor.in
@@ -108,7 +109,6 @@ graph:
   - ecHTFilter.out.0 = PhaseEstimator.in
   - ChannelReductor.out.0 = IAFEstimator.in
   - PhaseEstimator.out.0 = StimulusController.in
-
   - SourceClient.out.0 = Serializer1.in
   - SourceClient.out.1 = Serializer1.in
   - ecHTFilter.out.0 = Serializer2.in

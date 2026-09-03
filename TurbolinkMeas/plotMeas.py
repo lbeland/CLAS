@@ -79,7 +79,7 @@ def plot_pdv_over_time(nominal_fs, true_fs, sample_counter, pdv_us):
     t = (sample_counter - sample_counter[0]) / true_fs
     ax.plot(t, pdv_us, 'o',markersize=0.5,alpha=0.8)
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel(r"Packet delay variation ($\mu$s)")
+    ax.set_ylabel(r"Packet delay variation [$\mu$s]")
     ax.grid(True, linewidth=0.3)
     ax.set_xlim(0,0.5)
     fig.tight_layout()
@@ -103,11 +103,14 @@ def plot_pdv_histogram(pdv_by_fs, bins=100):
 
     all_pdv = np.concatenate([pdv_us for _, pdv_us in pdv_by_fs])
     shared_bins = np.linspace(all_pdv.min(), all_pdv.max(), bins + 1)
-    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 
-    for ax, (nominal_fs, pdv_us), color in zip(axes.flat, pdv_by_fs, colors):
-        ax.hist(pdv_us, bins=shared_bins, density=True, color=color,
-                label=f"{int(nominal_fs)} Hz")
+    for i, (ax, (nominal_fs, pdv_us)) in enumerate(zip(axes.flat, pdv_by_fs)):
+        ax.hist(pdv_us, bins=shared_bins, density=True, color="C0")
+        if nominal_fs >= 1000:
+            rate_label = f"{nominal_fs / 1000:g} kHz"
+        else:
+            rate_label = f"{int(nominal_fs)} Hz"
+        ax.set_title(f"({chr(ord('a') + i)}) {rate_label}")
         ax.grid(True, linewidth=0.3)
 
     for ax in axes.flat[len(pdv_by_fs):]:
@@ -118,14 +121,7 @@ def plot_pdv_histogram(pdv_by_fs, bins=100):
     for ax in axes[:, 0]:
         ax.set_ylabel("Density")
 
-    handles, labels = [], []
-    for ax in axes.flat[:len(pdv_by_fs)]:
-        h, l = ax.get_legend_handles_labels()
-        handles += h
-        labels += l
-    fig.legend(handles, labels, loc="lower center", ncol=len(pdv_by_fs),
-               bbox_to_anchor=(0.5, 0.0))
-    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    fig.tight_layout()
 
     stem = "pdv_hist_all"
     fig.savefig(os.path.join(PLOTS_DIR, f"{stem}.pgf"))
@@ -141,15 +137,15 @@ def pdv_stats(pdv_us):
 def save_latex_table(rows, out_path):
     """rows: list of dicts with nominal_fs, true_fs, mean, std, p<PERCENTILES>."""
     header_cols = (
-        ["$f_s$ (Hz)", "$\hat f_s$ (Hz)", "Error (ppm)",
-         r"Mean PDV ($\mu$s)", r"Std PDV ($\mu$s)", r"Max PDV ($\mu$s)"]
+        ["$f_{s,\text{nom}}$ [Hz]", "$\hat f_s$ [Hz]", "$\operatorname{drift}_{\mathrm{ppm}}$",
+         r"Mean PDV [$\mu$s]", r"Std PDV [$\mu$s]", r"Max PDV [$\mu$s]"]
     )
     col_spec = "l" + "c" * (len(header_cols) - 1)
 
     lines = [
         r"\begin{table}[ht]",
         r"\centering",
-        r"\caption{Timing statistics per nominal sample rate}",
+        r"\caption[Timing statistics from variation measurements]{}}",
         r"\label{tab:timing_stats}",
         rf"\begin{{tabular}}{{{col_spec}}}",
         r"\toprule",

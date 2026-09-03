@@ -60,7 +60,7 @@ class IAFEstimator : public IProcessor {
     BroadcasterState<double> *iaf_state_ = nullptr;
     double current_iaf_ = std::numeric_limits<double>::quiet_NaN();
     double last_valid_iaf_ = std::numeric_limits<double>::quiet_NaN();
-    double current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
+    double current_gauss_sigma_ = std::numeric_limits<double>::quiet_NaN();
 
     // Kalman filter state
     double kf_x_ = 0.0;  // state estimate (smoothed IAF)

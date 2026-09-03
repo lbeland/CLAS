@@ -437,7 +437,7 @@ void IAFEstimator::Preprocess(ProcessingContext &context)
     current_iaf_ = std::numeric_limits<double>::quiet_NaN();
     iaf_state_->set(current_iaf_);
     last_valid_iaf_ = std::numeric_limits<double>::quiet_NaN();
-    current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
+    current_gauss_sigma_ = std::numeric_limits<double>::quiet_NaN();
     kf_x_ = std::numeric_limits<double>::quiet_NaN();
     kf_P_ = kalman_full_() ? kf_R_ : std::sqrt(kf_Q_ * kf_R_);
     packet_count_ = 0;
@@ -533,7 +533,7 @@ void IAFEstimator::Process(ProcessingContext &context)
                 invalid_count_ = std::max(0, invalid_count_ - 1);
                 current_iaf_ = peak.iaf_hz;
                 last_valid_iaf_ = peak.iaf_hz;
-                current_gauss_width_ = peak.sigma_hz;
+                current_gauss_sigma_ = peak.sigma_hz;
                 if (std::isnan(kf_x_))
                 {
                     // First valid estimate — initialize directly (no smoothing yet)
@@ -558,7 +558,8 @@ void IAFEstimator::Process(ProcessingContext &context)
                         }
                         SNR_ = signal_power / std::max(noise_power, std::numeric_limits<double>::denorm_min());
 
-                        double R_n = current_gauss_width_ * current_gauss_width_ / (2 * SNR_);
+                        double R_n = current_gauss_sigma_ * current_gauss_sigma_ / (2 * SNR_);
+                        //double R_n = current_gauss_sigma_  /  SNR_;
                         kalman_update(peak.iaf_hz, R_n);
                     }
                     else
@@ -572,7 +573,7 @@ void IAFEstimator::Process(ProcessingContext &context)
             {
                 invalid_count_ = std::min(invalid_count_ + 1, invalid_threshold_ + 1);
                 current_iaf_ = std::numeric_limits<double>::quiet_NaN();
-                current_gauss_width_ = std::numeric_limits<double>::quiet_NaN();
+                current_gauss_sigma_ = std::numeric_limits<double>::quiet_NaN();
             }
             if (invalid_count_ == invalid_threshold_)
             {
@@ -588,7 +589,7 @@ void IAFEstimator::Process(ProcessingContext &context)
             TimePoint end_time = Clock::now();
             if (packet_count_ % static_cast<int>(fs_) == 0)
             {
-                LOG(INFO) << name() << " Packet " << packet_count_ << " (" << invalid_count_ << " invalid): Estimated IAF = " << current_iaf_ << " Hz (sigma: " << current_gauss_width_ << "), KF estimate: " << kf_x_ << " Hz (R=" << kf_R_ << ", SNR(dB)=" << 20 * std::log10(SNR_) << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
+                LOG(INFO) << name() << " Packet " << packet_count_ << " (" << invalid_count_ << " invalid): Estimated IAF = " << current_iaf_ << " Hz (sigma: " << current_gauss_sigma_ << "), KF estimate: " << kf_x_ << " Hz (R=" << kf_R_ << ", SNR(dB)=" << 20 * std::log10(SNR_) << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
             }
         }
         data_out->set_data(kf_x_);

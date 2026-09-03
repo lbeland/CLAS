@@ -14,6 +14,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from pathlib import Path
+from scipy.stats import circmean, circstd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -23,7 +24,8 @@ from analysis.core         import compute_hilbert_reference, compute_errors, com
 from analysis.edf_io       import write_raw_signals_edf, load_runtime, write_analysis_edf
 from analysis.runtime_meta import write_runtime_metadata
 from analysis.plot         import plot_errors, plot_spectrum, plot_time_series, \
-                                  plot_iaf, get_erp_windows, plot_erp_latency, load_stim_annotations
+                                  plot_iaf, plot_snr_sweep, get_erp_windows, plot_erp_latency, \
+                                  load_stim_annotations
 
 
 @dataclass
@@ -104,10 +106,11 @@ def load_and_analyse(f0: float, results_dir: str) -> "RecordingAnalysis | None":
     start_ts = ground_truth["time"][0]
     errors, stim_ref = compute_errors(samples, ground_truth, hilbert_phase, start_ts, fs, graph_config)
 
-    # Producer ground truth (true_inst_freq known) + short enough for JADE's DTW cost to be feasible
-    if ground_truth["true_inst_freq"] is not None and len(raw) / fs <= 20:
-        errors += compute_jade_errors(filtered, ground_truth["time"], start_ts, fs,
-                                       ground_truth["true_phase"], ground_truth["true_inst_freq"])
+    # # Producer ground truth (true_inst_freq known) + short enough for JADE's DTW cost to be feasible
+    # if ground_truth["true_inst_freq"] is not None and len(raw) / fs <= 20:
+    #     errors += compute_jade_errors(filtered, ground_truth["time"], start_ts, fs,
+    #                                    ground_truth["true_phase"], ground_truth["true_inst_freq"],
+    #                                    raw=raw, f0=f0)
 
     return RecordingAnalysis(
         graph_file=graph_file, graph_config=graph_config, fs=fs,
@@ -139,7 +142,7 @@ def analyse_results(f0: float, results_dir: str, show: bool = True) -> None:
                         analysis.stim_ref, annotations=analysis.annotations)
 
     # Plot errors
-    plot_errors(analysis.errors)
+    plot_errors(analysis.errors, plot_time=False)
 
     # IAF time series
     start_ts = analysis.ground_truth["time"][0]
@@ -264,7 +267,95 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
     plt.show()
 
 
+def _phase_error_stats(values: np.ndarray, trim_frac: float = 0.05) -> "tuple[float, float, int]":
+    """Circular mean and SD (both in degrees) of a phase-error series, after
+    dropping non-finite samples and trimming trim_frac off each end to skip
+    filter edge transients -- same trimming convention as plot_errors()."""
+    vals = np.asarray(values, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    lo, hi = int(trim_frac * len(vals)), int((1.0 - trim_frac) * len(vals))
+    vals = vals[lo:hi]
+    if vals.size == 0:
+        return np.nan, np.nan, 0
+    phi = np.radians(vals)
+    mean = float(np.degrees(circmean(phi, high=np.pi, low=-np.pi)))
+    std  = float(np.degrees(circstd(phi,  high=np.pi, low=-np.pi)))
+    return mean, std, vals.size
+
+
+def analyse_snr_sweep(sweep_dir: str, f0: float = 10, trim_frac: float = 0.05) -> None:
+    """Sweep summary across a folder of CLAS runs: for every results
+    subfolder under sweep_dir, read that run's Producer SNR and noise colour
+    from its graph .yaml, compute the online phase error and the offline
+    Hilbert reference error, and plot their mean +/- SD against SNR with one
+    line per noise type (white and pink on the same axes: solid mean line,
+    translucent +/-1 SD band). Three side-by-side panels (shared y-axis):
+    ecHT online phase error, offline Hilbert error, and the two overlaid for
+    a direct online-vs-offline comparison.
+
+    Put one CLAS run per subfolder inside sweep_dir -- each subfolder needs
+    the serializer output (*.bin, or the cached *.edf / *.h5) plus the graph
+    .yaml, exactly as produced by a single clas.py run. Runs are grouped by
+    Producer.options.noise_color and placed on the x-axis by
+    Producer.options.snr_db.
+    """
+    run_dirs = find_result_dirs(sweep_dir)
+    print(f"Found {len(run_dirs)} run folder(s) under {sweep_dir!r}.")
+
+    sweep_data: dict[str, list[dict]] = {}
+    for i, results_dir in enumerate(run_dirs, 1):
+        print(f"\n{'=' * 80}\n[{i}/{len(run_dirs)}] {results_dir}\n{'=' * 80}")
+        try:
+            graph_file = glob.glob(os.path.join(results_dir, "*.yaml"))[0]
+            with open(graph_file) as fh:
+                opts = yaml.safe_load(fh)["graph"]["processors"]["Producer"]["options"]
+            snr_db     = float(opts["snr_db"])
+            noise_type = str(opts.get("noise_color", "white"))
+
+            errors = compute_recording_errors(f0, results_dir)
+            online = next((e for e in errors if e["label"] == "Phase error"), None)
+            hilb   = next((e for e in errors if e["label"] == "Hilbert ref error"), None)
+            cmp    = next((e for e in errors if e["label"] == "Online vs Hilbert"), None)
+            if online is None:
+                print("  No 'Phase error' in this run; skipping.")
+                continue
+
+            p_mean, p_std, n = _phase_error_stats(online["values"], trim_frac)
+            if n == 0:
+                print("  No finite phase-error samples; skipping.")
+                continue
+            h_mean, h_std, hn = (
+                _phase_error_stats(hilb["values"], trim_frac) if hilb is not None
+                else (np.nan, np.nan, 0)
+            )
+            c_mean, c_std, cn = (
+                _phase_error_stats(cmp["values"], trim_frac) if cmp is not None
+                else (np.nan, np.nan, 0)
+            )
+            print(f"  {noise_type} noise, SNR = {snr_db:g} dB: "
+                  f"online {p_mean:.2f} +/- {p_std:.2f} deg (n = {n}); "
+                  f"hilbert {h_mean:.2f} +/- {h_std:.2f} deg (n = {hn}); "
+                  f"online-vs-hilbert {c_mean:.2f} +/- {c_std:.2f} deg (n = {cn})")
+            sweep_data.setdefault(noise_type, []).append({
+                "snr_db": snr_db,
+                "phase_mean":   p_mean, "phase_std":   p_std,
+                "hilbert_mean": h_mean, "hilbert_std": h_std,
+                "cmp_mean":     c_mean, "cmp_std":     c_std,
+            })
+        except Exception:
+            print(f"FAILED: {results_dir}")
+            traceback.print_exc()
+
+    if not sweep_data:
+        print("No sweep data collected; nothing to plot.")
+        return
+
+    plot_snr_sweep(sweep_data)
+    plt.show()
+
+
 if __name__ == "__main__":
-    analyse_all_results(f0=10)
-    # analyse_results(f0=10, results_dir="results/simu_4.0_staticf0_20260709_093626")
+    # analyse_all_results(f0=10)
+    analyse_results(f0=10, results_dir="results/CLAS_felix/felix_180_p1_20260903_142844")
     # analyse_pooled_errors(f0=10) #, names=["victor", "dorothea"])
+    # analyse_snr_sweep("results/snr_sweep", f0=10)

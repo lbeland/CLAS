@@ -1,0 +1,63 @@
+Description: Estimates the Individual Alpha Frequency (IAF) from the running power spectrum.
+  Every calc_interval packets it FFTs a sliding window, removes the aperiodic (1/f) component
+  by a two-pass log-log linear fit, smooths with a Savitzky-Golay filter, seeds a peak in the
+  [f_min, f_max] band, fits a Gaussian, and accepts it with a BIC test. Accepted estimates
+  feed a Kalman filter (full adaptive-gain or EMA-equivalent fixed-gain) whose state is
+  broadcast. Too many consecutive rejects reset the estimate to NaN.
+
+Input port:
+  - name: in
+    type: MultiChannelType <double>
+    slots: 1-256
+    description: EEG data stream. Only channel 0, sample 0 is used.
+
+Output port:
+  - name: out
+    type: ScalarType <double>
+    slots: 1-256
+    description: Kalman-smoothed IAF estimate (Hz), one value per input packet (NaN until the
+      first valid estimate or after a reset). Stream rate is input rate / calc_interval.
+
+Shared state:
+  - name: iaf
+    type: broadcaster <double>
+    description: Kalman-smoothed IAF (Hz) shared with downstream processors; set to NaN while
+      invalid and on Postprocess.
+
+Options:
+  - name: n_messages
+    type: int
+    default: -1
+    description: Number of packets to receive before stopping. -1 = infinite.
+  - name: window_size_sec
+    type: double
+    default: 5
+    description: Length of the analysis window in seconds.
+  - name: f_min
+    type: double
+    default: 5.0
+    description: Left bound of the alpha peak search range (Hz).
+  - name: f_max
+    type: double
+    default: 18.0
+    description: Right bound of the alpha peak search range (Hz).
+  - name: calc_interval
+    type: unsigned int
+    default: 100
+    description: Number of packets between IAF recalculations.
+  - name: max_invalid_sec
+    type: double
+    default: 1.0
+    description: Maximum duration of invalid estimates (seconds) before the IAF estimation is reset.
+  - name: kalman_iaf_std
+    type: double
+    default: 0.397857
+    description: Std of the assumed IAF drift [Hz/s]; sets the Kalman process noise Q.
+  - name: kalman_full
+    type: bool
+    default: true
+    description: true = full Kalman filter (SNR-adaptive gain, uncertain cold start);
+      false = EMA-equivalent fixed gain.
+
+# Note: max_gauss_width_hz (reject peaks broader than this, Hz; default 2.0) exists in the
+# code but is not currently registered as a graph option.

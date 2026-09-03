@@ -1,0 +1,56 @@
+Description: Replays a previously recorded EEG stream from a serialized (FileSerializer) file,
+  acting as a live data source. Reads the YAML header + binary payload, extracts the "signal"
+  field (float32 or float64, mapped to double), and emits one packet per record. Timing is
+  either recorded-rate real time or as-fast-as-possible.
+
+Output port:
+  - name: out
+    type: MultiChannelType <double>
+    slots: 1
+    description: Replayed signal, nchannels x nsamples per packet. Propagates the recorded
+      hardware timestamp when the file contains a "hardware_ts" field.
+
+Options:
+  - name: path
+    type: string
+    default: "run://"
+    description: Replay folder or run name. Run names resolve via _last_run_group/<run> first,
+      then results/<run>; empty defaults to results. Used only when "file" is not set.
+  - name: file
+    type: string
+    default: "" (auto-resolve from path/slot)
+    description: Explicit path to a recorded stream file. When empty, the folder is searched
+      for a file matching the FileSerializer naming convention for the given slot.
+  - name: slot
+    type: int
+    default: 0
+    description: Recorded slot to replay when a processor wrote multiple streams.
+  - name: loop
+    type: bool
+    default: false
+    description: Restart replay from the beginning after the last packet.
+  - name: real_time
+    type: bool
+    default: true
+    description: Replay using recorded timing instead of emitting as fast as possible.
+  - name: speed_factor
+    type: double
+    default: 1.0
+    description: Playback speed multiplier (only relevant when real_time is true).
+  - name: n_messages
+    type: int
+    default: -1
+    description: Number of packets to replay. -1 = all available records.
+  - name: nchannels
+    type: unsigned int
+    default: 32
+    description: Number of channels to replay. A mismatch with the file shape logs a warning
+      and the file dimensions are used.
+  - name: nsamples
+    type: unsigned int
+    default: 1
+    description: Number of samples per packet.
+  - name: fs
+    type: double
+    default: 1000.0
+    description: Replay sample frequency (Hz), used for the output stream rate and real-time pacing.

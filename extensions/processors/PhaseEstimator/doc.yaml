@@ -1,0 +1,51 @@
+Description: Estimates the instantaneous phase of the ongoing alpha oscillation with a causal
+  end-corrected Hilbert transform (cecHT). A sliding window of 2 IAF cycles is FFT'd, turned
+  into an analytic spectrum, multiplied by a bandpass filter (loaded from file or derived from
+  the IAF), and inverse-transformed; phase and real part are read at the last window sample.
+  The window, FFT size, filter and calibration are retuned whenever the shared IAF changes.
+
+Input port:
+  - name: in
+    type: MultiChannelType <double>
+    slots: 1-256
+    description: Broadband/pre-filtered EEG. Only channel 0, sample 0 is used.
+
+Output port:
+  - name: out
+    type: MultiChannelType <double>
+    slots: 1-256
+    description: >
+      slot 0 - instantaneous phase (rad), slot 1 - filtered analytic real part.
+      Both are NaN while the shared IAF is invalid (NaN or outside 5-18 Hz) or the
+      sample window is not yet full.
+
+Shared state:
+  - name: iaf
+    type: follower <double>
+    description: Individual alpha frequency (Hz) provided by an upstream IAFEstimator.
+
+Options:
+  - name: n_messages
+    type: int
+    default: -1
+    description: Number of packets to receive before stopping. -1 = infinite.
+  - name: calibrate
+    type: bool
+    default: false
+    description: Apply the MSE-optimal calibration gain to the cecHT output (requires a
+      precomputed "calibration gain" entry in the coefficient file; falls back to unity gain).
+  - name: iaf_read_interval
+    type: unsigned int
+    default: 5000
+    description: Number of packets between polls of the shared IAF state.
+  - name: filter
+    type: yaml node (optional)
+    default: no default - filter is derived from the IAF (bandwidth = 0.9 * IAF)
+    description: Filter definition. If it contains a "file" key, frequency-response
+      coefficients are loaded from filters://<file>; otherwise a coefficient file name is
+      built from the IAF, sample rate and window size.
+  - name: compensate_filter
+    type: bool
+    default: true
+    description: Compensate the phase distortion of the preceding bandpass filter using a
+      per-0.1-Hz phase-shift table (ecHTfilter_<fs>_phase.txt).

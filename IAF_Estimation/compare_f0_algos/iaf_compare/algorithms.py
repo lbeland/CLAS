@@ -1,7 +1,7 @@
 """Peak-frequency (individual alpha frequency) estimators, plus the
 ``run_algorithms`` dispatch that runs each one on a single window.
 
-``combine_simple`` / ``combine_simple_mt`` call ``approve_peak`` by bare name
+``alpha_fast`` / ``alpha_fast_mt`` call ``approve_peak`` by bare name
 so it resolves through this module's globals at call time -- that is what lets
 ``reject_compare`` swap in a different rejection strategy by rebinding
 ``iaf_compare.algorithms.approve_peak``. Keep it that way.
@@ -24,9 +24,8 @@ def run_algorithms(window, psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, f
         "Maximum":      stupid_max(psd_welch, freq_bins_welch, config),
         "FOOOF":        fooof(psd_welch, freq_bins_welch, config),
         "RestingIAF":   philistine_iaf(psd, freq_bins, config),
-        # "combine_complex":    combine_algo(psd, freq_bins, config),
-        "combine_simple":       combine_simple(psd, freq_bins, config),
-        # "simple_mt":    combine_simple_mt(psd_mt, freq_mt, config),
+        "alpha_fast":       alpha_fast(psd, freq_bins, config),
+        "alpha_fast_mt":    alpha_fast_mt(psd_mt, freq_mt, config),
     }
 
 
@@ -38,9 +37,9 @@ def stupid_max(psd, freq_bins, config):
     est_pf = freq_bins_band[max_bin]
     # at the band's lower edge: reject if not above the bin just before it
     # (avoids picking low-freq noise when no clear peak is present)
-    if est_pf == freq_bins_band[0]:
-        if psd_band[max_bin] < psd[freq_bins < config["alpha_band"][0]][-1]:
-            est_pf = np.nan
+    # if est_pf == freq_bins_band[0]:
+    #     if psd_band[max_bin] < psd[freq_bins < config["alpha_band"][0]][-1]:
+    #         est_pf = np.nan
     return est_pf
 
 
@@ -107,97 +106,6 @@ def bic_peak_test_simple(freqs, residual, gaussian, fmin, fmax, floor_value):
     bic_h1 = n * np.log(max(ss_h1, np.nextafter(0, 1)) / n) + 3 * np.log(n)  # 3 params for Gaussian (amp, center, width)
     return (bic_h0 - bic_h1) > 0, bic_h0 - bic_h1
 
-
-def bic_peak_test(residual, freqs, fmin, fmax):
-    fit_mask = (freqs >= fmin) & (freqs <= fmax)
-    fit_freqs = freqs[fit_mask]
-    fit_resid = residual[fit_mask]
-    n = len(fit_resid)
-
-    if n < 4:
-        return False, 0.0
-
-    ss_h0 = np.sum(fit_resid ** 2)
-    peak_idx = np.argmax(fit_resid)
-    amp_guess = max(fit_resid[peak_idx], 0.01)
-    center_guess = fit_freqs[peak_idx]
-    width_guess = (fmax - fmin) / 4
-
-    popt, _ = curve_fit(
-        gaussian_peak, fit_freqs, fit_resid,
-        p0=[amp_guess, center_guess, width_guess],
-        bounds=([0.0, fmin, 0.25], [np.inf, fmax, fmax - fmin]),
-        maxfev=10_000,
-    )
-
-    ss_h1 = np.sum((fit_resid - gaussian_peak(fit_freqs, *popt)) ** 2)
-    bic_h0 = n * np.log(ss_h0 / n)
-    bic_h1 = n * np.log(max(ss_h1, np.nextafter(0, 1)) / n) + 3 * np.log(n)
-    return (bic_h0 - bic_h1) > 0, bic_h0 - bic_h1
-
-
-def combine_algo(psd, freq_bins, config):
-    band = (freq_bins >= config["freq_range"][0]) & (freq_bins <= config["freq_range"][1])
-    psd_band = psd[band]
-    freqs = freq_bins[band]
-
-    resolution = freqs[1] - freqs[0]
-    sav_gol_window_length = int(2.5 / resolution)
-    if sav_gol_window_length % 2 == 0:
-        sav_gol_window_length += 1
-
-    sav_gol_polyorder = 3
-    if sav_gol_polyorder >= sav_gol_window_length:
-        sav_gol_window_length = sav_gol_polyorder + 2
-
-    fooof_model = FOOOF(peak_width_limits=(0.1, 4.0), max_n_peaks=3, min_peak_height=0.0,
-                        peak_threshold=2.0, aperiodic_mode="fixed", verbose=False)
-    try:
-        fooof_model.fit(freqs, psd_band, config["freq_range"])
-    except Exception as e:
-        print(f"FOOOF fitting error: {e}")
-        return np.nan
-
-    offset, exponent = fooof_model.aperiodic_params_
-    aperiodic = offset - exponent * np.log10(freqs)
-
-    psd_safe = np.maximum(psd_band, np.nextafter(0, 1))
-    residual = np.log10(psd_safe) - aperiodic
-    psd_flat = np.power(10, residual)
-    psd_flat = np.clip(psd_flat, np.nextafter(0, 1), None)
-
-    if not np.all(np.isfinite(psd_flat)):
-        return np.nan
-
-    psd_smooth = savgol_filter(psd_flat, window_length=sav_gol_window_length, polyorder=sav_gol_polyorder)
-    eps = np.nextafter(0, 1)  # Smallest positive float
-    _, _, r, _, _ = stats.linregress(np.log(freqs), np.log(np.maximum(psd_smooth, eps)))
-
-    fmin, fmax = config["alpha_band"][0], config["alpha_band"][1]
-    peak_sig, delta_bic = bic_peak_test(residual, freqs, fmin, fmax)
-    alpha_band = (freqs >= fmin) & (freqs <= fmax)
-
-    if r ** 2 > config["pink_ax_r2"] or not peak_sig:
-        return np.nan
-
-    max_bin = np.argmax(psd_smooth[alpha_band])
-    est_pf = freqs[alpha_band][max_bin]
-    alpha_weights = psd_smooth[alpha_band]
-    cog = (float(np.average(freqs[alpha_band], weights=alpha_weights))
-           if np.any(alpha_weights > 0) else None)
-    if cog is None:
-        return np.nan
-
-    if 0 < max_bin < (psd_smooth[alpha_band].size - 1):
-        y1, y2, y3 = psd_smooth[alpha_band][max_bin - 1], psd_smooth[alpha_band][max_bin], psd_smooth[alpha_band][max_bin + 1]
-        denom = (y1 - 2 * y2 + y3)
-        if denom != 0:
-            delta = 0.5 * (y1 - y3) / denom
-            return est_pf + delta * resolution
-
-    return est_pf
-
-
 def approve_peak(freqs, psd_safe, psd_flat, psd_smooth, popt, gaussian, aperiodic_simple, alpha_band, floor_value):
     fmin, fmax = freqs[0], freqs[-1]
     peak_sig, delta_bic = bic_peak_test_simple(freqs, psd_flat, gaussian, fmin, fmax, floor_value)
@@ -208,10 +116,17 @@ def approve_peak(freqs, psd_safe, psd_flat, psd_smooth, popt, gaussian, aperiodi
         return True
 
 
-def combine_simple_mt(psd, freq_bins, config):
+def alpha_fast_mt(psd, freq_bins, config):
+    """Whitens the spectrum against a robust aperiodic fit, smooths it, and
+    fits a Gaussian to the resulting peak to estimate the fundamental
+    frequency. The whitened spectrum, its smoothed version, and the Gaussian
+    all stay in log10-ratio space (0.0 = exactly on the aperiodic fit), which
+    keeps amplitude/gaussian/floor_value on a consistent scale for the BIC
+    test in approve_peak."""
     band = (freq_bins >= config["freq_range"][0]) & (freq_bins <= config["freq_range"][1])
     psd_band = psd[band]
     freqs = freq_bins[band]
+    log_freqs = np.log10(freqs)
 
     resolution = freqs[1] - freqs[0]
     sav_gol_window_length = int(1.5 / resolution)
@@ -223,20 +138,20 @@ def combine_simple_mt(psd, freq_bins, config):
         sav_gol_window_length = sav_gol_polyorder + 2
 
     eps = np.nextafter(0, 1)  # Smallest positive float
-    psd_safe = np.maximum(psd_band, eps)
-    slope, intercept, _, _, _ = stats.linregress(np.log10(freqs), np.log10(psd_safe))
-    aperiodic_simple = np.log10(freqs) * slope + intercept  # log10-scale
-    psd_flat = psd_safe / np.power(10, aperiodic_simple)  # ratio: 1.0 = on fit
+    log_psd = np.log10(np.maximum(psd_band, eps))
+    slope, intercept, _, _, _ = stats.linregress(log_freqs, log_psd)
+    aperiodic_initial = log_freqs * slope + intercept  # log10-scale, first (unrefined) fit
+    psd_flat = log_psd - aperiodic_initial  # log10 ratio: 0.0 = on fit
 
-    # Select only samples that are exactly on (1) or below the perfect fit
-    ratio_threshold = 1.0
+    # Select only samples that are exactly on (0.0) or below the perfect fit
+    ratio_threshold = 0.0
     mask = psd_flat <= ratio_threshold
-    freqs_refit = freqs[mask]
-    psd_refit = psd_safe[mask]
+    freqs_refit = log_freqs[mask]
+    psd_refit = log_psd[mask]
     # Re-fit using only the selected samples to ignore peak oscillations
-    slope, intercept, _, _, _ = stats.linregress(np.log10(freqs_refit), np.log10(psd_refit))
-    aperiodic_simple = np.log10(freqs) * slope + intercept  # log10-scale
-    psd_flat = psd_safe / np.power(10, aperiodic_simple)
+    slope, intercept, _, _, _ = stats.linregress(freqs_refit, psd_refit)
+    aperiodic_simple = log_freqs * slope + intercept  # log10-scale, refined fit
+    psd_flat = log_psd - aperiodic_simple  # whitened spectrum: log10 ratio, 0.0 = on fit
 
     psd_smooth = savgol_filter(psd_flat, window_length=sav_gol_window_length, polyorder=sav_gol_polyorder)
 
@@ -245,9 +160,8 @@ def combine_simple_mt(psd, freq_bins, config):
     alpha_band = (freqs >= fmin) & (freqs <= fmax)
 
     psd_alpha_band = psd_smooth[alpha_band]
-    fit_freqs = freqs[alpha_band]
 
-    max_bin = np.argmax(psd_alpha_band)
+    max_bin = np.argmax(psd_alpha_band)  # index relative to the alpha_band subset
     est_pf = freqs[alpha_band][max_bin]
 
     if 0 < max_bin < (psd_alpha_band.size - 1):
@@ -257,33 +171,35 @@ def combine_simple_mt(psd, freq_bins, config):
             delta = 0.5 * (y1 - y3) / denom
             est_pf += delta * resolution
 
-    floor_value = 1
+    floor_value = 0.0  # log10-ratio baseline: 0.0 = exactly on the aperiodic fit
+    global_max_bin = max_bin + np.where(alpha_band)[0][0]  # index into the full freqs/psd_smooth arrays
 
-    amp_guess = psd_smooth[alpha_band][max_bin] - floor_value
-    center_guess = fit_freqs[max_bin]
+    amplitude = psd_smooth[global_max_bin]  # log10-ratio value of the smoothed spectrum at the peak bin
 
-    half_max = amp_guess / 2 + floor_value
-    global_max_bin = max_bin + np.where(alpha_band)[0][0]
-    left_idx = np.where(psd_smooth[:global_max_bin] < half_max)[0]
-    if len(left_idx) > 0:
-        left_idx = left_idx[-1]
-    else:
-        left_idx = global_max_bin
-    right_idx = np.where(psd_smooth[alpha_band][global_max_bin:] < half_max)[0]
-    if len(right_idx) > 0:
-        right_idx = right_idx[0] + global_max_bin
-    else:
-        right_idx = global_max_bin
-    fwhm = max((right_idx - left_idx) * resolution, resolution)
+    # Reject outright if the smoothed peak doesn't clear the aperiodic fit
+    # (log-ratio <= 0) -- there's no bump to fit a Gaussian to.
+    if amplitude <= 0.0:
+        return np.nan
+
+    # FWHM: walk outward from the peak bin, in each direction, until the
+    # smoothed spectrum drops below half-max (over the full spectrum, not
+    # just the alpha band).
+    half_max = amplitude / 2.0
+    left_bin = global_max_bin
+    while left_bin > 0 and psd_smooth[left_bin] > half_max:
+        left_bin -= 1
+    right_bin = global_max_bin
+    while right_bin < psd_smooth.size - 1 and psd_smooth[right_bin] > half_max:
+        right_bin += 1
+    fwhm = max((right_bin - left_bin) * resolution, resolution)
     std_gauss = fwhm / (2 * np.sqrt(2 * np.log(2)))
     if std_gauss > 2:
-        # print(std_gauss)
         return np.nan
-    popt = [amp_guess, center_guess, std_gauss]
+    popt = [amplitude, est_pf, std_gauss]
 
     gaussian = gaussian_peak(freqs, *popt) + floor_value
 
-    peak_approved = approve_peak(freqs, psd_safe, psd_flat, psd_smooth, popt, gaussian, aperiodic_simple, config["alpha_band"], floor_value=floor_value)
+    peak_approved = approve_peak(freqs, log_psd, psd_flat, psd_smooth, popt, gaussian, aperiodic_simple, config["alpha_band"], floor_value=floor_value)
 
     if not peak_approved:
         return np.nan
@@ -291,7 +207,19 @@ def combine_simple_mt(psd, freq_bins, config):
     return est_pf
 
 
-def combine_simple(psd, freq_bins, config):
+def alpha_fast(psd, freq_bins, config, return_diagnostics=False):
+    """Whitens the spectrum against a robust aperiodic fit, smooths it, and
+    fits a Gaussian to the resulting peak to estimate the fundamental
+    frequency. The whitened spectrum, its smoothed version, and the Gaussian
+    all stay in log10-ratio space (0.0 = exactly on the aperiodic fit), which
+    keeps amplitude/gaussian/floor_value on a consistent scale for the BIC
+    test in approve_peak.
+
+    ``return_diagnostics=True`` additionally returns a dict of every
+    intermediate array (both aperiodic fits, whitened/smoothed spectra,
+    Gaussian fit, ...) for illustrating the procedure -- see
+    iaf_compare.debug_plots.plot_alpha_fast_procedure. Doesn't change the
+    normal (est_pf-only) return path at all."""
     band = (freq_bins >= config["freq_range"][0]) & (freq_bins <= config["freq_range"][1])
     psd_band = psd[band]
     freqs = freq_bins[band]
@@ -309,20 +237,18 @@ def combine_simple(psd, freq_bins, config):
     eps = np.nextafter(0, 1)  # Smallest positive float
     log_psd = np.log10(np.maximum(psd_band, eps))
     slope, intercept, _, _, _ = stats.linregress(log_freqs, log_psd)
-    aperiodic_simple = log_freqs * slope + intercept  # log10-scale
-    # psd_flat = psd_safe / np.power(10, aperiodic_simple)  # ratio: 1.0 = on fit
-    psd_flat = log_psd - aperiodic_simple  # log10 ratio: 0.0 = on fit
+    aperiodic_initial = log_freqs * slope + intercept  # log10-scale, first (unrefined) fit
+    psd_flat = log_psd - aperiodic_initial  # log10 ratio: 0.0 = on fit
 
-    # Select only samples that are exactly on (1) or below the perfect fit
-    ratio_threshold = 0.0  # 1.0
+    # Select only samples that are exactly on (0.0) or below the perfect fit
+    ratio_threshold = 0.0
     mask = psd_flat <= ratio_threshold
     freqs_refit = log_freqs[mask]
     psd_refit = log_psd[mask]
     # Re-fit using only the selected samples to ignore peak oscillations
     slope, intercept, _, _, _ = stats.linregress(freqs_refit, psd_refit)
-    aperiodic_simple = log_freqs * slope + intercept  # log10-scale
-    # psd_flat = psd_safe / np.power(10, aperiodic_simple)
-    psd_flat = np.power(10, np.maximum(log_psd - aperiodic_simple, eps))  # log10 ratio: 0.0 = on fit
+    aperiodic_simple = log_freqs * slope + intercept  # log10-scale, refined fit
+    psd_flat = log_psd - aperiodic_simple  # whitened spectrum: log10 ratio, 0.0 = on fit
 
     psd_smooth = savgol_filter(psd_flat, window_length=sav_gol_window_length, polyorder=sav_gol_polyorder)
 
@@ -331,9 +257,8 @@ def combine_simple(psd, freq_bins, config):
     alpha_band = (freqs >= fmin) & (freqs <= fmax)
 
     psd_alpha_band = psd_smooth[alpha_band]
-    fit_freqs = freqs[alpha_band]
 
-    max_bin = np.argmax(psd_alpha_band)
+    max_bin = np.argmax(psd_alpha_band)  # index relative to the alpha_band subset
     est_pf = freqs[alpha_band][max_bin]
 
     if 0 < max_bin < (psd_alpha_band.size - 1):
@@ -343,33 +268,62 @@ def combine_simple(psd, freq_bins, config):
             delta = 0.5 * (y1 - y3) / denom
             est_pf += delta * resolution
 
-    floor_value = 0  # 1
+    floor_value = 0.0  # log10-ratio baseline: 0.0 = exactly on the aperiodic fit
+    global_max_bin = max_bin + np.where(alpha_band)[0][0]  # index into the full freqs/psd_smooth arrays
 
-    amp_guess = psd_smooth[alpha_band][max_bin] - floor_value
-    # center_guess = fit_freqs[max_bin]
+    amplitude = psd_smooth[global_max_bin]  # log10-ratio value of the smoothed spectrum at the peak bin
 
-    half_max = amp_guess / 2 + floor_value
-    global_max_bin = max_bin + np.where(alpha_band)[0][0]
-    left_idx = np.where(psd_smooth[:global_max_bin] < half_max)[0]
-    if len(left_idx) > 0:
-        left_idx = left_idx[-1]
-    else:
-        left_idx = global_max_bin
-    right_idx = np.where(psd_smooth[alpha_band][global_max_bin:] < half_max)[0]
-    if len(right_idx) > 0:
-        right_idx = right_idx[0] + global_max_bin
-    else:
-        right_idx = global_max_bin
-    fwhm = max((right_idx - left_idx) * resolution, resolution)
+    def _diagnostics(popt=None, gaussian=None, peak_approved=None, std_gauss=None):
+        return {
+            "freqs": freqs, "psd": psd_band,
+            "log_freqs": log_freqs, "log_psd": log_psd,
+            "aperiodic_initial": aperiodic_initial,
+            "aperiodic_refined": aperiodic_simple,
+            "refit_mask": mask,
+            "psd_flat": psd_flat,
+            "psd_smooth": psd_smooth,
+            "alpha_band": alpha_band,
+            "est_pf": est_pf,
+            "std_gauss": std_gauss,
+            "floor_value": floor_value,
+            "popt": popt,
+            "gaussian": gaussian,
+            "peak_approved": peak_approved,
+        }
+
+    # Reject outright if the smoothed peak doesn't clear the aperiodic fit
+    # (log-ratio <= 0) -- there's no bump to fit a Gaussian to.
+    if amplitude <= 0.0:
+        if return_diagnostics:
+            return np.nan, _diagnostics()
+        return np.nan
+
+    # FWHM: walk outward from the peak bin, in each direction, until the
+    # smoothed spectrum drops below half-max (over the full spectrum, not
+    # just the alpha band).
+    half_max = amplitude / 2.0
+    left_bin = global_max_bin
+    while left_bin > 0 and psd_smooth[left_bin] > half_max:
+        left_bin -= 1
+    right_bin = global_max_bin
+    while right_bin < psd_smooth.size - 1 and psd_smooth[right_bin] > half_max:
+        right_bin += 1
+    fwhm = max((right_bin - left_bin) * resolution, resolution)
     std_gauss = fwhm / (2 * np.sqrt(2 * np.log(2)))
+
     if std_gauss > 2:
         # print(std_gauss)
+        if return_diagnostics:
+            return np.nan, _diagnostics(std_gauss=std_gauss)
         return np.nan
-    popt = [amp_guess, est_pf, std_gauss]
+    popt = [amplitude, est_pf, std_gauss]
 
     gaussian = gaussian_peak(freqs, *popt) + floor_value
 
     peak_approved = approve_peak(freqs, log_psd, psd_flat, psd_smooth, popt, gaussian, aperiodic_simple, config["alpha_band"], floor_value=floor_value)
+
+    if return_diagnostics:
+        return (est_pf if peak_approved else np.nan), _diagnostics(popt, gaussian, peak_approved, std_gauss)
 
     if not peak_approved:
         return np.nan

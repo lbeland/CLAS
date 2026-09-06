@@ -141,9 +141,9 @@ def generate_signal(config, rng):
     )
     signal = _spectrum_to_signal(n, fs, powers_nz, rng)
 
-    # "burst" carrier: genuine time-domain amplitude modulation, added on
+    # "bursty" carrier: genuine time-domain amplitude modulation, added on
     # top of the background since it has no FOOOF log-power equivalent.
-    if has_peaks and stationarity == "burst":
+    if has_peaks and stationarity == "bursty":
         main_power_db = _aperiodic_floor_db(aperiodic_params, peak_freq) + config["peak_snr_db"]
         # Same total power a "constant" mode peak of this height/bw would add
         target_power = _constant_added_power(

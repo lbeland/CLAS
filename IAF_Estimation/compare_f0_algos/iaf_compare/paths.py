@@ -10,12 +10,12 @@ from pathlib import Path
 PKG_DIR = Path(__file__).resolve().parent          # .../compare_f0_algos/iaf_compare
 PROJECT_DIR = PKG_DIR.parent                        # .../compare_f0_algos
 
-OUTPUTS_DIR = PROJECT_DIR / "outputs"
+OUTPUTS_DIR = Path("/home/linda/Documents/MA/plots") / "outputs"
 FIGURE_DIR = OUTPUTS_DIR / "figures"                # plot_sweep .pgf/.pdf output
 TABLE_DIR = OUTPUTS_DIR                             # conditions_table.tex
 REJECT_DIR = OUTPUTS_DIR / "reject"                 # strategy_comparison_*.csv, strategy_roc.png
 
-RESULTS_H5 = OUTPUTS_DIR / "iaf_results.h5"
+RESULTS_H5 = PROJECT_DIR / "outputs" / "iaf_results.h5"
 
 SIMPARAM_CODE = PROJECT_DIR / "SIMparam" / "code"
 if SIMPARAM_CODE.is_dir() and str(SIMPARAM_CODE) not in sys.path:

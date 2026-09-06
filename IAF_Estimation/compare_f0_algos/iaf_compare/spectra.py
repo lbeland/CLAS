@@ -10,8 +10,8 @@ lazily on first use.
 from multitaper.utils import dpss
 
 
-def _dpss_nw_kspec(window_length_sec, target_resolution_hz=0.1):
-    nw = max(window_length_sec * target_resolution_hz / 3, 2)
+def _dpss_nw_kspec(window_length_sec, target_resolution_hz=0.4):
+    nw = max(window_length_sec * target_resolution_hz, 2)
     kspec = int(2 * nw - 1)
     return nw, kspec
 

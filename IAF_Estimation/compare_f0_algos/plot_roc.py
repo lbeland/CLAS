@@ -14,8 +14,20 @@ from collections import defaultdict
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
+import matplotlib as mpl
 
 from iaf_compare.paths import REJECT_DIR, ensure_output_dirs
+from iaf_compare.plot_style import FIG_WIDTH
+
+# Saving to a ".pgf" filename invokes the pgf backend automatically, so the
+# default (interactive) backend stays active and plt.show() keeps working.
+# pgf.texsystem defaults to xelatex, which isn't installed -- pdflatex is.
+mpl.rcParams.update({
+    "pgf.texsystem": "pdflatex",
+    'font.family': 'serif',
+    'text.usetex': True,
+    'pgf.rcfonts': False,
+})
 
 
 def pareto_frontier(df, x_col, y_col):
@@ -43,19 +55,18 @@ def plot_strategy_roc(csv_path, output_path,
     frontier = pareto_frontier(df, x_col, y_col)
     on_frontier = df[label_col].isin(frontier[label_col])
 
-    fig, ax = plt.subplots(figsize=(9, 7))
+    fig, ax = plt.subplots(figsize=(FIG_WIDTH, FIG_WIDTH * 7 / 9))
 
     # Dominated points: muted, small
     ax.scatter(df.loc[~on_frontier, x_col], df.loc[~on_frontier, y_col],
-               s=60, color="#9aa5b1", alpha=0.7, zorder=2,
-               label="dominated (a better option exists)")
+               s=60, color="#9aa5b1", alpha=0.7, zorder=2)
 
     # Pareto frontier: highlighted, connected, larger
     ax.plot(frontier[x_col], frontier[y_col], color="#d64550",
             linewidth=1.5, linestyle="--", zorder=3, alpha=0.8)
     ax.scatter(frontier[x_col], frontier[y_col], s=110, color="#d64550",
                edgecolor="white", linewidth=1.2, zorder=4,
-               label="Pareto frontier (no strategy beats these on both axes)")
+               label="Pareto frontier")
 
     # Label frontier points prominently; label dominated points only with a
     # lighter touch and slight jitter-free offset alternation to reduce
@@ -84,24 +95,20 @@ def plot_strategy_roc(csv_path, output_path,
             path_effects=[pe.withStroke(linewidth=2, foreground="white")],
         )
 
-    ax.set_xlabel("False positive rate (no-peak conditions)\n→ worse, more false alarms", fontsize=11)
-    ax.set_ylabel("False negative rate (with-peak conditions)\n→ worse, more missed peaks", fontsize=11)
-    ax.set_title("Peak-rejection strategy comparison", fontsize=14, fontweight="bold")
+    ax.set_xlabel("False positive rate (no-peak conditions)")
+    ax.set_ylabel("False negative rate (with-peak conditions)")
     ax.set_xlim(-0.03, 1.03)
     ax.set_ylim(-0.03, 1.03)
     ax.grid(alpha=0.3)
     ax.legend(loc="upper right", fontsize=9, frameon=True)
 
-    # Mark the origin (0,0) as the unreachable ideal, for visual reference
-    ax.scatter([0], [0], marker="*", s=250, color="gold",
-               edgecolor="black", linewidth=0.8, zorder=5)
-    ax.annotate("ideal", (0, 0), textcoords="offset points", xytext=(8, -10),
-                fontsize=9, fontweight="bold")
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=200, bbox_inches="tight")
+    stem = output_path.with_suffix("")
+    plt.savefig(stem.with_suffix(".pdf"), bbox_inches="tight")
+    plt.savefig(stem.with_suffix(".pgf"), bbox_inches="tight")
     plt.show()
-    print(f"Saved to {output_path}")
+    print(f"Saved to {stem}.pdf / {stem}.pgf")
     print("\nPareto-optimal strategies (sorted by false_positive_rate):")
     print(frontier[[label_col, x_col, y_col, "mae_with_peak"]].to_string(index=False))
 
@@ -111,4 +118,4 @@ def plot_strategy_roc(csv_path, output_path,
 if __name__ == "__main__":
     ensure_output_dirs()
     plot_strategy_roc(REJECT_DIR / "strategy_comparison_summary.csv",
-                      REJECT_DIR / "strategy_roc.png")
+                      REJECT_DIR / "strategy_roc.pdf")

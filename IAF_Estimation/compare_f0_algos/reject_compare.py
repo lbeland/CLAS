@@ -1,14 +1,18 @@
 """
-Compare different `approve_peak` rejection strategies for combine_simple.
+Compare different `approve_peak` rejection strategies for alpha_fast.
 Was IAF_reject_tests.py.
 
 For each strategy in approve_peak_variants.build_strategy_registry():
-  1. monkey-patch iaf_compare.algorithms.approve_peak. combine_simple calls
+  1. monkey-patch iaf_compare.algorithms.approve_peak. alpha_fast calls
      approve_peak by name from its own module's globals, so rebinding
-     iaf_compare.algorithms.approve_peak is what makes combine_simple pick it
+     iaf_compare.algorithms.approve_peak is what makes alpha_fast pick it
      up (the call `approve_peak(...)` resolves via algorithms.__dict__ at call
      time). run_window_analysis likewise calls algorithms.run_algorithms
-     through the module object, so rebinding that swaps the algorithm set.
+     through the module object, so rebinding that swaps the algorithm set --
+     also rebind iaf_compare.pipeline.compute_spectra to a periodogram-only
+     version, since only alpha_fast (periodogram-based) ever gets scored here
+     and the Welch/multitaper estimates would otherwise be computed on every
+     trial for nothing.
   2. run the full with-peak + no-peak condition sweep
   3. pool fp/fn/n across seeds per condition (NOT mean of per-condition
      fail_rate) and store mae/rmse for tp samples
@@ -22,7 +26,7 @@ import pandas as pd
 from multiprocessing import Pool
 from tqdm import tqdm
 
-from iaf_compare import algorithms
+from iaf_compare import algorithms, pipeline
 from iaf_compare.pipeline import process_condition
 from iaf_compare.metrics import compute_pooled_metrics
 from iaf_compare.paths import REJECT_DIR, ensure_output_dirs
@@ -40,19 +44,30 @@ N_SEEDS = 20
 N_WORKERS = 5
 
 
-# Only compare combine_simple's behavior under each strategy -- fooof and other
+# Only compare alpha_fast's behavior under each strategy -- fooof and other
 # algorithms don't depend on approve_peak, so running them N_strategies times
 # would just waste compute on identical results.
-def run_algorithms_combine_simple_only(window, psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, freq_mt, config):
+def run_algorithms_alpha_fast_only(window, psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, freq_mt, config):
     return {
-        "combine_simple": algorithms.combine_simple(psd, freq_bins, config),
+        "alpha_fast": algorithms.alpha_fast(psd, freq_bins, config),
     }
+
+
+# alpha_fast only needs the periodogram -- skip Welch and the multitaper
+# eigendecomposition entirely, since run_algorithms_alpha_fast_only above
+# never looks at psd_welch/psd_mt anyway.
+def compute_spectra_periodogram_only(window, window_length, fs, config):
+    freq_bins = np.fft.rfftfreq(window_length, 1 / fs)
+    X = np.fft.rfft(window, n=window_length)
+    psd = (np.abs(X) ** 2) / (fs * window_length)
+    psd[1:-1] *= 2  # Correct for dropping negative freqs in one-sided spectrum (except DC and Nyquist)
+    return psd, None, None, freq_bins, None, None
 
 
 def build_conditions():
     fixed = {
         "fs":                   10000.0,
-        "freq_range":           (0.01, 30.0),
+        "freq_range":           (0.1, 30.0),
         "alpha_band":           (5, 18),
         "pink_ax_r2":           0.9,
         "aperiodic_ref_power_db": 0.0,
@@ -60,28 +75,28 @@ def build_conditions():
     }
 
     default_with_peak = {
-        "peak_freq":            14.0,
-        "stationarity":         "constant",   # "constant" | "burst"
+        "peak_freq":            10.32,
+        "stationarity":         "constant",   # "constant" | "bursty"
         "aperiodic_exponent":   2.0,
         "n_peaks":              1,
-        "peak_width":           0.5,  # was "peak_bw" -- generate_signal reads "peak_width"
+        "peak_width":           0.5,
         "peak_snr_db":          20.0,
         "window_length_sec":    10,
-        "noise_lv":             0.2,          # Std dev of the per-bin log10-power noise (gen_noise)
+        "noise_lv":             0.5,          # Std dev of the per-bin log10-power noise (gen_noise)
     }
     default_no_peak = {**default_with_peak, "n_peaks": 0}
 
     sweeps_with_peak = {
-        "peak_snr_db":          [0, 5, 10],
-        "peak_width":           [0.1, 0.5, 1.0, 2.0, 4.0],  # was "peak_bw"
+        "peak_snr_db":          [0, 5, 10, 20, 50],
+        "peak_width":           [0.1, 0.5, 1.0, 2.0],
         "aperiodic_exponent":   [0, 1, 2, 3],
         "peak_freq":            sorted([6, 8, 12, 14] + [default_with_peak["peak_freq"]]),
-        "stationarity":         ["constant", "burst"],
-        "noise_lv":             [0, 0.2, 1.0],
+        "stationarity":         ["constant", "bursty"],
+        "noise_lv":             [0, 0.2, 0.5, 1.0],
     }
     sweeps_no_peak = {
         "aperiodic_exponent":   [0, 1, 2, 3],
-        "noise_lv":             [0, 0.2, 1.0],
+        "noise_lv":             [0, 0.2, 0.5, 1.0],
     }
 
     seen = set()
@@ -109,7 +124,8 @@ def init_worker(strategy_name):
     from approve_peak_variants import build_strategy_registry
     registry = build_strategy_registry()
     algorithms.approve_peak = registry[strategy_name]
-    algorithms.run_algorithms = run_algorithms_combine_simple_only
+    algorithms.run_algorithms = run_algorithms_alpha_fast_only
+    pipeline.compute_spectra = compute_spectra_periodogram_only
 
 
 def main():
@@ -145,7 +161,7 @@ def main():
             condition_key = tuple(sorted(config.items(), key=lambda kv: str(kv)))
             samples = pooled.setdefault(condition_key, {"est": [], "gt": [], "config": config,
                                                         "condition_id": cond_idx // N_SEEDS})
-            samples["est"].append(float(estimates_per_algo["combine_simple"]))
+            samples["est"].append(float(estimates_per_algo["alpha_fast"]))
             samples["gt"].append(gt)
 
         for samples in pooled.values():

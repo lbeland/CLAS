@@ -15,8 +15,9 @@ from iaf_compare.spectra import precompute_dpss, _init_dpss_cache
 from iaf_compare.io_hdf5 import write_results
 from iaf_compare.config import save_conditions_latex_table
 
-N_WORKERS = 5  # max(1, cpu_count() - 1)
+from os import cpu_count
 
+N_WORKERS = max(1, cpu_count() - 2)
 
 def main():
     ensure_output_dirs()
@@ -70,3 +71,7 @@ if __name__ == "__main__":
     # from iaf_compare.debug_plots import plot_signal_debug
     # plot_signal_debug(config, n_seconds=20)
     # plot_signal_debug({**config, 'stationarity': 'constant'}, n_seconds=20)
+
+    # from iaf_compare.debug_plots import plot_alpha_fast_procedure, default_alpha_fast_config
+
+    # fig, axes = plot_alpha_fast_procedure({**default_alpha_fast_config(), "peak_freq": 10.0, "peak_snr_db":10},seed=2)

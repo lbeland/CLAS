@@ -10,12 +10,11 @@ compute_spectra`` (e.g. to a periodogram-only version, as ``reject_compare``
 does) redirects it too.
 """
 import numpy as np
-from scipy.signal import welch
-from multitaper import MTSpec
+
 
 from . import algorithms
+from .spectra import compute_spectra
 from .signal_gen import generate_signal
-from .spectra import _dpss_nw_kspec, _cached_dpss
 
 
 def build_sweep(fixed, default, sweeps, window_lengths_sec, n_seeds):
@@ -69,6 +68,12 @@ def process_condition(args):
         signal, gt_pf = generate_signal(config, rng)
         estimates_per_algo, gt_pf, spectrum_info = run_window_analysis(signal, gt_pf, config)
         stored_config = {**config, "trial_source": "base"}
+        # write_results keeps only ONE example spectrum/window per condition
+        # (seed 0's -- imap preserves input order, so seed 0 is seen first).
+        # Returning the multi-MB arrays for every seed would balloon the
+        # accumulated result list to gigabytes at high N_SEEDS, so drop them.
+        if seed != 0:
+            spectrum_info = None
         return cond_idx, stored_config, gt_pf, estimates_per_algo, spectrum_info
     except Exception as e:
         print(f"Error processing condition\n{config}\n: {e}")
@@ -78,9 +83,10 @@ def process_condition(args):
 def process_window_length_condition(args):
     """Like process_condition, but shares ONE parent signal -- generated at
     the longest window_length_sec being compared -- across every variant of
-    this (condition, seed), each analyzing a nested prefix sub-window. This
-    isolates the effect of window length itself, instead of confounding it
-    with a fresh random draw."""
+    this (condition, seed), each analyzing a nested sub-window centered on the
+    parent's midpoint (the crop in run_window_analysis). This isolates the
+    effect of window length itself, instead of confounding it with a fresh
+    random draw."""
     cond_indices, base_config, seed, window_lengths_sec = args
     try:
         rng = np.random.default_rng(seed)
@@ -92,6 +98,9 @@ def process_window_length_condition(args):
             config = {**parent_config, "window_length_sec": window_length_sec}
             estimates_per_algo, gt_pf_i, spectrum_info = run_window_analysis(signal, gt_pf, config)
             stored_config = {**config, "trial_source": "window_length_sweep"}
+            # See process_condition: only seed 0's example arrays are kept.
+            if seed != 0:
+                spectrum_info = None
             results.append((cond_idx, stored_config, gt_pf_i, estimates_per_algo, spectrum_info))
         return results
     except Exception as e:
@@ -99,27 +108,6 @@ def process_window_length_condition(args):
         raise
 
 
-def compute_spectra(window, window_length, fs, config):
-    """Periodogram + Welch + multitaper PSDs for one window. window_length is
-    taken as a separate argument rather than len(window) since the caller's
-    intended window_length (== config["window_length_sec"] * fs) can exceed
-    len(window) itself when the signal is shorter than the nominal window."""
-    nperseg = int(min(window_length, 2 * fs))
-    freq_bins_welch, psd_welch = welch(window, fs=fs, nperseg=nperseg, noverlap=None)
-
-    freq_bins = np.fft.rfftfreq(window_length, 1 / fs)
-    X = np.fft.rfft(window, n=window_length)
-    # Periodogram PSD: |X|^2 / (fs * N) — matches Welch units (power per Hz)
-    psd = (np.abs(X) ** 2) / (fs * window_length)
-    psd[1:-1] *= 2  # Correct for dropping negative freqs in one-sided spectrum (except DC and Nyquist)
-
-    nw, kspec = _dpss_nw_kspec(config["window_length_sec"])
-    vn, lamb = _cached_dpss(window_length, nw, kspec)  # pre-seeded by the Pool initializer
-
-    mt = MTSpec(window, nw=nw, kspec=kspec, dt=1 / fs, vn=vn, lamb=lamb)
-    freq_mt, psd_mt = mt.rspec()
-
-    return psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, freq_mt
 
 
 def run_window_analysis(signal, gt_pf, config):
@@ -140,4 +128,13 @@ def run_window_analysis(signal, gt_pf, config):
     estimates_per_algo = algorithms.run_algorithms(
         window, psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, freq_mt, config)
 
-    return estimates_per_algo, gt_pf, ((freq_bins, psd), window)
+    # Stash the Welch PSD as the per-condition example spectrum (io_hdf5 keeps
+    # one per condition, for the spectrum panels / plot_condition_spectra) --
+    # it's far smoother than the raw periodogram. Fall back to the periodogram
+    # if a caller patched compute_spectra to skip Welch (e.g. reject_compare).
+    if psd_welch is not None:
+        example_spectrum = (freq_bins_welch, psd_welch)
+    else:
+        example_spectrum = (freq_bins, psd)
+
+    return estimates_per_algo, gt_pf, (example_spectrum, window)

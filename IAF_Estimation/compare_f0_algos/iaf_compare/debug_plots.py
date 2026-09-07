@@ -9,7 +9,7 @@ from . import config as sweep_config
 from .paths import OUTPUTS_DIR
 from .plot_style import FIG_WIDTH, FIG_HEIGHT, FIGSIZE
 from .signal_gen import generate_signal, _aperiodic_params, _aperiodic_floor_db
-from .pipeline import run_window_analysis
+from .pipeline import run_window_analysis, compute_spectra
 
 # pgf.texsystem defaults to xelatex, which isn't installed -- pdflatex is.
 mpl.rcParams.update({
@@ -104,7 +104,12 @@ def plot_alpha_fast_procedure(config=None, seed=1, save_name="alpha_fast_procedu
 
     rng = np.random.default_rng(seed)
     signal, gt_pf = generate_signal(config, rng)
-    _, _, ((freq_bins, psd), _window) = run_window_analysis(signal, gt_pf, config)
+
+    fs = config["fs"]
+    window_length = int(config["window_length_sec"] * fs)
+    window = (signal if window_length >= len(signal)
+              else signal[(len(signal) - window_length) // 2:(len(signal) + window_length) // 2])
+    psd, _, _, freq_bins, _, _ = compute_spectra(window, window_length, fs, config)
 
     est_pf, diag = algorithms.alpha_fast(psd, freq_bins, config, return_diagnostics=True)
 
@@ -123,7 +128,7 @@ def plot_alpha_fast_procedure(config=None, seed=1, save_name="alpha_fast_procedu
 
     # (b) log-log with both aperiodic fits
     ax = axes[1]
-    ax.plot(diag["log_freqs"], diag["log_psd"], color="tab:blue", linewidth=1.0, label="PSD")
+    ax.plot(diag["log_freqs"], diag["log_psd"], color="tab:blue", linewidth=1.0)
     ax.plot(diag["log_freqs"], diag["aperiodic_initial"], "--", color="tab:orange",
             linewidth=1.4, label="1th fit")
     ax.plot(diag["log_freqs"], diag["aperiodic_refined"], "-", color="tab:red",

@@ -53,7 +53,7 @@ SWEEPS = {
 
 WINDOW_LENGTHS_SEC = [5, 10, 20]
 
-N_SEEDS = 20  # number of noise variations for each condition 
+N_SEEDS = 100  # number of noise variations for each condition 
 
 
 # --- LaTeX conditions table ------------------------------------------------

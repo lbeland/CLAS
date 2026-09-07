@@ -10,12 +10,16 @@ from pathlib import Path
 PKG_DIR = Path(__file__).resolve().parent          # .../compare_f0_algos/iaf_compare
 PROJECT_DIR = PKG_DIR.parent                        # .../compare_f0_algos
 
+# Shared thesis plots folder: every .pgf/.pdf plot and every .tex table lands
+# here (plot_sweep + plot_reject), so they sit next to each other.
 OUTPUTS_DIR = Path("/home/linda/Documents/MA/plots") / "outputs"
-FIGURE_DIR = OUTPUTS_DIR / "figures"                # plot_sweep .pgf/.pdf output
-TABLE_DIR = OUTPUTS_DIR                             # conditions_table.tex
-REJECT_DIR = OUTPUTS_DIR / "reject"                 # strategy_comparison_*.csv, strategy_roc.png
+FIGURE_DIR = OUTPUTS_DIR / "figures"                # .pgf/.pdf plots (incl. strategy_roc)
+TABLE_DIR = OUTPUTS_DIR                             # .tex tables (conditions, mae summary, reject accuracy/F1)
 
-RESULTS_H5 = PROJECT_DIR / "outputs" / "iaf_results.h5"
+# Numeric results stay project-local, alongside the HDF5 sweep output.
+RESULTS_DIR = PROJECT_DIR / "outputs"
+RESULTS_H5 = RESULTS_DIR / "iaf_results.h5"
+REJECT_DIR = RESULTS_DIR / "reject"                 # strategy_comparison_*.csv
 
 SIMPARAM_CODE = PROJECT_DIR / "SIMparam" / "code"
 if SIMPARAM_CODE.is_dir() and str(SIMPARAM_CODE) not in sys.path:
@@ -23,6 +27,7 @@ if SIMPARAM_CODE.is_dir() and str(SIMPARAM_CODE) not in sys.path:
 
 
 def ensure_output_dirs():
-    """Create the outputs/ tree if it does not exist yet."""
-    for d in (OUTPUTS_DIR, FIGURE_DIR, REJECT_DIR):
+    """Create the output trees (shared plots + project-local results) if they
+    do not exist yet."""
+    for d in (OUTPUTS_DIR, FIGURE_DIR, TABLE_DIR, RESULTS_DIR, REJECT_DIR):
         d.mkdir(parents=True, exist_ok=True)

@@ -1,15 +1,17 @@
 """Peak-frequency (individual alpha frequency) estimators, plus the
 ``run_algorithms`` dispatch that runs each one on a single window.
 
-``alpha_fast`` / ``alpha_fast_mt`` call ``approve_peak`` by bare name
-so it resolves through this module's globals at call time -- that is what lets
-``reject_compare`` swap in a different rejection strategy by rebinding
-``iaf_compare.algorithms.approve_peak``. Keep it that way.
+``alpha_fast`` calls ``approve_peak`` by bare name so it resolves through this
+module's globals at call time -- that is what lets ``reject_compare`` swap in a
+different rejection strategy by rebinding ``iaf_compare.algorithms.approve_peak``.
+Keep it that way.
+
+The "alpha_fast_mt" estimator is just ``alpha_fast`` run on the multitaper PSD
+instead of the periodogram -- same code, so there is no separate function.
 """
 import numpy as np
 from fooof import FOOOF
 from scipy import stats
-from scipy.optimize import curve_fit
 from scipy.signal import savgol_filter
 
 
@@ -25,7 +27,7 @@ def run_algorithms(window, psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, f
         "FOOOF":        fooof(psd_welch, freq_bins_welch, config),
         "RestingIAF":   philistine_iaf(psd, freq_bins, config),
         "alpha_fast":       alpha_fast(psd, freq_bins, config),
-        "alpha_fast_mt":    alpha_fast_mt(psd_mt, freq_mt, config),
+        "alpha_fast_mt":    alpha_fast(psd_mt, freq_mt, config),  # same estimator, multitaper PSD
     }
 
 
@@ -114,97 +116,6 @@ def approve_peak(freqs, psd_safe, psd_flat, psd_smooth, popt, gaussian, aperiodi
         return False
     else:
         return True
-
-
-def alpha_fast_mt(psd, freq_bins, config):
-    """Whitens the spectrum against a robust aperiodic fit, smooths it, and
-    fits a Gaussian to the resulting peak to estimate the fundamental
-    frequency. The whitened spectrum, its smoothed version, and the Gaussian
-    all stay in log10-ratio space (0.0 = exactly on the aperiodic fit), which
-    keeps amplitude/gaussian/floor_value on a consistent scale for the BIC
-    test in approve_peak."""
-    band = (freq_bins >= config["freq_range"][0]) & (freq_bins <= config["freq_range"][1])
-    psd_band = psd[band]
-    freqs = freq_bins[band]
-    log_freqs = np.log10(freqs)
-
-    resolution = freqs[1] - freqs[0]
-    sav_gol_window_length = int(1.5 / resolution)
-    if sav_gol_window_length % 2 == 0:
-        sav_gol_window_length += 1
-
-    sav_gol_polyorder = 3
-    if sav_gol_polyorder >= sav_gol_window_length:
-        sav_gol_window_length = sav_gol_polyorder + 2
-
-    eps = np.nextafter(0, 1)  # Smallest positive float
-    log_psd = np.log10(np.maximum(psd_band, eps))
-    slope, intercept, _, _, _ = stats.linregress(log_freqs, log_psd)
-    aperiodic_initial = log_freqs * slope + intercept  # log10-scale, first (unrefined) fit
-    psd_flat = log_psd - aperiodic_initial  # log10 ratio: 0.0 = on fit
-
-    # Select only samples that are exactly on (0.0) or below the perfect fit
-    ratio_threshold = 0.0
-    mask = psd_flat <= ratio_threshold
-    freqs_refit = log_freqs[mask]
-    psd_refit = log_psd[mask]
-    # Re-fit using only the selected samples to ignore peak oscillations
-    slope, intercept, _, _, _ = stats.linregress(freqs_refit, psd_refit)
-    aperiodic_simple = log_freqs * slope + intercept  # log10-scale, refined fit
-    psd_flat = log_psd - aperiodic_simple  # whitened spectrum: log10 ratio, 0.0 = on fit
-
-    psd_smooth = savgol_filter(psd_flat, window_length=sav_gol_window_length, polyorder=sav_gol_polyorder)
-
-    fmin, fmax = config["alpha_band"][0], config["alpha_band"][1]
-
-    alpha_band = (freqs >= fmin) & (freqs <= fmax)
-
-    psd_alpha_band = psd_smooth[alpha_band]
-
-    max_bin = np.argmax(psd_alpha_band)  # index relative to the alpha_band subset
-    est_pf = freqs[alpha_band][max_bin]
-
-    if 0 < max_bin < (psd_alpha_band.size - 1):
-        y1, y2, y3 = psd_alpha_band[max_bin - 1], psd_alpha_band[max_bin], psd_alpha_band[max_bin + 1]
-        denom = (y1 - 2 * y2 + y3)
-        if denom != 0:
-            delta = 0.5 * (y1 - y3) / denom
-            est_pf += delta * resolution
-
-    floor_value = 0.0  # log10-ratio baseline: 0.0 = exactly on the aperiodic fit
-    global_max_bin = max_bin + np.where(alpha_band)[0][0]  # index into the full freqs/psd_smooth arrays
-
-    amplitude = psd_smooth[global_max_bin]  # log10-ratio value of the smoothed spectrum at the peak bin
-
-    # Reject outright if the smoothed peak doesn't clear the aperiodic fit
-    # (log-ratio <= 0) -- there's no bump to fit a Gaussian to.
-    if amplitude <= 0.0:
-        return np.nan
-
-    # FWHM: walk outward from the peak bin, in each direction, until the
-    # smoothed spectrum drops below half-max (over the full spectrum, not
-    # just the alpha band).
-    half_max = amplitude / 2.0
-    left_bin = global_max_bin
-    while left_bin > 0 and psd_smooth[left_bin] > half_max:
-        left_bin -= 1
-    right_bin = global_max_bin
-    while right_bin < psd_smooth.size - 1 and psd_smooth[right_bin] > half_max:
-        right_bin += 1
-    fwhm = max((right_bin - left_bin) * resolution, resolution)
-    std_gauss = fwhm / (2 * np.sqrt(2 * np.log(2)))
-    if std_gauss > 2:
-        return np.nan
-    popt = [amplitude, est_pf, std_gauss]
-
-    gaussian = gaussian_peak(freqs, *popt) + floor_value
-
-    peak_approved = approve_peak(freqs, log_psd, psd_flat, psd_smooth, popt, gaussian, aperiodic_simple, config["alpha_band"], floor_value=floor_value)
-
-    if not peak_approved:
-        return np.nan
-
-    return est_pf
 
 
 def alpha_fast(psd, freq_bins, config, return_diagnostics=False):

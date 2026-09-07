@@ -40,6 +40,8 @@ def compute_pooled_metrics(estimates, ground_truths):
         "mae":            np.mean(abs_errors) if abs_errors.size else np.nan,
         "rmse":           np.sqrt(np.mean(abs_errors ** 2)) if abs_errors.size else np.nan,
         "std":            np.std(abs_errors) if abs_errors.size else np.nan,
+        "tp":             tp,
+        "tn":             tn,
         "fn":             fn,
         "fp":             fp,
         "n":              n,

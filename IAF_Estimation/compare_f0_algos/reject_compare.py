@@ -19,6 +19,16 @@ For each strategy in approve_peak_variants.build_strategy_registry():
   4. collect one summary row per (strategy, condition) into a single CSV so
      strategies can be compared head-to-head afterward.
 
+Then a single reference-set pass scores the other thesis algorithms (Maximum,
+FOOOF, RestingIAF, alpha_fast_mt) once -- none of them vary with the approve_peak
+sweep -- into the same rows.
+
+The output is a single raw file, REJECT_DIR/strategy_comparison_raw.csv, with
+one row per (strategy, condition). Scoring it into the headline summary, the
+LaTeX detection-metrics table and the ROC plot is a separate step -- run
+``python plot_reject.py`` afterwards so that (fast) formatting work doesn't
+require repeating this (slow) sweep.
+
 Run with: python reject_compare.py
 """
 import numpy as np
@@ -32,6 +42,11 @@ from iaf_compare.metrics import compute_pooled_metrics
 from iaf_compare.paths import REJECT_DIR, ensure_output_dirs
 from approve_peak_variants import build_strategy_registry
 
+# The unpatched spectra function (periodogram + Welch + multitaper), captured
+# before any worker monkey-patches pipeline.compute_spectra -- the reference-set
+# pass restores it so the multitaper PSD is available for alpha_fast_mt.
+_full_compute_spectra = pipeline.compute_spectra
+
 # tqdm spins up a background "monitor" thread the first time it's used, and
 # that thread persists for the rest of the process. Every Pool() created
 # afterward then sees a multi-threaded parent and warns about fork() deadlocks.
@@ -40,8 +55,14 @@ from approve_peak_variants import build_strategy_registry
 # isn't used for anything here, so disabling it is safe.
 tqdm.monitor_interval = 0
 
-N_SEEDS = 20
+N_SEEDS = 100
 N_WORKERS = 5
+
+# The approve_peak strategy that reproduces iaf_compare.algorithms.approve_peak
+# verbatim (BIC test on psd_flat, full freq_range, floor_value 0.0). The
+# reference-set pass leaves approve_peak at this module default; plot_reject.py
+# is where it matters (the only alpha_fast row shown in the detection table).
+DEFAULT_BIC_STRATEGY = "bic_only_psd_flat_full"
 
 
 # Only compare alpha_fast's behavior under each strategy -- fooof and other
@@ -62,6 +83,22 @@ def compute_spectra_periodogram_only(window, window_length, fs, config):
     psd = (np.abs(X) ** 2) / (fs * window_length)
     psd[1:-1] *= 2  # Correct for dropping negative freqs in one-sided spectrum (except DC and Nyquist)
     return psd, None, None, freq_bins, None, None
+
+
+# The reference set doesn't vary with the approve_peak strategy sweep:
+# Maximum/FOOOF/RestingIAF ignore approve_peak entirely, and the "alpha_fast_mt"
+# row is just alpha_fast on the multitaper PSD -- it calls approve_peak, but the
+# table only ever reports the default (inherited unpatched here, ==
+# DEFAULT_BIC_STRATEGY). So the set is scored once, as the baseline the
+# per-strategy alpha_fast rows are compared against. Uses the full
+# periodogram+Welch+multitaper spectra since that row needs the multitaper PSD.
+def run_algorithms_reference_set(window, psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, freq_mt, config):
+    return {
+        "Maximum":       algorithms.stupid_max(psd_welch, freq_bins_welch, config),
+        "FOOOF":         algorithms.fooof(psd_welch, freq_bins_welch, config),
+        "RestingIAF":    algorithms.philistine_iaf(psd, freq_bins, config),
+        "alpha_fast_mt": algorithms.alpha_fast(psd_mt, freq_mt, config),  # same estimator, multitaper PSD
+    }
 
 
 def build_conditions():
@@ -128,6 +165,46 @@ def init_worker(strategy_name):
     pipeline.compute_spectra = compute_spectra_periodogram_only
 
 
+def init_worker_reference_set():
+    """Worker init for the single reference-set pass (Maximum, FOOOF, RestingIAF,
+    alpha_fast_mt). Restores the full spectra function so the multitaper PSD is
+    available for the alpha_fast_mt row, and leaves algorithms.approve_peak at
+    its module default (matching DEFAULT_BIC_STRATEGY)."""
+    algorithms.run_algorithms = run_algorithms_reference_set
+    pipeline.compute_spectra = _full_compute_spectra
+
+
+def pool_and_score(results, algo_key, row_label):
+    """Pool every seed of the same condition, then score. One row per
+    (row_label, condition), matching the schema used for the alpha_fast
+    strategies so FOOOF/RestingIAF slot into the same table."""
+    pooled = {}
+    for cond_idx, config, gt, estimates_per_algo, _ in results:
+        condition_key = tuple(sorted(config.items(), key=lambda kv: str(kv)))
+        samples = pooled.setdefault(condition_key, {"est": [], "gt": [], "config": config,
+                                                    "condition_id": cond_idx // N_SEEDS})
+        samples["est"].append(float(estimates_per_algo[algo_key]))
+        samples["gt"].append(gt)
+
+    rows = []
+    for samples in pooled.values():
+        config = samples["config"]
+        metrics = compute_pooled_metrics(samples["est"], samples["gt"])
+        rows.append({
+            "strategy": row_label,
+            "condition_id": samples["condition_id"],
+            "n_peaks": config["n_peaks"],
+            "window_length_sec": config["window_length_sec"],
+            "peak_snr_db": config["peak_snr_db"],
+            "stationarity": config["stationarity"],
+            "aperiodic_exponent": config["aperiodic_exponent"],
+            "tp": metrics["tp"], "tn": metrics["tn"],
+            "fp": metrics["fp"], "fn": metrics["fn"], "n": metrics["n"],
+            "mae": metrics["mae"], "rmse": metrics["rmse"],
+        })
+    return rows
+
+
 def main():
     ensure_output_dirs()
     conditions = build_conditions()
@@ -156,67 +233,27 @@ def main():
 
         # Pool every seed of the same condition before scoring -- fp/fn/mae/
         # rmse are only meaningful pooled over all seeds, not per single trial.
-        pooled = {}
-        for cond_idx, config, gt, estimates_per_algo, _ in results:
-            condition_key = tuple(sorted(config.items(), key=lambda kv: str(kv)))
-            samples = pooled.setdefault(condition_key, {"est": [], "gt": [], "config": config,
-                                                        "condition_id": cond_idx // N_SEEDS})
-            samples["est"].append(float(estimates_per_algo["alpha_fast"]))
-            samples["gt"].append(gt)
+        all_rows.extend(pool_and_score(results, "alpha_fast", strategy_name))
 
-        for samples in pooled.values():
-            config = samples["config"]
-            metrics = compute_pooled_metrics(samples["est"], samples["gt"])
-            all_rows.append({
-                "strategy": strategy_name,
-                "condition_id": samples["condition_id"],
-                "n_peaks": config["n_peaks"],
-                "window_length_sec": config["window_length_sec"],
-                "peak_snr_db": config["peak_snr_db"],
-                "stationarity": config["stationarity"],
-                "aperiodic_exponent": config["aperiodic_exponent"],
-                "fp": metrics["fp"], "fn": metrics["fn"], "n": metrics["n"],
-                "mae": metrics["mae"], "rmse": metrics["rmse"],
-            })
+    # --- Reference set (Maximum, FOOOF, RestingIAF, alpha_fast_mt): these don't
+    # vary with the approve_peak strategy sweep, so run once over the same
+    # conditions/seeds and score them into the same table as extra rows.
+    print("\n=== Reference set: Maximum + FOOOF + RestingIAF + alpha_fast_mt (scored once) ===")
+    with Pool(N_WORKERS, initializer=init_worker_reference_set) as pool:
+        ref_results = list(tqdm(
+            pool.imap(process_condition, conditions_with_seeds),
+            total=len(conditions_with_seeds),
+            desc="reference set",
+        ))
+    for algo_key in ("Maximum", "FOOOF", "RestingIAF", "alpha_fast_mt"):
+        all_rows.extend(pool_and_score(ref_results, algo_key, algo_key))
 
     df = pd.DataFrame(all_rows)
-    df.to_csv(REJECT_DIR / "strategy_comparison_raw.csv", index=False)
-
-    # --- Headline comparison: pool across seeds AND across all no-peak
-    # conditions to get one false-positive rate per strategy, and pool across
-    # all with-peak conditions to get one false-negative rate + mae per
-    # strategy. This is the core tradeoff you're optimizing.
-    no_peak = df[df["n_peaks"] == 0]
-    with_peak = df[df["n_peaks"] > 0]
-
-    summary_rows = []
-    for strategy_name in registry:
-        np_grp = no_peak[no_peak["strategy"] == strategy_name]
-        wp_grp = with_peak[with_peak["strategy"] == strategy_name]
-
-        fp_total, n_np_total = np_grp["fp"].sum(), np_grp["n"].sum()
-        fn_total, n_wp_total = wp_grp["fn"].sum(), wp_grp["n"].sum()
-        fp_wp_total = wp_grp["fp"].sum()  # fp can still happen in n_peaks>0
-        #                                   conditions with n_peaks>1 if one of
-        #                                   several peaks is spuriously found
-        #                                   where none exists in that window --
-        #                                   keep separate from fn
-        mae_vals = wp_grp["mae"].dropna()
-
-        summary_rows.append({
-            "strategy": strategy_name,
-            "false_positive_rate_no_peak": fp_total / n_np_total if n_np_total else np.nan,
-            "false_negative_rate_with_peak": fn_total / n_wp_total if n_wp_total else np.nan,
-            "fp_rate_within_with_peak": fp_wp_total / n_wp_total if n_wp_total else np.nan,
-            "mae_with_peak": mae_vals.mean() if len(mae_vals) else np.nan,
-            "n_no_peak_samples": n_np_total,
-            "n_with_peak_samples": n_wp_total,
-        })
-
-    summary = pd.DataFrame(summary_rows).sort_values("false_positive_rate_no_peak")
-    summary.to_csv(REJECT_DIR / "strategy_comparison_summary.csv", index=False)
-    print("\n=== Summary (sorted by false positive rate) ===")
-    print(summary.to_string(index=False))
+    raw_csv = REJECT_DIR / "strategy_comparison_raw.csv"
+    df.to_csv(raw_csv, index=False)
+    print(f"\nWrote {len(df)} raw (strategy, condition) rows to {raw_csv}")
+    print("Now run `python plot_reject.py` to score it into the summary CSV, "
+          "the detection-metrics table and the ROC plot.")
 
 
 if __name__ == "__main__":

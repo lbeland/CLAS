@@ -11,7 +11,7 @@ from neurodsp.sim import sim_bursty_oscillation
 
 from . import paths  # noqa: F401  -- side effect: puts SIMparam/code on sys.path
 
-from fooof.sim.gen import gen_aperiodic, gen_periodic, gen_noise
+from fooof.sim.gen import gen_aperiodic, gen_periodic
 from sims import gen_power_vals_fn
 
 EPS = np.nextafter(0, 1)  # smallest positive float
@@ -132,12 +132,20 @@ def generate_signal(config, rng):
             extra_height = (extra_power_db - _aperiodic_floor_db(aperiodic_params, extra_freq)) / 10
             periodic_params += [extra_freq, extra_height, config["peak_width"]]
 
+    # fooof's gen_noise draws from numpy's unseeded *global* RNG, which would
+    # make the noise realization different on every run (and, under a forked
+    # Pool, correlated across workers) despite the per-trial seed. Route it
+    # through the passed rng instead so the whole sweep is reproducible per
+    # seed. Signature matches gen_noise(freqs, nlv).
+    def _seeded_noise(freqs, nlv):
+        return rng.normal(0.0, nlv, len(freqs))
+
     powers_nz = gen_power_vals_fn(
         freqs_nz,
         ap_kwargs={"aperiodic_params": aperiodic_params},
         pe_kwargs={"periodic_params": periodic_params},
         noise_kwargs={"nlv": config["noise_lv"]},
-        ap_func=gen_aperiodic, pe_func=gen_periodic, noise_func=gen_noise,
+        ap_func=gen_aperiodic, pe_func=gen_periodic, noise_func=_seeded_noise,
     )
     signal = _spectrum_to_signal(n, fs, powers_nz, rng)
 

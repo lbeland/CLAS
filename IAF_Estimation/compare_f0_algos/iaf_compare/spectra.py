@@ -7,6 +7,9 @@ with every taper set up front (computed once in the main process, handed over
 via the Pool initializer) instead of every worker recomputing its own copy
 lazily on first use.
 """
+import numpy as np
+from scipy.signal import welch
+from multitaper import MTSpec
 from multitaper.utils import dpss
 
 
@@ -41,3 +44,25 @@ def precompute_dpss(window_length_secs, fs):
         nw, kspec = _dpss_nw_kspec(wl_sec)
         precomputed[(npts, nw, kspec)] = dpss(npts, nw, kspec)
     return precomputed
+
+def compute_spectra(window, window_length, fs, config):
+    """Periodogram + Welch + multitaper PSDs for one window. window_length is
+    taken as a separate argument rather than len(window) since the caller's
+    intended window_length (== config["window_length_sec"] * fs) can exceed
+    len(window) itself when the signal is shorter than the nominal window."""
+    nperseg = int(min(window_length, 2 * fs))
+    freq_bins_welch, psd_welch = welch(window, fs=fs, nperseg=nperseg, noverlap=None)
+
+    freq_bins = np.fft.rfftfreq(window_length, 1 / fs)
+    X = np.fft.rfft(window, n=window_length)
+    # Periodogram PSD: |X|^2 / (fs * N) — matches Welch units (power per Hz)
+    psd = (np.abs(X) ** 2) / (fs * window_length)
+    psd[1:-1] *= 2  # Correct for dropping negative freqs in one-sided spectrum (except DC and Nyquist)
+
+    nw, kspec = _dpss_nw_kspec(config["window_length_sec"])
+    vn, lamb = _cached_dpss(window_length, nw, kspec)  # pre-seeded by the Pool initializer
+
+    mt = MTSpec(window, nw=nw, kspec=kspec, dt=1 / fs, vn=vn, lamb=lamb)
+    freq_mt, psd_mt = mt.rspec()
+
+    return psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, freq_mt

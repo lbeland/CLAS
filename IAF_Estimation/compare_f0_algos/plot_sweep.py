@@ -62,6 +62,19 @@ def with_display_names(df, column="algorithm"):
 # comparison table (and everywhere else all 5 algorithms are listed together).
 ALGO_KEYS = ["Maximum", "FOOOF", "RestingIAF", "alpha_fast", "alpha_fast_mt"]
 
+# Same fixed order, but with display names applied -- for reindexing tables that
+# are assembled via groupby (which would otherwise sort them alphabetically).
+ALGO_KEYS_DISPLAY = [DISPLAY_NAMES.get(k, k) for k in ALGO_KEYS]
+
+
+def order_by_algo(df):
+    """Reindex a DataFrame whose index is the (display-name) "algorithm" into
+    the fixed ALGO_KEYS order. Algorithms missing from the frame are skipped;
+    any not in ALGO_KEYS are kept, appended in their existing order."""
+    order = [a for a in ALGO_KEYS_DISPLAY if a in df.index]
+    order += [a for a in df.index if a not in order]
+    return df.reindex(order)
+
 
 def _fmt_value(val):
     if isinstance(val, float):
@@ -69,10 +82,14 @@ def _fmt_value(val):
     return str(val)
 
 
-def _fmt_mean_std(mean_val, std_val):
+def _fmt_mean_std(mean_val, std_val, bold=False):
     if pd.isna(mean_val):
         return "--"
-    return rf"${mean_val:.2f} \pm {std_val:.2f}$"
+    body = rf"{mean_val:.2f} \pm {std_val:.2f}"
+    # \mathbf bolds the digits; \pm stays rendered (math symbols are unaffected
+    # by \mathbf but still print), so no extra package is needed in the thesis
+    # preamble.
+    return rf"$\mathbf{{{body}}}$" if bold else rf"${body}$"
 
 
 def save_mae_summary_latex(summary_df, out_path, window_length_sec):
@@ -81,19 +98,25 @@ def save_mae_summary_latex(summary_df, out_path, window_length_sec):
     table = summary_df.reset_index().rename(columns={"algorithm": "Algorithm"})
     latex = table.to_latex(
         index=False, escape=False, float_format="%.2f",
-        caption=f"MAE summary (Hz), window length = {window_length_sec}\\,s",
+        caption=f"MAE summary [Hz], window length = {window_length_sec}\\,s",
         label=f"tab:mae_summary_wl{window_length_sec}",
     )
+    # to_latex omits \centering, so the tabular floats flush-left -- add it.
+    latex = latex.replace(r"\begin{table}", "\\begin{table}\n\\centering", 1)
     out_path.write_text(latex)
 
 
 def save_big_comparison_table(df_metrics, wl_filter, sweeps, param_names, out_path, window_length_sec):
     """One row block per swept parameter (as in ``sweeps``), one row per
-    tested value, columns = all 5 algorithms, cells = MAE mean +/- std [Hz]
-    -- each cell pulled straight from df_metrics's pre-pooled "mae"/"std"
-    columns (already averaged across every seed of that single condition), so
+    tested value, columns = all 5 algorithms. Each cell is that single
+    condition's MAE +/- the std of its per-seed absolute errors [Hz], both
+    pulled straight from df_metrics's pre-pooled "mae"/"std" columns (computed
+    over every seed of that one condition -- NOT a mean over several MAEs), so
     no need to re-load per-seed samples. Every other param stays pinned at
     wl_filter's value (== default_filter, matching the "Effect of X" plots).
+
+    The algorithm with the lowest MAE in each row is set in bold (ties broken
+    by ALGO_KEYS order; an all-"--" row has nothing to bold).
     """
     algo_headers = [DISPLAY_NAMES.get(k, k) for k in ALGO_KEYS]
     col_spec = "ll" + "c" * len(ALGO_KEYS)
@@ -101,8 +124,8 @@ def save_big_comparison_table(df_metrics, wl_filter, sweeps, param_names, out_pa
     lines = [
         r"\begin{table}[ht]",
         r"\centering",
-        rf"\caption{{MAE mean $\pm$ std [Hz] by algorithm, per swept parameter"
-        rf" (window length = {window_length_sec}\,s)}}",
+        rf"\caption{{MAE $\pm$ std of the absolute error [Hz], by algorithm and"
+        rf" swept-parameter value (window length = {window_length_sec}\,s)}}",
         rf"\label{{tab:big_comparison_wl{window_length_sec}}}",
         rf"\begin{{tabular}}{{{col_spec}}}",
         r"\toprule",
@@ -114,15 +137,19 @@ def save_big_comparison_table(df_metrics, wl_filter, sweeps, param_names, out_pa
         param_label = param_names.get(param, param)
         base_filter = params_excluding(wl_filter, param)
         for i, val in enumerate(values):
-            row_cells = []
+            stats = []
             for algo in ALGO_KEYS:
                 sub = filter_df(df_metrics, **{**base_filter, param: val, "algorithm": algo})
                 if sub.empty:
-                    row_cells.append("--")
+                    stats.append((np.nan, np.nan))
                 else:
-                    mae_hz = sub["mae"].iloc[0]
-                    std_hz = sub["std"].iloc[0]
-                    row_cells.append(_fmt_mean_std(mae_hz, std_hz))
+                    stats.append((sub["mae"].iloc[0], sub["std"].iloc[0]))
+
+            maes = np.array([m for m, _ in stats], dtype=float)
+            best_idx = int(np.nanargmin(maes)) if not np.all(np.isnan(maes)) else -1
+
+            row_cells = [_fmt_mean_std(m, s, bold=(k == best_idx))
+                         for k, (m, s) in enumerate(stats)]
             row_label = param_label if i == 0 else ""
             lines.append(f"{row_label} & {_fmt_value(val)} & " + " & ".join(row_cells) + r" \\")
 
@@ -147,6 +174,7 @@ def print_detection_table(df_metrics, **filter_kwargs):
 
     grouped.columns = ["Miss/FN (%)", "False alarm/FP (%)", "Correct rejection (%)", "MAE"]
     grouped = grouped[["MAE", "Miss/FN (%)", "False alarm/FP (%)", "Correct rejection (%)"]]
+    grouped = order_by_algo(grouped)
 
     print("\n=== Detection Rates ===")
     print(f"Filter: {filter_kwargs}  |  Conditions matched: {df['condition_id'].nunique()}\n")
@@ -187,13 +215,18 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
         palette = sns.color_palette(n_colors=df[hue].nunique(), palette=PALETTE)
 
         # --- Timeseries panel ---
+        # Each window is a *centered* crop of one shared parent signal
+        # (iaf_compare.pipeline.run_window_analysis), so the shorter windows are
+        # exactly nested in the longer ones about their common midpoint. Plot
+        # every trace on a center-referenced time axis (t = 0 at the midpoint)
+        # so those nested windows overlay instead of being left-shifted apart.
         timeseries = load_timeseries_by_hue(hdf_path, df, hue)
         for (hue_val, ts), color in zip(timeseries.items(), palette):
             fs = df[df[hue] == hue_val]["fs"].iloc[0]
-            t = np.arange(len(ts)) / fs
+            t = (np.arange(len(ts)) - len(ts) / 2) / fs
             ax_ts.plot(t, ts, color=color, linewidth=0.8,
                        label=str(hue_val), alpha=0.85)
-        ax_ts.set_xlabel("Time [s]")
+        ax_ts.set_xlabel("Time [s], centered")
         ax_ts.set_ylabel("Amplitude")
         ax_ts.set_title("(a)")
 
@@ -284,15 +317,15 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
                 except KeyError:
                     fail_rate = np.nan
 
-                if pd.notna(fail_rate):
-                    label_x = xtick_pos[x_val] + hue_offset[hue_val]
-                    ax_box.text(
-                        label_x, y_offset,
-                        f"{int(fail_rate)}"+r"\%",
-                        ha="center", va="bottom",
-                        fontsize=7, fontweight="bold",
-                        color="red" if fail_rate == 100 else "black"
-                    )
+                # if pd.notna(fail_rate):
+                #     label_x = xtick_pos[x_val] + hue_offset[hue_val]
+                #     ax_box.text(
+                #         label_x, y_offset,
+                #         f"{int(fail_rate)}"+r"\%",
+                #         ha="center", va="bottom",
+                #         fontsize=7, fontweight="bold",
+                #         color="red" if fail_rate == 100 else "black"
+                #     )
 
         fig.legend(handles, labels, loc="lower center", ncol=len(hue_order),
                    bbox_to_anchor=(0.5, 0.0), frameon=True, title=hue.replace("_", " "))
@@ -310,13 +343,13 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
             except KeyError:
                 fail_rate = np.nan
 
-            if pd.notna(fail_rate):
-                ax_box.text(
-                    xtick_pos[x_val], y_offset,
-                    f"{int(fail_rate)}"+r"\%",
-                    ha="center", va="bottom",
-                    fontsize=7, fontweight="bold"
-                )
+            # if pd.notna(fail_rate):
+            #     ax_box.text(
+            #         xtick_pos[x_val], y_offset,
+            #         f"{int(fail_rate)}"+r"\%",
+            #         ha="center", va="bottom",
+            #         fontsize=7, fontweight="bold"
+            #     )
 
     ax_box.set_xlabel("")
     ax_box.set_ylabel(y + " [Hz]")
@@ -331,6 +364,61 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
     stem = save_name or hue
     # plt.savefig(FIGURE_DIR / f"{stem}.pgf", dpi=300, bbox_inches="tight")
     plt.savefig(FIGURE_DIR / f"{stem}.pdf", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_condition_spectra(df_metrics, hdf_path, base_filter, sweeps, param_names,
+                           save_name="condition_spectra", freq_max=30,
+                           alpha_band=None):
+    """3x2 grid of input spectra (no estimator results): one panel per swept
+    parameter, each overlaying the stored example PSD for every tested value of
+    that parameter while every other parameter stays pinned at ``base_filter``
+    -- the same condition slicing as the "Effect of X" box plots, but showing
+    what the algorithms actually see.
+
+    The traces are the single-seed example Welch PSD saved per condition in the
+    HDF5 store (iaf_compare.io_hdf5.write_results / pipeline.run_window_analysis),
+    not a seed-average.
+    """
+    params = list(sweeps)
+    nrows, ncols = 3, 2
+    assert len(params) <= nrows * ncols, \
+        f"{len(params)} swept params won't fit a {nrows}x{ncols} grid"
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(FIG_WIDTH, FIG_WIDTH * 1.15),
+                             sharex=True)
+    axes = axes.ravel()
+
+    for ax, param in zip(axes, params):
+        df_panel = filter_df(df_metrics, **params_excluding(base_filter, param))
+        # dict: param value -> (freq_bins, psd), one example condition per value
+        spectra = load_spectra_by_hue(hdf_path, df_panel, param)
+        palette = sns.color_palette(n_colors=max(len(spectra), 1), palette=PALETTE)
+
+        # if alpha_band is not None:
+        #     ax.axvspan(*alpha_band, color="0.85", alpha=0.5, zorder=0, lw=0)
+
+        for (hue_val, (freq_bins, psd)), color in zip(sorted(spectra.items()), palette):
+            mask = freq_bins <= freq_max
+            ax.semilogy(freq_bins[mask][1:], psd[mask][1:], color=color,
+                        linewidth=1.2, alpha=0.6, label=_fmt_value(hue_val))
+
+        ax.set_title(param_names.get(param, param), fontsize=9)
+        ax.grid(alpha=0.3)
+        if spectra:
+            ax.legend(fontsize=8, loc="upper right", frameon=True,
+                    labelspacing=0.3, framealpha=0.8)
+
+    for ax in axes[len(params):]:      # blank any unused cell (none at 6 params)
+        ax.set_visible(False)
+    for ax in axes[len(params) - ncols:len(params)]:
+        ax.set_xlabel("Frequency [Hz]")
+    for ax in axes[::ncols]:
+        ax.set_ylabel(r"$\log_{10}$(Power)")
+
+    fig.tight_layout()
+    fig.savefig(FIGURE_DIR / f"{save_name}.pdf", dpi=300, bbox_inches="tight")
+    fig.savefig(FIGURE_DIR / f"{save_name}.pgf", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -465,10 +553,11 @@ def main():
             save_name=f"{prefix}_all_conditions",
         )
 
-        summary = (with_display_names(filter_df(df_metrics, **pooled_filter))
-                   .groupby("algorithm")["mae"]
-                   .agg(["median", "mean", "std"])
-                   .round(4))
+        summary = order_by_algo(
+            with_display_names(filter_df(df_metrics, **pooled_filter))
+            .groupby("algorithm")["mae"]
+            .agg(["median", "mean", "std"])
+            .round(4))
         print(f"\n=== MAE Summary (in Hz), window_length_sec={window_length_sec} ===")
         print(summary.to_string())
         save_mae_summary_latex(summary, TABLE_DIR / f"mae_summary_wl{window_length_sec}.tex",
@@ -479,6 +568,13 @@ def main():
             TABLE_DIR / f"big_comparison_wl{window_length_sec}.tex",
             window_length_sec,
         )
+        if window_length_sec == 10:
+            # Input spectra (not results) for every swept parameter, one 3x2 figure.
+            plot_condition_spectra(
+                df_metrics, HDF_PATH, wl_filter, config.SWEEPS, config.name_dict,
+                save_name=f"{prefix}_condition_spectra",
+                alpha_band=tuple(config.FIXED["alpha_band"]),
+            )
 
 
 if __name__ == "__main__":

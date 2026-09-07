@@ -7,6 +7,11 @@ Layout::
         <param attrs...>
         spectrum_psd, spectrum_freq_bins, first_window, ground_truth
         <algo>/estimates, <algo>/errors, <algo>.attrs = pooled metrics
+
+``spectrum_psd`` / ``spectrum_freq_bins`` is one example spectrum per condition
+(first seed encountered) -- the Welch PSD, as chosen in
+``pipeline.run_window_analysis`` (smoother than the raw periodogram for the
+spectrum panels); ``first_window`` is that same seed's time-domain window.
 """
 import numpy as np
 import pandas as pd
@@ -43,7 +48,8 @@ def write_results(all_results, out_path=RESULTS_H5):
             samples = algo_samples.setdefault(algo, {"est": [], "gt": []})
             samples["est"].append(float(est_pf))
             samples["gt"].append(gt)
-        example_by_condition.setdefault(condition_key, spectrum_info)
+        if spectrum_info is not None:  # only seed 0 carries the example arrays
+            example_by_condition.setdefault(condition_key, spectrum_info)
         gt_by_condition.setdefault(condition_key, gt)
 
     with h5py.File(out_path, "w") as hf:
@@ -60,7 +66,13 @@ def write_results(all_results, out_path=RESULTS_H5):
                 else:
                     grp.attrs[k] = v if v is not None else "none"
 
-            (freq_bins, psd), first_window = example_by_condition[condition_key]
+            example = example_by_condition.get(condition_key)
+            if example is None:
+                raise RuntimeError(
+                    f"No example spectrum for condition {dict(condition_key)} -- "
+                    "seed 0 must be present in all_results (it carries the example "
+                    "arrays; see process_condition).")
+            (freq_bins, psd), first_window = example
             grp.create_dataset("spectrum_psd",       data=psd,          compression="gzip")
             grp.create_dataset("spectrum_freq_bins", data=freq_bins,    compression="gzip")
             grp.create_dataset("first_window",       data=first_window, compression="gzip")

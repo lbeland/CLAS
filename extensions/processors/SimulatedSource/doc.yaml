@@ -1,0 +1,111 @@
+Description: Simulates a data source (modulated sine wave with configurable imperfections)
+Output ports:
+  - name: data
+    type: MultiChannelType<double>
+    slots: 1
+    description: Generated signal, nchannels x nsamples, plus independent white noise per channel.
+  - name: meta
+    type: MultiChannelType<double>
+    slots: 1
+    description: Ground truth per packet as [amplitude, theta, inst_freq]. Set to NaN during burst-OFF segments.
+
+Options:
+  - name: path
+    type: string
+    default: "run://"
+    description: Path (server-side) where to save data.
+  - name: fs
+    type: double
+    default: 10000.0
+    description: Sample frequency (Hz).
+  - name: carrier_amplitude
+    type: double
+    default: 3.0
+    description: Carrier signal amplitude.
+  - name: carrier_frequency
+    type: double
+    default: 8.0
+    description: Carrier signal frequency (Hz).
+  - name: modulation_type
+    type: string
+    default: phase
+    description: >
+      Mutually exclusive signal mode: none | amplitude | phase | phase_jump | freq_step | chirp.
+      none/amplitude/phase use modulation_amplitude + modulation_frequency;
+      phase_jump/freq_step use mod_period_s (+ phase_jump_angle / freq_step_size);
+      chirp uses chirp_slope.
+  - name: modulation_amplitude
+    type: double
+    default: 1.0
+    description: amplitude/phase mode - modulation depth.
+  - name: modulation_frequency
+    type: double
+    default: 0.1
+    description: amplitude/phase mode - modulation rate (Hz).
+  - name: mod_period_s
+    type: double
+    default: 5.0
+    description: >
+      phase_jump / freq_step mode - length (s) of each unperturbed segment. The perturbation
+      toggles on and off (alternating) at every multiple of this period.
+  - name: phase_jump_angle
+    type: double
+    default: 3.14159265358979
+    description: phase_jump mode - phase offset (rad) applied to the carrier while toggled on.
+  - name: freq_step_size
+    type: double
+    default: 1.0
+    description: freq_step mode - frequency offset (Hz) added to the carrier while toggled on.
+  - name: chirp_slope
+    type: double
+    default: 0.0
+    description: chirp mode - linear carrier-frequency slope (Hz/s), applied continuously from t=0.
+  - name: noise_color
+    type: string
+    default: white
+    description: >
+      Additive noise colour: white | pink. white = Gaussian; pink = incremental
+      Voss-McCartney 1/f. Independent per channel.
+  - name: snr_db
+    type: double
+    default: 20.0
+    description: >
+      In-band SNR in dB: 10*log10(P_carrier / P_noise_in_band), with
+      P_carrier = carrier_amplitude^2 / 2 and P_noise_in_band the noise power within
+      [carrier_frequency +/- noise_band_hz/2]. White noise is scaled analytically
+      (flat PSD); pink noise uses an ideal 1/f model for the in-band fraction, so the
+      realised SNR is accurate to roughly +/-1 dB.
+  - name: noise_band_hz
+    type: double
+    default: 4.0
+    description: Width (Hz) of the band around carrier_frequency in which snr_db is defined.
+  - name: burst_on_s
+    type: double
+    default: 1.0
+    description: Bursty signal - duration (s) of each ON segment.
+  - name: burst_off_s
+    type: double
+    default: 0.0
+    description: >
+      Bursty signal - duration (s) of each OFF segment. 0 = signal always on.
+      During OFF segments the signal is silenced (white noise only) and the
+      meta ground truth is set to NaN. iaf broadcaster holds its last valid value.
+  - name: nchannels
+    type: int
+    default: 10
+    description: Number of channels to generate.
+  - name: nsamples
+    type: int
+    default: 1
+    description: Number of samples per packet.
+  - name: n_messages
+    type: int
+    default: -1
+    description: Number of packets to generate (-1 = infinite).
+  - name: inter_packet_sleep
+    type: bool
+    default: true
+    description: >
+      When true (default), sleep between packets so output is paced at the real-time
+      sample rate. When false, generate packets as fast as possible with no
+      inter-packet sleep.

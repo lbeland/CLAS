@@ -1,0 +1,51 @@
+Description: Receives EEG + AUX data from the Turbolink hardware client over UDP (listens on
+  port 25000) and republishes it as data streams. Performs a start-time calibration over
+  calib_packets packets (minimum observed transit delay = timing floor), then continuously
+  tracks the true sample rate with a Recursive-Least-Squares clock model (exponential
+  forgetting) and emits drift-corrected hardware timestamps. Missing packets are detected and
+  gap-filled with the last known values.
+
+Output ports:
+  - name: eeg
+    type: MultiChannelType <double>
+    slots: 1
+    description: EEG channels (nchannels x nsamples).
+  - name: aux
+    type: MultiChannelType <double>
+    slots: 1
+    description: 8 AUX channels + 1 trigger channel (9 total); zero-filled unless store_aux is true.
+
+Options:
+  - name: fs
+    type: double
+    default: 1000
+    description: Nominal sample frequency of the Turbolink client (Hz).
+  - name: nchannels
+    type: int
+    default: 32
+    description: Number of EEG channels to receive (max 32 in the wire packet).
+  - name: nsamples
+    type: int
+    default: 1
+    description: Number of samples per packet.
+  - name: n_messages
+    type: int
+    default: -1
+    description: Number of packets to receive before stopping. -1 = infinite.
+  - name: store_aux
+    type: bool
+    default: true
+    description: Forward auxiliary (AUX + trigger) data on the aux port.
+  - name: calib_packets
+    type: int
+    default: 10000
+    description: Number of packets used for initial start-time calibration
+      (at 10 kHz, 10000 packets is ~1 s of startup delay).
+  - name: fs_tau_s
+    type: double
+    default: 15.0
+    description: Time constant (s) of the RLS forgetting factor for continuous true-fs tracking.
+  - name: recal_warmup_s
+    type: double
+    default: 60.0
+    description: Duration (s) of the RLS warm-up; below this, lambda = 1 (no forgetting).

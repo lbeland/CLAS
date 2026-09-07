@@ -1,2 +1,0 @@
-ADD_LIBRARY(ReplaySourceClient "ReplaySourceClient.cpp")
-TARGET_LINK_LIBRARIES(ReplaySourceClient utilities)

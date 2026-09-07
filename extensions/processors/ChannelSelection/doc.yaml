@@ -1,0 +1,38 @@
+Description: Selects the channel with the strongest recent signal (weighted-RMS / EMA) and
+  broadcasts its index to downstream processors. When the RMS of the active channel drops
+  below a threshold, it switches to the channel with the highest RMS.
+
+Input port:
+  - name: in
+    type: MultiChannelType <double>
+    slots: 1-256
+    description: EEG data stream. Only the first sample of each selected channel is used.
+
+Output port:
+  - name: out
+    type: ScalarType <unsigned int>
+    slots: 1-256
+    description: Currently selected channel index (1-based), one value per input packet.
+
+Shared state:
+  - name: ch_idx
+    type: broadcaster <unsigned int>
+    description: Currently selected channel index (0-based) shared with downstream processors.
+
+Options:
+  - name: n_messages
+    type: int
+    default: -1
+    description: Number of packets to receive before stopping. -1 = infinite.
+  - name: channel_indices
+    type: list of int
+    default: [] (empty - consider every input channel)
+    description: Comma-separated list of channel indices to select from (1-based).
+  - name: rms_window_seconds
+    type: double
+    default: 5.0
+    description: Length of the exponential RMS window in seconds (recent samples get higher weights).
+  - name: rms_threshold_uv
+    type: double
+    default: 2.0
+    description: RMS threshold in microvolts for switching channels (lower = more sensitive).

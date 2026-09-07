@@ -1,6 +1,6 @@
 """
 runtime_metadata.h5: pipeline-internal data that has no business in a
-generic, tool-agnostic EDF (raw hardware timestamps, online IAF/phase/
+generic, tool-agnostic EDF (raw hardware timestamps, online f0/phase/
 filter estimates, the selected-channel index, simulation-only ground
 truth). Written once alongside raw_signals.edf (see edf_io.py) and read
 back on every later run.
@@ -20,7 +20,7 @@ import numpy as np
 
 ONLINE_FIELDS = {
     "StimControl":  "stimulus",
-    "FrequencyEstimation":        "iaf",
+    "FrequencyEstimation":        "f0",
     "PhaseEstimation_phase": "phase",
     "ecHTFilter":           "filt",
     "ChannelSelection":      "channel_idx",

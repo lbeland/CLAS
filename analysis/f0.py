@@ -1,5 +1,5 @@
 """
-Individual alpha frequency (IAF) estimation.
+Fundamental frequency (f0) estimation.
 """
 
 import numpy as np
@@ -122,8 +122,8 @@ def combine_simple(psd, freq_bins, config):
     return est_pf, [slope, intercept]
 
 
-def estimate_iaf(raw: np.ndarray, fs: float) -> list:
-    """Estimate IAF from the raw signal. Returns a list of per-window estimates."""
+def estimate_f0(raw: np.ndarray, fs: float) -> list:
+    """Estimate f0 from the raw signal. Returns a list of per-window estimates."""
     config = {"alpha_band": (5, 18), "freq_range": (0.01, 30.0)}
 
     if len(raw) / fs > 30:
@@ -132,7 +132,7 @@ def estimate_iaf(raw: np.ndarray, fs: float) -> list:
         last_start = len(raw) - window_samples
         if not starts or starts[-1] != last_start:
             starts.append(last_start)  # cover the trailing remainder instead of dropping it
-        iaf_windowed = []
+        f0_windowed = []
         aperiodic_params_windowed = []
         for start in tqdm(starts):
             # freqs, psd = welch(raw[start : start + window_samples], fs=fs, nperseg=int(fs * 10))
@@ -140,10 +140,10 @@ def estimate_iaf(raw: np.ndarray, fs: float) -> list:
             X = np.fft.rfft(raw[start : start + window_samples])
             psd = (np.abs(X) ** 2) / (fs * len(raw[start : start + window_samples]))
             psd[1:-1] *= 2
-            iaf, aperiodic_params = combine_simple(psd, freqs, config)
-            iaf_windowed.append(iaf)
+            f0, aperiodic_params = combine_simple(psd, freqs, config)
+            f0_windowed.append(f0)
             aperiodic_params_windowed.append(aperiodic_params)
-        return iaf_windowed, np.nanmean(np.array(aperiodic_params_windowed), axis=0)  # Return mean aperiodic params across windows, ignoring windows with no approved peak
+        return f0_windowed, np.nanmean(np.array(aperiodic_params_windowed), axis=0)  # Return mean aperiodic params across windows, ignoring windows with no approved peak
     
     else:
         # freqs, psd = welch(raw, fs=fs, nperseg=int(fs * 30))
@@ -151,17 +151,17 @@ def estimate_iaf(raw: np.ndarray, fs: float) -> list:
         X = np.fft.rfft(raw)
         psd = (np.abs(X) ** 2) / (fs * len(raw))
         psd[1:-1] *= 2
-        iaf, aperiodic_params = combine_simple(psd, freqs, config)
-    return [iaf], np.array(aperiodic_params)
+        f0, aperiodic_params = combine_simple(psd, freqs, config)
+    return [f0], np.array(aperiodic_params)
         
 
-def estimate_iaf_with_phase(hilbert_phase: np.ndarray, fs: float, f0: float) -> np.ndarray:
+def estimate_f0_with_phase(hilbert_phase: np.ndarray, fs: float, f0: float) -> np.ndarray:
     """
-    Estimate IAF from the instantaneous phase of the Hilbert transform, using the
+    Estimate f0 from the instantaneous phase of the Hilbert transform, using the
     multi-order median filtering ("frequency sliding") technique of Cohen: the
     noisy instantaneous frequency is median filtered at 10 window sizes spanning
     10-400 ms, and the median across those filtered estimates is taken as the
-    final IAF time series.
+    final f0 time series.
     """
     inst_freq = np.diff(np.unwrap(hilbert_phase), prepend=f0) * fs / (2 * np.pi)
 

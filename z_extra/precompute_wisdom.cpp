@@ -48,7 +48,7 @@ static const double F0_MAX  = 16.0;
 static const double F0_STEP =  0.1;
 
 // window_size_sec used by FrequencyEstimation (see TurboLinkCLAS/ERPCLAS/ReplayCLAS.yaml).
-static const double IAF_WINDOW_SIZE_SEC = 10.0;
+static const double F0_WINDOW_SIZE_SEC = 10.0;
 
 // FFTW planner flag.  Use FFTW_MEASURE for thorough wisdom; FFTW_PATIENT is
 // slower but produces even better plans.  FFTW_ESTIMATE skips measurement
@@ -179,9 +179,9 @@ int main()
     //    sizing rule from PhaseEstimation (window_size_sec * fs, not f0-based),
     //    so it is not covered by the sweep above and must be planned here.
     {
-        int n = static_cast<int>(good_size_real(static_cast<size_t>(IAF_WINDOW_SIZE_SEC * FS)));
+        int n = static_cast<int>(good_size_real(static_cast<size_t>(F0_WINDOW_SIZE_SEC * FS)));
         printf("[FrequencyEstimation] Planning n_fft = %d (window_size_sec=%.1f, fs=%.1f) ...\n",
-               n, IAF_WINDOW_SIZE_SEC, FS);
+               n, F0_WINDOW_SIZE_SEC, FS);
 
         double*       real_buf = fftw_alloc_real(n);
         fftw_complex* half_buf = fftw_alloc_complex(n / 2 + 1);

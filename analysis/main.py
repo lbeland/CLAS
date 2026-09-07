@@ -19,19 +19,19 @@ from scipy.stats import circmean, circstd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from analysis.loader       import load_processor_signals, analyse_latencies, extract_ground_truth
-from analysis.iaf          import estimate_iaf, estimate_iaf_with_phase
+from analysis.f0          import estimate_f0, estimate_f0_with_phase
 from analysis.core         import compute_hilbert_reference, compute_errors, compute_jade_errors
 from analysis.edf_io       import write_raw_signals_edf, load_runtime, write_analysis_edf
 from analysis.runtime_meta import write_runtime_metadata
 from analysis.plot         import plot_errors, plot_spectrum, plot_time_series, \
-                                  plot_iaf, plot_snr_sweep, get_erp_windows, plot_erp_latency, \
+                                  plot_f0, plot_snr_sweep, get_erp_windows, plot_erp_latency, \
                                   load_stim_annotations
 
 
 @dataclass
 class RecordingAnalysis:
     """Everything derived from one results folder: the loaded (or cached)
-    recording plus the offline IAF/Hilbert/error analysis of it. Shared by
+    recording plus the offline f0/Hilbert/error analysis of it. Shared by
     analyse_results() (which additionally plots/exports it) and
     compute_recording_errors() (which just wants .errors)."""
     graph_file:       str
@@ -46,15 +46,15 @@ class RecordingAnalysis:
     filtered:         np.ndarray
     hilbert_phase:    np.ndarray
     X_white:          "np.ndarray | None"
-    iaf_continuous:   np.ndarray
+    f0_continuous:   np.ndarray
     errors:           list[dict]
     stim_ref:         "np.ndarray | None"
 
 
 def load_and_analyse(f0: float, results_dir: str) -> "RecordingAnalysis | None":
     """Load one results folder (from cache if available, else the raw .bin
-    files) and run the offline analysis on it: IAF estimate, Hilbert
-    reference, phase/IAF/stimulus-edge errors. Returns None if the folder
+    files) and run the offline analysis on it: f0 estimate, Hilbert
+    reference, phase/f0/stimulus-edge errors. Returns None if the folder
     can't be loaded (no graph config / no source signal)."""
     graph_files = glob.glob(os.path.join(results_dir, "*.yaml"))
     if not graph_files:
@@ -89,18 +89,18 @@ def load_and_analyse(f0: float, results_dir: str) -> "RecordingAnalysis | None":
         write_raw_signals_edf(raw_edf_path, fs, samples, ground_truth, annotations=annotations)
         write_runtime_metadata(meta_h5_path, fs, samples, ground_truth)
 
-    # Estimate IAF offline on the full recording
-    iaf, aperiodic_params = estimate_iaf(ground_truth["raw"], fs)
-    if np.all(~np.isfinite(iaf)):
-        print("Could not estimate IAF from ground truth; using default f0 =", f0)
+    # Estimate f0 offline on the full recording
+    f0_windows, aperiodic_params = estimate_f0(ground_truth["raw"], fs)
+    if np.all(~np.isfinite(f0_windows)):
+        print("Could not estimate f0 from ground truth; using default f0 =", f0)
     else:
-        f0 = float(np.nanmean(iaf))
-        print(f"Estimated IAFs on 30-second windows: mean={f0:.2f} Hz, all={iaf}")
+        f0 = float(np.nanmean(f0_windows))
+        print(f"Estimated f0 on 30-second windows: mean={f0:.2f} Hz, all={f0_windows}")
 
     # Offline Hilbert reference
     raw = ground_truth["raw"]
     filtered, hilbert_phase, X_white = compute_hilbert_reference(raw, fs, f0, aperiodic_params=aperiodic_params)
-    iaf_continuous = estimate_iaf_with_phase(hilbert_phase, fs, f0)
+    f0_continuous = estimate_f0_with_phase(hilbert_phase, fs, f0)
 
     # Compute errors (compute_errors also builds a per-onset ECHT phase
     # reference from `filtered` for the "Stim onset error (ECHT)" series)
@@ -118,7 +118,7 @@ def load_and_analyse(f0: float, results_dir: str) -> "RecordingAnalysis | None":
         graph_file=graph_file, graph_config=graph_config, fs=fs,
         samples=samples, ground_truth=ground_truth, annotations=annotations,
         f0=f0, aperiodic_params=aperiodic_params, raw=raw, filtered=filtered,
-        hilbert_phase=hilbert_phase, X_white=X_white, iaf_continuous=iaf_continuous,
+        hilbert_phase=hilbert_phase, X_white=X_white, f0_continuous=f0_continuous,
         errors=errors, stim_ref=stim_ref,
     )
 
@@ -140,15 +140,15 @@ def analyse_results(f0: float, results_dir: str, show: bool = True) -> None:
     # Export analysis outputs to EDF (cheap; rebuilt every run from the cached runtime signals)
     analysis_path = os.path.join(results_dir, "analysis.edf")
     write_analysis_edf(analysis_path, analysis.fs, analysis.ground_truth, analysis.samples,
-                        analysis.filtered, analysis.hilbert_phase, analysis.iaf_continuous,
+                        analysis.filtered, analysis.hilbert_phase, analysis.f0_continuous,
                         analysis.stim_ref, annotations=analysis.annotations)
 
     # Plot errors
     plot_errors(analysis.errors, plot_time=False)
 
-    # IAF time series
+    # f0 time series
     start_ts = analysis.ground_truth["time"][0]
-    plot_iaf(analysis.ground_truth, analysis.iaf_continuous, analysis.samples, start_ts)
+    plot_f0(analysis.ground_truth, analysis.f0_continuous, analysis.samples, start_ts)
 
     # Plot spectrum
     plot_spectrum(analysis.raw, analysis.samples, analysis.filtered, analysis.fs,
@@ -201,7 +201,7 @@ def analyse_all_results(f0: float = 10, base_dir: str = "results") -> None:
 
 
 def compute_recording_errors(f0: float, results_dir: str) -> list[dict]:
-    """Load one results folder and compute its phase/IAF/stimulus-edge
+    """Load one results folder and compute its phase/f0/stimulus-edge
     errors, without writing files or plotting. Returns [] if the folder
     can't be loaded or has no source signal."""
     analysis = load_and_analyse(f0, results_dir)
@@ -220,7 +220,7 @@ def find_session_run_dirs(base_dir: str = "results", session_glob: str = "CLAS_*
 
 
 def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str = "results", session_glob: str = "CLAS_*") -> None:
-    """Pool phase/IAF/stimulus-edge errors across every recording nested
+    """Pool phase/f0/stimulus-edge errors across every recording nested
     under every session folder matching session_glob (e.g. every
     results/CLAS_*/<run>), and plot them exactly like analyse_results() does
     for a single recording (time series + polar histograms) -- but combined

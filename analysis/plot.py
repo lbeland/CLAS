@@ -270,11 +270,11 @@ def plot_snr_sweep(sweep_data: dict[str, list[dict]], output_name: str = "snr_sw
 
 
 # ---------------------------------------------------------------------------
-# IAF time series
+# f0 time series
 # ---------------------------------------------------------------------------
 
-def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, start_ts: float, output_name: str = "iaf_timeseries") -> None:
-    """Plot estimated IAF over time with true IAF overlaid; adds error subplot when truth is known."""
+def plot_f0(ground_truth: dict, f0_continuous: np.ndarray, samples: dict, start_ts: float, output_name: str = "f0_timeseries") -> None:
+    """Plot estimated f0 over time with true f0 overlaid; adds error subplot when truth is known."""
     has_estimated = samples.get("FrequencyEstimation") is not None
     has_true      = ground_truth.get("true_inst_freq") is not None
     if not has_estimated and not has_true:
@@ -292,25 +292,25 @@ def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, star
     time_s = (ground_truth["time"] - start_ts) / 1e6
     if has_true:
         ax.plot(time_s, ground_truth["true_inst_freq"],
-                linewidth=1.5, alpha=0.8, label="True IAF")
+                linewidth=1.5, alpha=0.8, label="True f0")
         if ground_truth.get("true_amplitude") is not None:
             ax_r   = ax.twinx()
             ax_r.plot(time_s, ground_truth["true_amplitude"],
                       linestyle="--", linewidth=1.2, alpha=0.6, color="tab:gray", label="True amplitude")
             ax_r.set_ylabel("Amplitude")
     else:
-        ax.plot(time_s, iaf_continuous, linewidth=1.5, alpha=0.8, label="Estimated IAF (Hilbert)")
+        ax.plot(time_s, f0_continuous, linewidth=1.5, alpha=0.8, label="Estimated f0 (Hilbert)")
 
     if has_estimated:
         x_est   = (samples["FrequencyEstimation"]["x"] - start_ts) / 1e6
-        iaf_est = samples["FrequencyEstimation"]["y"]
-        ax.plot(x_est, iaf_est, "o-", markersize=2.5, linewidth=1.2, label="Estimated IAF")
+        f0_est = samples["FrequencyEstimation"]["y"]
+        ax.plot(x_est, f0_est, "o-", markersize=2.5, linewidth=1.2, label="Estimated f0")
 
         if show_error:
-            true_iaf = ground_truth["true_inst_freq"]
-            n        = min(len(iaf_est), len(true_iaf))
-            error    = iaf_est[:n] - true_iaf[:n]
-            ax_err.plot(x_est[:n], error, linewidth=1.2, color="tab:red", label="IAF error")
+            true_f0 = ground_truth["true_inst_freq"]
+            n        = min(len(f0_est), len(true_f0))
+            error    = f0_est[:n] - true_f0[:n]
+            ax_err.plot(x_est[:n], error, linewidth=1.2, color="tab:red", label="f0 error")
             ax_err.axhline(0, color="0.5", linewidth=0.8, linestyle="--")
             ax_err.axhline(np.nanmean(error), color="tab:red", linewidth=1.0, linestyle=":",
                            label=f"Mean = {np.nanmean(error):.3f} Hz")

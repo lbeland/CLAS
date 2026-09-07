@@ -8,11 +8,11 @@ Each results folder gets three files:
   CLAS-pipeline-specific data. Written once from the processors' .bin
   output.
 - runtime_metadata.h5: everything pipeline-internal that doesn't belong in
-  a generic EDF (raw hardware timestamps, online IAF/phase/filter,
+  a generic EDF (raw hardware timestamps, online f0/phase/filter,
   selected-channel index, simulation-only ground truth). See
   analysis/runtime_meta.py. Written alongside raw_signals.edf.
 - analysis.edf: the offline-analysis outputs (selected-channel raw,
-  offline+online filter/phase/IAF, target+trigger stimulus), for visually
+  offline+online filter/phase/f0, target+trigger stimulus), for visually
   comparing online vs. offline estimates in an EDF viewer. Cheap to
   rebuild every run from the cached raw_signals.edf + runtime_metadata.h5.
 
@@ -180,8 +180,8 @@ def load_runtime(raw_edf_path: str, meta_h5_path: str) -> tuple[dict, dict, "mne
     online = meta["online"]
     if "stimulus" in online:
         samples["StimControl"] = {"x": time, "y": online["stimulus"], "source_ts": source_ts("StimControl")}
-    if "iaf" in online:
-        samples["FrequencyEstimation"] = {"x": time, "y": online["iaf"], "source_ts": source_ts("FrequencyEstimation")}
+    if "f0" in online:
+        samples["FrequencyEstimation"] = {"x": time, "y": online["f0"], "source_ts": source_ts("FrequencyEstimation")}
     if "phase" in online:
         samples["PhaseEstimation_phase"] = {"x": time, "y": online["phase"], "source_ts": source_ts("PhaseEstimation_phase")}
     if "filt" in online:
@@ -212,12 +212,12 @@ def write_analysis_edf(
     samples: dict,
     filtered: np.ndarray = None,
     hilbert_phase: np.ndarray = None,
-    iaf_continuous: np.ndarray = None,
+    f0_continuous: np.ndarray = None,
     stim_ref: np.ndarray = None,
     annotations: "mne.Annotations | None" = None,
 ) -> None:
     """Write the offline-analysis outputs (selected-channel raw, offline/online
-    filter+phase+IAF, target+trigger stimulus) to analysis.edf, for visually
+    filter+phase+f0, target+trigger stimulus) to analysis.edf, for visually
     comparing online vs. offline estimates in an EDF viewer."""
     raw  = ground_truth["raw"]
     time = ground_truth["time"]
@@ -241,10 +241,10 @@ def write_analysis_edf(
     if samples.get("PhaseEstimation_phase") is not None:
         phase_est = np.nan_to_num(samples["PhaseEstimation_phase"]["y"], nan=-2 * np.pi)
         channels.append(("Phase_on", "stim", phase_est[:n]))
-    if iaf_continuous is not None:
-        channels.append(("IAF_off_Hz", "stim", np.nan_to_num(iaf_continuous)[:n]))
+    if f0_continuous is not None:
+        channels.append(("F0_off_Hz", "stim", np.nan_to_num(f0_continuous)[:n]))
     if samples.get("FrequencyEstimation") is not None:
-        channels.append(("IAF_on_Hz", "stim", np.nan_to_num(samples["FrequencyEstimation"]["y"])[:n]))
+        channels.append(("F0_on_Hz", "stim", np.nan_to_num(samples["FrequencyEstimation"]["y"])[:n]))
     if stim_ref is not None:
         channels.append(("Target_Stim", "stim", stim_ref[:n]))
 

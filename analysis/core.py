@@ -10,7 +10,7 @@ from scipy.signal import ellip, butter, firwin, filtfilt, sosfiltfilt, hilbert, 
 from tqdm import tqdm
 
 from .stimulus import StimulusConfig, compute_reference_stimulus, compute_stimulus_edge_errors, get_edges
-from .iaf import combine_simple
+from .f0 import combine_simple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PHASE_estimation.jade import jade_v3
@@ -60,12 +60,12 @@ def compute_hilbert_reference(
     return filtered, np.angle(hilbert(filtered)), X_white
 
 
-_IAF_CONFIG = {"alpha_band": (5, 18), "freq_range": (0.01, 30.0)}
+_F0_CONFIG = {"alpha_band": (5, 18), "freq_range": (0.01, 30.0)}
 
 
 def compute_echt_reference(
     filtered: np.ndarray,
-    iaf: np.ndarray | None,
+    f0_series: np.ndarray | None,
     fs: float,
     eval_idx: np.ndarray,
     freq_window_s: float = 10.0,
@@ -79,7 +79,7 @@ def compute_echt_reference(
     For every sample ``x`` in ``eval_idx``:
 
       1. estimate the dominant alpha frequency ``f0(x)`` with
-         :func:`analysis.iaf.combine_simple` on the periodogram of the
+         :func:`analysis.f0_series.combine_simple` on the periodogram of the
          ``freq_window_s``-second slice of ``filtered`` *centred* on ``x``;
       2. take the calibrated ECHT (see ``IAF_Estimation/cecHT/phase.py``) of
          the ``n_cycles``-cycle slice of ``filtered`` *ending at* ``x``, with
@@ -116,11 +116,11 @@ def compute_echt_reference(
             n_edge += 1
             continue
 
-        if iaf is not None:
-            # Use the local IAF estimate if available, rather than a global
+        if f0_series is not None:
+            # Use the local f0 estimate if available, rather than a global
             # combine_simple() call, to avoid spurious peaks in the periodogram
             # from corrupting the ECHT reference.
-            f0 = iaf[x]
+            f0 = f0_series[x]
             if not np.isfinite(f0):
                 n_nopeak += 1
                 continue
@@ -131,7 +131,7 @@ def compute_echt_reference(
             psd   = (np.abs(X) ** 2) / (fs * len(seg))
             psd[1:-1] *= 2
             try:
-                f0, _ = combine_simple(psd, freqs, _IAF_CONFIG)
+                f0, _ = combine_simple(psd, freqs, _F0_CONFIG)
             except Exception:
                 f0 = np.nan
             if not np.isfinite(f0):
@@ -258,7 +258,7 @@ def compute_errors(
     filtered: "np.ndarray | None" = None,
 ) -> tuple[list[dict], np.ndarray | None]:
     """
-    Compute phase, IAF, and stimulus edge errors.
+    Compute phase, f0, and stimulus edge errors.
     Returns (list of error dicts, stim_ref array or None).
     """
     errors         = []
@@ -286,13 +286,13 @@ def compute_errors(
             errors.append({"label": "Online vs Hilbert", "time_s": t, "values": oh_err,
                            "unit": "degrees", "linestyle": ":"})
 
-    # IAF error
+    # f0 error
     if samples.get("FrequencyEstimation") is not None and true_inst_freq is not None:
         t   = (samples["FrequencyEstimation"]["x"] - start_ts) / 1e6
-        iaf = samples["FrequencyEstimation"]["y"]
-        n   = min(len(iaf), len(true_inst_freq))
-        errors.append({"label": "IAF error", "time_s": t[:n],
-                       "values": iaf[:n] - true_inst_freq[:n], "unit": "Hz"})
+        f0 = samples["FrequencyEstimation"]["y"]
+        n   = min(len(f0), len(true_inst_freq))
+        errors.append({"label": "f0 error", "time_s": t[:n],
+                       "values": f0[:n] - true_inst_freq[:n], "unit": "Hz"})
 
     # Stimulus edge errors
     stim_ref = None
@@ -305,12 +305,12 @@ def compute_errors(
         ref_phase = true_phase if true_phase is not None else hilbert_phase
 
         if true_inst_freq is not None:
-            iaf_y = true_inst_freq
+            f0_y = true_inst_freq
         elif samples.get("FrequencyEstimation") is not None:
-            iaf_y = samples["FrequencyEstimation"]["y"]
+            f0_y = samples["FrequencyEstimation"]["y"]
         else:
-            print("No IAF information available; using constant 10 Hz for stimulus reconstruction.")
-            iaf_y = np.full(len(ground_truth["time"]), 10.0)
+            print("No f0 information available; using constant 10 Hz for stimulus reconstruction.")
+            f0_y = np.full(len(ground_truth["time"]), 10.0)
 
         stim_cfg       = StimulusConfig.from_yaml(graph_config)
         trigger_binary = (trigger_y > 0.5).astype(float)
@@ -318,7 +318,7 @@ def compute_errors(
 
         # Ideal stimulus train -- kept only for visualisation / EDF export;
         # the edge errors below no longer match against it.
-        stim_ref, _, _ = compute_reference_stimulus(ref_phase, iaf_y, fs, stim_cfg)
+        stim_ref, _, _ = compute_reference_stimulus(ref_phase, f0_y, fs, stim_cfg)
         n_ideal  = len(get_edges(stim_ref, "rising"))
         n_actual = len(get_edges(trigger_binary, "rising"))
         if n_actual != n_ideal:
@@ -328,7 +328,7 @@ def compute_errors(
         # scored against the offline Hilbert/true reference and -- for onsets
         # only -- also against the per-onset ECHT reference (compute_echt_reference).
         onset_err, offset_err = compute_stimulus_edge_errors(
-            trigger_binary, time_us, ref_phase, iaf_y, stim_cfg, start_ts)
+            trigger_binary, time_us, ref_phase, f0_y, stim_cfg, start_ts)
         if onset_err is not None:
             errors.append({"label": "Stim onset error",
                            "time_s": onset_err["time_s"], "values": onset_err["values"],
@@ -340,10 +340,10 @@ def compute_errors(
 
         if filtered is not None:
             filt_signal = filtered
-            iaf = iaf_y if samples.get("FrequencyEstimation") is not None else None
-            echt_phase = compute_echt_reference(filt_signal, iaf, fs, get_edges(trigger_binary, "rising"))
+            f0 = f0_y if samples.get("FrequencyEstimation") is not None else None
+            echt_phase = compute_echt_reference(filt_signal, f0, fs, get_edges(trigger_binary, "rising"))
             echt_onset_err, _ = compute_stimulus_edge_errors(
-                trigger_binary, time_us, echt_phase, iaf_y, stim_cfg, start_ts)
+                trigger_binary, time_us, echt_phase, f0_y, stim_cfg, start_ts)
             if echt_onset_err is not None:
                 errors.append({"label": "Stim onset error (ECHT)",
                                "time_s": echt_onset_err["time_s"], "values": echt_onset_err["values"],

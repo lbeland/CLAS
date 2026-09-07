@@ -47,7 +47,7 @@ def mse_optimal_calibration_gain(f0, fs, N, L, H):
 
     Ports the closed-form derivation from ECHT._calibration in
     IAF_Estimation/cecHT/phase.py so it can be precomputed here, offline,
-    instead of once per IAF update at runtime in PhaseEstimation.cpp.
+    instead of once per f0 update at runtime in PhaseEstimation.cpp.
 
     Parameters
     ----------
@@ -187,7 +187,7 @@ def gen_filter(filter_params, fs, filter_name, output_folder):
             f.write(" ".join(f"{coef:.18g}" for coef in row) + "\n")
 
     # Store frequency response of bandpass filter (for Phasedrift compensation in PhaseEstimation)
-    freqs = np.arange(0, high_cutoff, 0.1)  # from 0 to Nyquist in 0.1 Hz steps (because IAF can change in 0.1 Hz steps)
+    freqs = np.arange(0, high_cutoff, 0.1)  # from 0 to Nyquist in 0.1 Hz steps (because f0 can change in 0.1 Hz steps)
     w, H = freqz_sos(global_filter, worN=freqs, fs=fs)
     phase = np.angle(H)  # phase shift in radians at each 0.1 Hz step
 

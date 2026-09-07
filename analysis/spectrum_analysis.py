@@ -189,7 +189,7 @@ def clean_and_filter_channel(
     translate stim_on/stim_off sample ranges onto the cleaned timeline. Every
     sample is currently retained (retained_idx is a no-op identity mapping);
     kept so extract_segment()'s searchsorted-based translation still works if
-    sample-dropping (e.g. online-IAF-based, from runtime_metadata.h5) is added
+    sample-dropping (e.g. online-f0-based, from runtime_metadata.h5) is added
     back later.
     """
     fs     = raw.info["sfreq"]
@@ -227,7 +227,7 @@ def load_run(
     """Load, re-reference, clean, and epoch one run's EDF into Stim On/Off sample arrays.
 
     This is the expensive, shared preprocessing step (EDF read, CSD
-    reference, IAF-based cleaning + lowpass filter) needed by both the
+    reference, f0-based cleaning + lowpass filter) needed by both the
     per-condition spectrum plot and the time-frequency t-maps -- run it once
     per run directory and reuse the result for both.
     """
@@ -658,7 +658,7 @@ def analyse_all(
 ) -> None:
     """Produce both fig_2.m-style plots without loading/preprocessing any run twice.
 
-    1. Discover every run once and load (EDF read, CSD reference, IAF-based
+    1. Discover every run once and load (EDF read, CSD reference, f0-based
        cleaning + lowpass filter, epoching) each of them exactly once.
     2. Plot the log power change spectrum per stim_onset_deg condition (panel C).
     3. Plot the opposite-phase time-frequency t-maps (panel B), reusing the same

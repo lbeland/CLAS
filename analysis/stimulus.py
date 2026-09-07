@@ -42,7 +42,7 @@ def get_edges(signal: np.ndarray, kind: str) -> np.ndarray:
 
 def compute_reference_stimulus(
     phase: np.ndarray,
-    iaf: np.ndarray,
+    f0: np.ndarray,
     fs: float,
     config: StimulusConfig,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -56,18 +56,18 @@ def compute_reference_stimulus(
     onset_phases  : phase (rad) at each stimulus onset
     offset_phases : phase (rad) at each stimulus offset
     """
-    iaf_safe  = np.where(np.isfinite(iaf) & (iaf > 0))[0]
+    f0_safe  = np.where(np.isfinite(f0) & (f0 > 0))[0]
     onset_rad = np.deg2rad(config.stim_onset_deg)
 
     if config.stim_dur_unit == "deg":
         stim_dur_rad = np.full(len(phase), np.deg2rad(config.stim_dur_deg))
     else:
         stim_dur_rad = np.zeros_like(phase)
-        stim_dur_rad[iaf_safe] = (config.stim_dur_ms / 1000.0) * 2.0 * np.pi * iaf[iaf_safe]
+        stim_dur_rad[f0_safe] = (config.stim_dur_ms / 1000.0) * 2.0 * np.pi * f0[f0_safe]
 
     corrected_phase = phase.copy()
-    corrected_phase[iaf_safe] = (
-        phase[iaf_safe] + 2.0 * np.pi * iaf[iaf_safe] * config.erp_latency_s
+    corrected_phase[f0_safe] = (
+        phase[f0_safe] + 2.0 * np.pi * f0[f0_safe] * config.erp_latency_s
     ) % (2.0 * np.pi)
 
     diff         = corrected_phase - onset_rad
@@ -75,21 +75,21 @@ def compute_reference_stimulus(
 
     stim_ref = np.zeros_like(phase, dtype=float)
     last_stim_idx = 0
-    # Minimum needed distance between stim onset is 1 cycle of the current IAF + 10% buffer
-    for i in iaf_safe:
-        min_dist_stim = 1 / (iaf[i] + iaf[i] * 0.1)
+    # Minimum needed distance between stim onset is 1 cycle of the current f0 + 10% buffer
+    for i in f0_safe:
+        min_dist_stim = 1 / (f0[i] + f0[i] * 0.1)
         if wrapped_diff[i] < 0.1 * 2.0 * np.pi:  # 10% of an alpha cycle
             if (i - last_stim_idx) / fs >= min_dist_stim:
                 stim_ref[i] = 1
                 last_stim_idx = i
         
-    # stim_ref[iaf_safe] = (np.abs(wrapped_diff[iaf_safe]) < stim_dur_rad[iaf_safe] / 2.0).astype(float)
+    # stim_ref[f0_safe] = (np.abs(wrapped_diff[f0_safe]) < stim_dur_rad[f0_safe] / 2.0).astype(float)
 
     # Reset and rebuild with fixed duration per onset (matches real-time pipeline)
     rising   = get_edges(stim_ref, "rising")
     stim_ref = np.zeros_like(phase, dtype=float)
     for r in rising:
-        dur_samples = int(round(stim_dur_rad[r] / (2 * np.pi * iaf[r]) * fs))
+        dur_samples = int(round(stim_dur_rad[r] / (2 * np.pi * f0[r]) * fs))
         stim_ref[r : r + dur_samples] = 1
 
     onset_phases  = phase[rising] if len(rising) else np.array([])
@@ -99,7 +99,7 @@ def compute_reference_stimulus(
 
 def _edge_phase_errors(
     phase: np.ndarray,
-    iaf: np.ndarray,
+    f0: np.ndarray,
     edge_idx: np.ndarray,
     target_rad,
     erp_latency_s: float,
@@ -111,15 +111,15 @@ def _edge_phase_errors(
     scalar or an array aligned with ``edge_idx``). Sign: actual - target.
 
     Edges whose result is non-finite are dropped -- e.g. a sparse ``phase``
-    that is NaN away from its evaluation points, or a NaN IAF feeding an
+    that is NaN away from its evaluation points, or a NaN f0 feeding an
     ``target_rad`` array. Returns None if nothing survives.
     """
     edge_idx = np.asarray(edge_idx, dtype=int)
     if edge_idx.size == 0:
         return None
-    # nan_to_num on the correction term only: a missing IAF should not by
+    # nan_to_num on the correction term only: a missing f0 should not by
     # itself discard an onset when erp_latency_s is 0 (0 * nan == nan).
-    corr = 2.0 * np.pi * erp_latency_s * np.nan_to_num(iaf[edge_idx], nan=0.0)
+    corr = 2.0 * np.pi * erp_latency_s * np.nan_to_num(f0[edge_idx], nan=0.0)
     vals = np.angle(np.exp(1j * (phase[edge_idx] + corr - target_rad)), deg=True)
     keep = np.isfinite(vals)
     if not keep.any():
@@ -132,7 +132,7 @@ def compute_stimulus_edge_errors(
     trigger_binary: np.ndarray,
     time_us: np.ndarray,
     phase: np.ndarray,
-    iaf: np.ndarray,
+    f0: np.ndarray,
     config: StimulusConfig,
     start_ts: float,
 ) -> tuple[dict | None, dict | None]:
@@ -143,18 +143,18 @@ def compute_stimulus_edge_errors(
     difference between the erp-latency-corrected reference ``phase`` at that
     sample and ``stim_onset_deg``; for every falling edge it is measured
     against ``stim_onset_deg`` plus the nominal burst length -- ``stim_dur_deg``
-    when ``stim_dur_unit == "deg"``, else ``2*pi*iaf*stim_dur_ms/1000`` (this
+    when ``stim_dur_unit == "deg"``, else ``2*pi*f0*stim_dur_ms/1000`` (this
     mirrors ``compute_reference_stimulus``, whose reconstructed edges sit at
     exactly those target phases). Sign: actual - target, positive == overshoot.
 
     Returns (onset_error, offset_error) dicts with ``time_s`` / ``values``
     (degrees), or None for an edge kind with nothing to score.
     """
-    n = min(len(trigger_binary), len(time_us), len(phase), len(iaf))
+    n = min(len(trigger_binary), len(time_us), len(phase), len(f0))
     trigger_binary = np.asarray(trigger_binary)[:n]
     time_us        = np.asarray(time_us)[:n]
     phase          = np.asarray(phase, dtype=float)[:n]
-    iaf            = np.asarray(iaf, dtype=float)[:n]
+    f0            = np.asarray(f0, dtype=float)[:n]
 
     onset_rad = np.deg2rad(config.stim_onset_deg)
     rising    = get_edges(trigger_binary, "rising")
@@ -163,12 +163,12 @@ def compute_stimulus_edge_errors(
     if config.stim_dur_unit == "deg":
         dur_rad = np.deg2rad(config.stim_dur_deg)
     elif falling.size:
-        dur_rad = 2.0 * np.pi * iaf[falling] * (config.stim_dur_ms / 1000.0)
+        dur_rad = 2.0 * np.pi * f0[falling] * (config.stim_dur_ms / 1000.0)
     else:
         dur_rad = 0.0
 
-    onset_err  = _edge_phase_errors(phase, iaf, rising,  onset_rad,
+    onset_err  = _edge_phase_errors(phase, f0, rising,  onset_rad,
                                     config.erp_latency_s, time_us, start_ts)
-    offset_err = _edge_phase_errors(phase, iaf, falling, onset_rad + dur_rad,
+    offset_err = _edge_phase_errors(phase, f0, falling, onset_rad + dur_rad,
                                     config.erp_latency_s, time_us, start_ts)
     return onset_err, offset_err

@@ -113,7 +113,7 @@ def parse_connection(connection: str) -> Tuple[str, str, int, str, str, int]:
 def parse_state_reference(reference: str) -> Tuple[str, str]:
     """
     Parse strings like:
-        FrequencyEstimation.iaf
+        FrequencyEstimation.f0
     """
     match = STATE_REF_RE.match(reference)
     if not match:

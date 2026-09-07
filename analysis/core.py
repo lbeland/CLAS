@@ -10,7 +10,7 @@ from scipy.signal import ellip, butter, firwin, filtfilt, sosfiltfilt, hilbert, 
 from tqdm import tqdm
 
 from .stimulus import StimulusConfig, compute_reference_stimulus, compute_stimulus_edge_errors, get_edges
-from .f0 import combine_simple
+from .f0 import alpha_fast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PHASE_estimation.jade import jade_v3
@@ -79,7 +79,7 @@ def compute_echt_reference(
     For every sample ``x`` in ``eval_idx``:
 
       1. estimate the dominant alpha frequency ``f0(x)`` with
-         :func:`analysis.f0_series.combine_simple` on the periodogram of the
+         :func:`analysis.f0.alpha_fast` on the periodogram of the
          ``freq_window_s``-second slice of ``filtered`` *centred* on ``x``;
       2. take the calibrated ECHT (see ``IAF_Estimation/cecHT/phase.py``) of
          the ``n_cycles``-cycle slice of ``filtered`` *ending at* ``x``, with
@@ -96,7 +96,7 @@ def compute_echt_reference(
     echt_phase : np.ndarray, shape ``(len(filtered),)``
         Peak-referenced, wrapped reference phase (rad) at each evaluated
         sample; ``np.nan`` everywhere else (including any ``eval_idx`` sample
-        where ``combine_simple`` approved no alpha peak or a window ran off a
+        where ``alpha_fast`` approved no alpha peak or a window ran off a
         recording edge).
     """
     filtered = np.asarray(filtered, dtype=float)
@@ -118,7 +118,7 @@ def compute_echt_reference(
 
         if f0_series is not None:
             # Use the local f0 estimate if available, rather than a global
-            # combine_simple() call, to avoid spurious peaks in the periodogram
+            # alpha_fast() call, to avoid spurious peaks in the periodogram
             # from corrupting the ECHT reference.
             f0 = f0_series[x]
             if not np.isfinite(f0):
@@ -131,7 +131,7 @@ def compute_echt_reference(
             psd   = (np.abs(X) ** 2) / (fs * len(seg))
             psd[1:-1] *= 2
             try:
-                f0, _ = combine_simple(psd, freqs, _F0_CONFIG)
+                f0, _ = alpha_fast(psd, freqs, _F0_CONFIG)
             except Exception:
                 f0 = np.nan
             if not np.isfinite(f0):

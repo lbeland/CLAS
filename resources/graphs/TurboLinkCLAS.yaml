@@ -19,7 +19,7 @@ graph:
       advanced:
         buffer_sizes:
           out: 2048
-        thread_core: 6
+        thread_core: [6,18]
     SelectionFilter:
       class: MultiChannelFilter
       options:
@@ -32,8 +32,8 @@ graph:
         # n_messages: *n_messages  # default
       advanced:
         buffer_sizes:
-          out: 256
-        thread_core: 7
+          out: 2048
+        thread_core: [7,19]
     ChannelSelector:
       class: ChannelSelector
       options:
@@ -42,8 +42,8 @@ graph:
         rms_threshold_uv: 20
       advanced:
         buffer_sizes:
-          ch_idx_out: 256
-        thread_core: 8
+          ch_idx_out: 2048
+        thread_core: [7,19]
     ChannelReductor:
       class: ChannelReductor
       options:
@@ -51,8 +51,8 @@ graph:
         default_channel_index: 3  # 1-based
       advanced:
         buffer_sizes:
-          out: 256
-        thread_core: 9
+          out: 2048
+        thread_core: [7,19]
     ecHTFilter:
       class: MultiChannelFilter
       options:
@@ -65,8 +65,8 @@ graph:
         # n_messages: *n_messages  # default
       advanced:
         buffer_sizes:
-          out: 256
-        thread_core: 10
+          out: 2048
+        thread_core: [7,19]
     IAFEstimator:
       class: IAFEstimator
       options:
@@ -80,8 +80,8 @@ graph:
         f_max: 16.0
       advanced:
         buffer_sizes:
-          out: 256
-        thread_core: 18
+          out: 2048
+        thread_core: [11,23]
     PhaseEstimator:
       class: PhaseEstimator
       options:
@@ -92,8 +92,8 @@ graph:
         # compensate_filter: true  # default
       advanced:
         buffer_sizes:
-          out: 256
-        thread_core: 19
+          out: 2048
+        thread_core: [9,21]
     StimulusController:
       class: StimulusController
       options:
@@ -111,8 +111,8 @@ graph:
         # background_dB: 18       # default
       advanced:
         buffer_sizes:
-          out: 256
-        thread_core: [20,9]
+          out: 2048
+        thread_core: [10,22,5,17]
     Serializer(1-5):    # one serializers per output stream
       class: FileSerializer
       #options:
@@ -122,7 +122,7 @@ graph:
         # format: full            # default
         # n_messages: *n_messages  # default
       advanced:
-        thread_core: [21,22]
+        thread_core: [8,20]
   connections:
   - SourceClient.out.0 = SelectionFilter.in
   - SourceClient.out.0 = ChannelReductor.in

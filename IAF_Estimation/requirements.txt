@@ -1,0 +1,11 @@
+fooof==1.1.1
+ipykernel==7.2.0
+latex==0.7.0
+moabb==1.5.0
+multitaper==1.2.0
+neurodsp==2.3.0
+pathlib==1.0.1
+pip==24.0
+setuptools==82.0.1
+statsmodels==0.14.6
+tqdm_joblib==0.0.5

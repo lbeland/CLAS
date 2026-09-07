@@ -51,7 +51,7 @@ graph:
       class: PhaseEstimation
       options:
         n_messages: *n_messages
-        iaf_read_interval: 1
+        f0_read_interval: 1
         calibrate: true
         compensate_filter: true
       advanced:
@@ -73,4 +73,4 @@ graph:
   - ecHTFilter.out.0 = Serializer3.in
 
   states:
-  - IAF: [SimulatedSource.iaf, PhaseEstimation.iaf]
+  - F0: [SimulatedSource.f0, PhaseEstimation.f0]

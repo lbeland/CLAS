@@ -75,7 +75,7 @@ graph:
         # calc_interval: 100      # default
         window_size_sec: 10
         max_invalid_sec: 3
-        kalman_iaf_std: 0.1
+        kalman_f0_std: 0.1
         # kalman_full: true       # default
         f_min: 7.0
         f_max: 16.0
@@ -88,7 +88,7 @@ graph:
       options:
         # n_messages: *n_messages  # default
         # n_fft: *window_size
-        iaf_read_interval: 1
+        f0_read_interval: 1
         calibrate: true
         # compensate_filter: true  # default
       advanced:
@@ -144,7 +144,7 @@ graph:
   - StimControl.out.0 = Serializer5.in
 
   states:
-  - IAF: [FrequencyEstimation.iaf, PhaseEstimation.iaf, StimControl.iaf]
+  - F0: [FrequencyEstimation.f0, PhaseEstimation.f0, StimControl.f0]
   - CH_IDX: [ChannelSelection.ch_idx, ChannelReduction.ch_idx]
 
 

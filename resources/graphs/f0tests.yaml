@@ -40,7 +40,7 @@ graph:
         calc_interval: 100
         window_size_sec: 10
         max_invalid_sec: 3
-        kalman_iaf_std: 0.1
+        kalman_f0_std: 0.1
         f_min: 7.0
         f_max: 16.0
       advanced:

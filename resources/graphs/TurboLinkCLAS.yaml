@@ -6,8 +6,8 @@ graph:
     fs: &fs 10000
     use_stim_protocol: true
   processors:
-    SourceClient:
-      class: SourceClient
+    UDPSource:
+      class: UDPSource
       options:
         fs: *fs
         # nchannels: 32          # default
@@ -18,7 +18,8 @@ graph:
         fs_tau_s: 30
       advanced:
         buffer_sizes:
-          out: 2048
+          eeg: 2048
+          aux: 2048
         thread_core: [6,18]
     SelectionFilter:
       class: MultiChannelFilter
@@ -34,18 +35,18 @@ graph:
         buffer_sizes:
           out: 2048
         thread_core: [7,19]
-    ChannelSelector:
-      class: ChannelSelector
+    ChannelSelection:
+      class: ChannelSelection
       options:
         # n_messages: *n_messages  # default
         channel_indices: [3]   # 1-based indices of channels to select
         rms_threshold_uv: 20
       advanced:
         buffer_sizes:
-          ch_idx_out: 2048
+          out: 2048
         thread_core: [7,19]
-    ChannelReductor:
-      class: ChannelReductor
+    ChannelReduction:
+      class: ChannelReduction
       options:
         # n_messages: *n_messages  # default
         default_channel_index: 3  # 1-based
@@ -67,8 +68,8 @@ graph:
         buffer_sizes:
           out: 2048
         thread_core: [7,19]
-    IAFEstimator:
-      class: IAFEstimator
+    FrequencyEstimation:
+      class: FrequencyEstimation
       options:
         # n_messages: *n_messages  # default
         # calc_interval: 100      # default
@@ -82,8 +83,8 @@ graph:
         buffer_sizes:
           out: 2048
         thread_core: [11,23]
-    PhaseEstimator:
-      class: PhaseEstimator
+    PhaseEstimation:
+      class: PhaseEstimation
       options:
         # n_messages: *n_messages  # default
         # n_fft: *window_size
@@ -92,10 +93,11 @@ graph:
         # compensate_filter: true  # default
       advanced:
         buffer_sizes:
-          out: 2048
+          phase: 2048
+          real: 2048
         thread_core: [9,21]
-    StimulusController:
-      class: StimulusController
+    StimControl:
+      class: StimControl
       options:
         # n_messages: *n_messages  # default
         stim_onset_deg: 330        #### TODO ####### pre-peak 330°, post-peak 60°, pre-trough 150°, post-trough 240°,
@@ -124,25 +126,25 @@ graph:
       advanced:
         thread_core: [8,20]
   connections:
-  - SourceClient.out.0 = SelectionFilter.in
-  - SourceClient.out.0 = ChannelReductor.in
-  - SelectionFilter.out.0 = ChannelSelector.in
-  - ChannelReductor.out.0 = ecHTFilter.in
-  - ecHTFilter.out.0 = PhaseEstimator.in
-  - ChannelReductor.out.0 = IAFEstimator.in
-  - PhaseEstimator.out.0 = StimulusController.in
+  - UDPSource.eeg.0 = SelectionFilter.in
+  - UDPSource.eeg.0 = ChannelReduction.in
+  - SelectionFilter.out.0 = ChannelSelection.in
+  - ChannelReduction.out.0 = ecHTFilter.in
+  - ecHTFilter.out.0 = PhaseEstimation.in
+  - ChannelReduction.out.0 = FrequencyEstimation.in
+  - PhaseEstimation.phase.0 = StimControl.in
 
-  - SourceClient.out.0 = Serializer1.in
-  - SourceClient.out.1 = Serializer1.in
+  - UDPSource.eeg.0 = Serializer1.in
+  - UDPSource.aux.0 = Serializer1.in
   - ecHTFilter.out.0 = Serializer2.in
-  - PhaseEstimator.out.0 = Serializer3.in
-  - PhaseEstimator.out.1 = Serializer3.in
-  - IAFEstimator.out.0 = Serializer4.in
-  - ChannelSelector.ch_idx_out.0 = Serializer4.in
-  - StimulusController.out.0 = Serializer5.in
+  - PhaseEstimation.phase.0 = Serializer3.in
+  - PhaseEstimation.real.0 = Serializer3.in
+  - FrequencyEstimation.out.0 = Serializer4.in
+  - ChannelSelection.out.0 = Serializer4.in
+  - StimControl.out.0 = Serializer5.in
 
   states:
-  - IAF: [IAFEstimator.iaf, PhaseEstimator.iaf, StimulusController.iaf]
-  - CH_IDX: [ChannelSelector.ch_idx, ChannelReductor.ch_idx]
+  - IAF: [FrequencyEstimation.iaf, PhaseEstimation.iaf, StimControl.iaf]
+  - CH_IDX: [ChannelSelection.ch_idx, ChannelReduction.ch_idx]
 
 

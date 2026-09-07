@@ -5,8 +5,8 @@ graph:
     window_size: &window_size 0
     fs: &fs 10000
   processors:
-    Producer:
-      class: Producer
+    SimulatedSource:
+      class: SimulatedSource
       options:
         fs: *fs
         nchannels: 40
@@ -22,16 +22,16 @@ graph:
         #   out: 32
         thread_core: 6
         threadpriority: 100
-    Consumer1:   # Only for measurement of latency/throughput
-      class: Consumer
+    BenchSink1:   # Only for measurement of latency/throughput
+      class: BenchSink
       options:
         n_messages: *n_messages
         window_size: *window_size
       advanced:
         threadpriority: 50
         thread_core: 7
-    Consumer2:   # Only for measurement of latency/throughput
-      class: Consumer
+    BenchSink2:   # Only for measurement of latency/throughput
+      class: BenchSink
       options:
         n_messages: *n_messages
         window_size: *window_size
@@ -39,7 +39,7 @@ graph:
         threadpriority: 50
         thread_core: 8
   connections:
-  - Producer.out = Consumer1.in
-  - Producer.meta_out = Consumer2.in
+  - SimulatedSource.data = BenchSink1.in
+  - SimulatedSource.meta = BenchSink2.in
 
 

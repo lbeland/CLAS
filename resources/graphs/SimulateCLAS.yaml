@@ -6,8 +6,8 @@ graph:
     fs: &fs 10000
     threadpriority: &threadpriority 100
   processors:
-    Producer:
-      class: Producer
+    SimulatedSource:
+      class: SimulatedSource
       options:
         fs: *fs
         nchannels: 40
@@ -20,8 +20,8 @@ graph:
         modulation_frequency: 0.05
       advanced:
         buffer_sizes:
-          out: 1024
-          meta_out: 1024
+          data: 1024
+          meta: 1024
         thread_core: 6
         threadpriority: *threadpriority
     SelectionFilter:
@@ -40,18 +40,18 @@ graph:
           out: 1024
         thread_core: 7
         threadpriority: *threadpriority
-    ChannelSelector:
-      class: ChannelSelector
+    ChannelSelection:
+      class: ChannelSelection
       options:
         n_messages: *n_messages
         channel_indices: [1,2]   # 1-based indices of channels to select
       advanced:
         buffer_sizes:
-          ch_idx_out: 1024
+          out: 1024
         thread_core: 8
         threadpriority: *threadpriority
-    ChannelReductor:
-      class: ChannelReductor
+    ChannelReduction:
+      class: ChannelReduction
       options:
         n_messages: *n_messages
         default_channel_index: 1  # 1-based
@@ -76,8 +76,8 @@ graph:
           out: 1024
         thread_core: 10
         threadpriority: *threadpriority
-    IAFEstimator:
-      class: IAFEstimator
+    FrequencyEstimation:
+      class: FrequencyEstimation
       options:
         n_messages: *n_messages
         calc_interval: 100
@@ -92,8 +92,8 @@ graph:
           out: 1024
         thread_core: 18
         threadpriority: *threadpriority
-    PhaseEstimator:
-      class: PhaseEstimator
+    PhaseEstimation:
+      class: PhaseEstimation
       options:
         n_messages: *n_messages
         # n_fft: *window_size
@@ -102,11 +102,12 @@ graph:
         compensate_filter: true
       advanced:
         buffer_sizes:
-          out: 1024
+          phase: 1024
+          real: 1024
         thread_core: 19
         threadpriority: *threadpriority
-    StimulusController:
-      class: StimulusController
+    StimControl:
+      class: StimControl
       options:
         n_messages: *n_messages
         stim_onset_deg: 0
@@ -135,25 +136,25 @@ graph:
       advanced:
         thread_core: [21,22]
   connections:
-  - Producer.out.0 = SelectionFilter.in
-  - Producer.out.0 = ChannelReductor.in
-  - SelectionFilter.out.0 = ChannelSelector.in
-  - ChannelReductor.out.0 = ecHTFilter.in
-  - ecHTFilter.out.0 = PhaseEstimator.in
-  - ChannelReductor.out.0 = IAFEstimator.in
-  - PhaseEstimator.out.0 = StimulusController.in
-  # - StimulusController.out.0 = Consumer.in
+  - SimulatedSource.data.0 = SelectionFilter.in
+  - SimulatedSource.data.0 = ChannelReduction.in
+  - SelectionFilter.out.0 = ChannelSelection.in
+  - ChannelReduction.out.0 = ecHTFilter.in
+  - ecHTFilter.out.0 = PhaseEstimation.in
+  - ChannelReduction.out.0 = FrequencyEstimation.in
+  - PhaseEstimation.phase.0 = StimControl.in
+  # - StimControl.out.0 = BenchSink.in
 
-  - Producer.out = Serializer1.in
-  - Producer.meta_out = Serializer1.in
+  - SimulatedSource.data = Serializer1.in
+  - SimulatedSource.meta = Serializer1.in
   - ecHTFilter.out.0 = Serializer2.in
-  - PhaseEstimator.out.0 = Serializer3.in
-  - PhaseEstimator.out.1 = Serializer3.in
-  - IAFEstimator.out.0 = Serializer4.in
-  - ChannelSelector.ch_idx_out.0 = Serializer4.in
-  - StimulusController.out.0 = Serializer5.in
+  - PhaseEstimation.phase.0 = Serializer3.in
+  - PhaseEstimation.real.0 = Serializer3.in
+  - FrequencyEstimation.out.0 = Serializer4.in
+  - ChannelSelection.out.0 = Serializer4.in
+  - StimControl.out.0 = Serializer5.in
 
   states:
-  - IAF: [IAFEstimator.iaf, PhaseEstimator.iaf, StimulusController.iaf]
-  - CH_IDX: [ChannelSelector.ch_idx, ChannelReductor.ch_idx]
+  - IAF: [FrequencyEstimation.iaf, PhaseEstimation.iaf, StimControl.iaf]
+  - CH_IDX: [ChannelSelection.ch_idx, ChannelReduction.ch_idx]
 

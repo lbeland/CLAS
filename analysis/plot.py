@@ -275,7 +275,7 @@ def plot_snr_sweep(sweep_data: dict[str, list[dict]], output_name: str = "snr_sw
 
 def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, start_ts: float, output_name: str = "iaf_timeseries") -> None:
     """Plot estimated IAF over time with true IAF overlaid; adds error subplot when truth is known."""
-    has_estimated = samples.get("IAFEstimator") is not None
+    has_estimated = samples.get("FrequencyEstimation") is not None
     has_true      = ground_truth.get("true_inst_freq") is not None
     if not has_estimated and not has_true:
         return
@@ -302,8 +302,8 @@ def plot_iaf(ground_truth: dict, iaf_continuous: np.ndarray, samples: dict, star
         ax.plot(time_s, iaf_continuous, linewidth=1.5, alpha=0.8, label="Estimated IAF (Hilbert)")
 
     if has_estimated:
-        x_est   = (samples["IAFEstimator"]["x"] - start_ts) / 1e6
-        iaf_est = samples["IAFEstimator"]["y"]
+        x_est   = (samples["FrequencyEstimation"]["x"] - start_ts) / 1e6
+        iaf_est = samples["FrequencyEstimation"]["y"]
         ax.plot(x_est, iaf_est, "o-", markersize=2.5, linewidth=1.2, label="Estimated IAF")
 
         if show_error:
@@ -420,10 +420,10 @@ def plot_time_series(
 
     raw_eeg      = ground_truth["raw"] - np.mean(ground_truth["raw"])
     filt_online  = _pick("ecHTFilter")
-    online_phase = _pick("PhaseEstimator_phase")
+    online_phase = _pick("PhaseEstimation_phase")
     true_phase   = ground_truth.get("true_phase")
-    stimulus     = _pick("StimulusController")
-    trigger      = _pick("SourceClient_TRIGGER")
+    stimulus     = _pick("StimControl")
+    trigger      = _pick("UDPSource_TRIGGER")
 
     fig, axes = plt.subplots(2, 1, sharex=True, figsize=FIGSIZE, height_ratios=[3, 1])
     ax_raw, ax_phase = axes
@@ -535,7 +535,7 @@ def apply_csd_transform(fs: float, samples: dict, channel: list[int]) -> dict[in
     ys = []
     for ch in scalp_channels:
         ch0   = ch - 1
-        entry = samples.get(f"SourceClient_{ch0}") or samples.get(f"Producer_{ch0}")
+        entry = samples.get(f"UDPSource_{ch0}") or samples.get(f"SimulatedSource_{ch0}")
         ys.append(entry["y"])
 
     min_len = min(len(y) for y in ys)
@@ -573,23 +573,23 @@ def get_erp_windows(fs: float, samples: dict, channel: list[int] = [1],
         ch0 = ch - 1  # zero-based
 
         if ch in csd_by_channel:
-            entry = samples.get(f"SourceClient_{ch0}") or samples.get(f"Producer_{ch0}")
+            entry = samples.get(f"UDPSource_{ch0}") or samples.get(f"SimulatedSource_{ch0}")
             eeg_y = csd_by_channel[ch]
             eeg_t = entry["x"][:len(eeg_y)]
         # if samples.get("ecHTFilter") is not None:
         #     eeg_y, eeg_t = samples["ecHTFilter"]["y"], samples["ecHTFilter"]["x"]
-        elif samples.get(f"SourceClient_{ch0}") is not None:
-            eeg_y, eeg_t = samples[f"SourceClient_{ch0}"]["y"], samples[f"SourceClient_{ch0}"]["x"]
-        elif samples.get(f"Producer_{ch0}") is not None:
-            eeg_y, eeg_t = samples[f"Producer_{ch0}"]["y"], samples[f"Producer_{ch0}"]["x"]
+        elif samples.get(f"UDPSource_{ch0}") is not None:
+            eeg_y, eeg_t = samples[f"UDPSource_{ch0}"]["y"], samples[f"UDPSource_{ch0}"]["x"]
+        elif samples.get(f"SimulatedSource_{ch0}") is not None:
+            eeg_y, eeg_t = samples[f"SimulatedSource_{ch0}"]["y"], samples[f"SimulatedSource_{ch0}"]["x"]
         else:
             print(f"Error: no EEG signal found for channel {ch}.")
             continue
 
-        if samples.get("SourceClient_TRIGGER") is not None:
-            trigger_y = samples["SourceClient_TRIGGER"]["y"]
-        elif samples.get("StimulusController") is not None:
-            trigger_y = samples["StimulusController"]["y"]
+        if samples.get("UDPSource_TRIGGER") is not None:
+            trigger_y = samples["UDPSource_TRIGGER"]["y"]
+        elif samples.get("StimControl") is not None:
+            trigger_y = samples["StimControl"]["y"]
         else:
             print("Error: no trigger signal found.")
             return []

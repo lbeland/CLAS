@@ -81,7 +81,7 @@ def load_and_analyse(f0: float, results_dir: str) -> "RecordingAnalysis | None":
         samples      = load_processor_signals(fs, results_dir, processors)
         ground_truth = extract_ground_truth(samples)
         if ground_truth is None:
-            print("Error: no source signal found (SourceClient or Producer). Aborting.")
+            print("Error: no source signal found (UDPSource or SimulatedSource). Aborting.")
             return None
 
         # Persist the raw/runtime signals so future runs can skip this branch
@@ -108,7 +108,7 @@ def load_and_analyse(f0: float, results_dir: str) -> "RecordingAnalysis | None":
     errors, stim_ref = compute_errors(samples, ground_truth, hilbert_phase, start_ts, fs,
                                       graph_config, filtered=filtered)
 
-    # # Producer ground truth (true_inst_freq known) + short enough for JADE's DTW cost to be feasible
+    # # SimulatedSource ground truth (true_inst_freq known) + short enough for JADE's DTW cost to be feasible
     # if ground_truth["true_inst_freq"] is not None and len(raw) / fs <= 20:
     #     errors += compute_jade_errors(filtered, ground_truth["time"], start_ts, fs,
     #                                    ground_truth["true_phase"], ground_truth["true_inst_freq"],
@@ -287,7 +287,7 @@ def _phase_error_stats(values: np.ndarray, trim_frac: float = 0.05) -> "tuple[fl
 
 def analyse_snr_sweep(sweep_dir: str, f0: float = 10, trim_frac: float = 0.05) -> None:
     """Sweep summary across a folder of CLAS runs: for every results
-    subfolder under sweep_dir, read that run's Producer SNR and noise colour
+    subfolder under sweep_dir, read that run's SimulatedSource SNR and noise colour
     from its graph .yaml, compute the online phase error and the offline
     Hilbert reference error, and plot their mean +/- SD against SNR with one
     line per noise type (white and pink on the same axes: solid mean line,
@@ -298,8 +298,8 @@ def analyse_snr_sweep(sweep_dir: str, f0: float = 10, trim_frac: float = 0.05) -
     Put one CLAS run per subfolder inside sweep_dir -- each subfolder needs
     the serializer output (*.bin, or the cached *.edf / *.h5) plus the graph
     .yaml, exactly as produced by a single clas.py run. Runs are grouped by
-    Producer.options.noise_color and placed on the x-axis by
-    Producer.options.snr_db.
+    SimulatedSource.options.noise_color and placed on the x-axis by
+    SimulatedSource.options.snr_db.
     """
     run_dirs = find_result_dirs(sweep_dir)
     print(f"Found {len(run_dirs)} run folder(s) under {sweep_dir!r}.")
@@ -310,7 +310,7 @@ def analyse_snr_sweep(sweep_dir: str, f0: float = 10, trim_frac: float = 0.05) -
         try:
             graph_file = glob.glob(os.path.join(results_dir, "*.yaml"))[0]
             with open(graph_file) as fh:
-                opts = yaml.safe_load(fh)["graph"]["processors"]["Producer"]["options"]
+                opts = yaml.safe_load(fh)["graph"]["processors"]["SimulatedSource"]["options"]
             snr_db     = float(opts["snr_db"])
             noise_type = str(opts.get("noise_color", "white"))
 

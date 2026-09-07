@@ -3,7 +3,7 @@
 Automated SNR / noise-type sweep for the ecHT phase-estimation graph.
 
 For every (snr_db, noise_color) combination on the grid this script:
-  1. patches ``Producer.options.snr_db`` / ``noise_color`` in the graph config
+  1. patches ``SimulatedSource.options.snr_db`` / ``noise_color`` in the graph config
      (writing a throwaway ``_sweep_<graph>`` copy so the original is untouched),
   2. runs one Falcon session head-less -- no keypress handling, no stim
      protocol -- and waits for Falcon to auto-exit after ``n_messages``,
@@ -57,13 +57,13 @@ def terminate(proc: subprocess.Popen) -> None:
 
 def patch_graph(base_graph_path: Path, out_graph_path: Path,
                 snr_db: float, noise_color: str, n_messages: int | None) -> float:
-    """Write a copy of the graph config with the Producer's SNR / noise
+    """Write a copy of the graph config with the SimulatedSource's SNR / noise
     colour (and optionally n_messages) overridden. Returns the length of the
-    generated signal in seconds (Producer n_messages * nsamples / fs)."""
+    generated signal in seconds (SimulatedSource n_messages * nsamples / fs)."""
     with open(base_graph_path) as f:
         cfg = yaml.safe_load(f)
 
-    producer = cfg["graph"]["processors"]["Producer"]
+    producer = cfg["graph"]["processors"]["SimulatedSource"]
     opts = producer["options"]
     opts["snr_db"]      = float(snr_db)
     opts["noise_color"] = noise_color
@@ -180,7 +180,7 @@ def main() -> None:
     p.add_argument("--name", default="snr_sweep",
                    help="sweep sub-folder under results/ (default: snr_sweep)")
     p.add_argument("--n-messages", type=int, default=None,
-                   help="override Producer n_messages (run length) for every run")
+                   help="override SimulatedSource n_messages (run length) for every run")
     p.add_argument("--run-seconds", type=float, default=None,
                    help="stream this many seconds per run before stop/quit "
                         "(default: the graph's own signal length + --settle)")

@@ -90,13 +90,13 @@ def write_raw_signals_edf(
     e.g. index 3 -> "Fz") are labelled with that name; channels without one
     keep the generic "EEG_{index}" label.
 
-    Raw per-channel samples come from either "SourceClient_{idx}" (real
-    hardware) or "Producer_{idx}" (simulated runs). Only "SourceClient_*"
-    channels get a real 10-20 electrode name -- "Producer_*" channels are
+    Raw per-channel samples come from either "UDPSource_{idx}" (real
+    hardware) or "SimulatedSource_{idx}" (simulated runs). Only "UDPSource_*"
+    channels get a real 10-20 electrode name -- "SimulatedSource_*" channels are
     synthetic and carry no meaningful electrode correspondence, so they
     always get the generic "EEG_{idx+1}" label even when their index happens
     to match a named electrode. load_runtime() always reconstructs them as
-    "SourceClient_{idx}" on reload regardless of which one the original
+    "UDPSource_{idx}" on reload regardless of which one the original
     recording used (see its docstring)."""
     time = ground_truth["time"]
     n    = len(time)
@@ -104,12 +104,12 @@ def write_raw_signals_edf(
     channels = []
     eeg_keys = sorted(
         k for k in samples
-        if (k.startswith("SourceClient_") or k.startswith("Producer_")) and k.split("_")[1].isdigit()
+        if (k.startswith("UDPSource_") or k.startswith("SimulatedSource_")) and k.split("_")[1].isdigit()
     )
     for key in eeg_keys:
         ch_idx = int(key.split("_")[1])
         ch_num = ch_idx + 1  # 1-based, matches CHANNEL_NAMES
-        if key.startswith("Producer_"):
+        if key.startswith("SimulatedSource_"):
             label = f"EEG_{ch_num}"
         else:
             label = _INDEX_TO_NAME.get(ch_num, f"EEG_{ch_num}")
@@ -118,11 +118,11 @@ def write_raw_signals_edf(
     # AUX_0..AUX_7 are recorded analog channels from the same ADC as the EEG
     # channels, so they get the same "eeg" type/uV scaling
     for idx in range(8):
-        aux = samples.get(f"SourceClient_AUX_{idx}")
+        aux = samples.get(f"UDPSource_AUX_{idx}")
         if aux is not None:
             channels.append((f"AUX_{idx}", "eeg", aux["y"][:n]))
-    if samples.get("SourceClient_TRIGGER") is not None:
-        channels.append(("Trigger", "stim", samples["SourceClient_TRIGGER"]["y"][:n]))
+    if samples.get("UDPSource_TRIGGER") is not None:
+        channels.append(("Trigger", "stim", samples["UDPSource_TRIGGER"]["y"][:n]))
 
     _write_edf(filepath, fs, time[0], channels, annotations)
 
@@ -173,21 +173,21 @@ def load_runtime(raw_edf_path: str, meta_h5_path: str) -> tuple[dict, dict, "mne
 
     samples = {}
     for idx, y in recording["eeg"].items():
-        samples[f"SourceClient_{idx}"] = {"x": time, "y": y[:n], "source_ts": source_ts(f"SourceClient_{idx}")}
+        samples[f"UDPSource_{idx}"] = {"x": time, "y": y[:n], "source_ts": source_ts(f"UDPSource_{idx}")}
     if recording["trigger"] is not None:
-        samples["SourceClient_TRIGGER"] = {"x": time, "y": recording["trigger"][:n], "source_ts": source_ts("SourceClient_TRIGGER")}
+        samples["UDPSource_TRIGGER"] = {"x": time, "y": recording["trigger"][:n], "source_ts": source_ts("UDPSource_TRIGGER")}
 
     online = meta["online"]
     if "stimulus" in online:
-        samples["StimulusController"] = {"x": time, "y": online["stimulus"], "source_ts": source_ts("StimulusController")}
+        samples["StimControl"] = {"x": time, "y": online["stimulus"], "source_ts": source_ts("StimControl")}
     if "iaf" in online:
-        samples["IAFEstimator"] = {"x": time, "y": online["iaf"], "source_ts": source_ts("IAFEstimator")}
+        samples["FrequencyEstimation"] = {"x": time, "y": online["iaf"], "source_ts": source_ts("FrequencyEstimation")}
     if "phase" in online:
-        samples["PhaseEstimator_phase"] = {"x": time, "y": online["phase"], "source_ts": source_ts("PhaseEstimator_phase")}
+        samples["PhaseEstimation_phase"] = {"x": time, "y": online["phase"], "source_ts": source_ts("PhaseEstimation_phase")}
     if "filt" in online:
         samples["ecHTFilter"] = {"x": time, "y": online["filt"], "source_ts": source_ts("ecHTFilter")}
     if "channel_idx" in online:
-        samples["ChannelSelector"] = {"x": time, "y": online["channel_idx"], "source_ts": source_ts("ChannelSelector")}
+        samples["ChannelSelection"] = {"x": time, "y": online["channel_idx"], "source_ts": source_ts("ChannelSelection")}
 
     ground_truth = extract_ground_truth(samples)
     if ground_truth is None:
@@ -238,20 +238,20 @@ def write_analysis_edf(
         channels.append(("Filt_on", "eeg", samples["ecHTFilter"]["y"][:n]))
     if hilbert_phase is not None:
         channels.append(("Phase_off", "stim", hilbert_phase[:n]))
-    if samples.get("PhaseEstimator_phase") is not None:
-        phase_est = np.nan_to_num(samples["PhaseEstimator_phase"]["y"], nan=-2 * np.pi)
+    if samples.get("PhaseEstimation_phase") is not None:
+        phase_est = np.nan_to_num(samples["PhaseEstimation_phase"]["y"], nan=-2 * np.pi)
         channels.append(("Phase_on", "stim", phase_est[:n]))
     if iaf_continuous is not None:
         channels.append(("IAF_off_Hz", "stim", np.nan_to_num(iaf_continuous)[:n]))
-    if samples.get("IAFEstimator") is not None:
-        channels.append(("IAF_on_Hz", "stim", np.nan_to_num(samples["IAFEstimator"]["y"])[:n]))
+    if samples.get("FrequencyEstimation") is not None:
+        channels.append(("IAF_on_Hz", "stim", np.nan_to_num(samples["FrequencyEstimation"]["y"])[:n]))
     if stim_ref is not None:
         channels.append(("Target_Stim", "stim", stim_ref[:n]))
 
-    trigger = samples.get("SourceClient_TRIGGER")
+    trigger = samples.get("UDPSource_TRIGGER")
     if trigger is not None:
         channels.append(("Trigger_hw", "stim", trigger["y"][:n]))
-    trigger_sw = samples.get("StimulusController")
+    trigger_sw = samples.get("StimControl")
     if trigger_sw is not None:
         channels.append(("Trigger_sw", "stim", trigger_sw["y"][:n]))
 

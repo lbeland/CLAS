@@ -4,7 +4,7 @@
 ``IAF_Estimation/IAF_tests.py``. `combine_simple` is that file's ``combine_simple``
 branch of ``run_algorithms`` **plus** a per-window SNR (peak power vs. aperiodic
 power within ±2σ of the peak, following
-``extensions/processors/IAFEstimator/IAFEstimator.cpp``); it now returns
+``extensions/processors/FrequencyEstimation/FrequencyEstimation.cpp``); it now returns
 ``(est_pf, snr)``.
 
 `simple_paf` is the thin adapter the EEG pipeline calls: it builds the same
@@ -132,7 +132,7 @@ def combine_simple(psd, freq_bins, config):
         return np.nan, np.nan
 
     # per-window SNR: fitted peak power vs aperiodic (1/f) power within +-2 sigma
-    # of the peak, cf. extensions/processors/IAFEstimator/IAFEstimator.cpp
+    # of the peak, cf. extensions/processors/FrequencyEstimation/FrequencyEstimation.cpp
     within_2s = np.abs(freqs - est_pf) <= 2.0 * std_gauss
     if np.any(within_2s):
         aper_lin = np.power(10.0, aperiodic_simple[within_2s])        # linear 1/f power

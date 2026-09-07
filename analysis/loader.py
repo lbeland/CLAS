@@ -77,8 +77,8 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
     samples = {}
 
     for processor in processors:
-        if processor == "Producer":
-            file = get_results_file(processor, slot=0, results_dir=results_dir)
+        if processor == "SimulatedSource":
+            file = get_results_file(processor, name=".data", slot=0, results_dir=results_dir)
             signal, time = get_signal_data(file, channel=0, timestamps=timestamps)
             if signal is None:
                 continue
@@ -87,7 +87,7 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
             for idx, channel in enumerate(_iter_channels(signal)):
                 samples[f"{processor}_{idx}"] = {"x": time, "y": channel, "source_ts": source_time}
 
-            file = get_results_file(processor, name=".meta_out", slot=0, results_dir=results_dir)
+            file = get_results_file(processor, name=".meta", slot=0, results_dir=results_dir)
             signal, time = get_signal_data(file, channel=list(range(3)), timestamps=timestamps)
             if signal is None:
                 continue
@@ -95,44 +95,44 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
             for idx, channel in enumerate(_iter_channels(signal)):
                 samples[f"{processor}_meta_{idx}"] = {"x": time, "y": channel}
 
-        elif processor == "SourceClient":
-            file = get_results_file(processor, slot=0, results_dir=results_dir)
+        elif processor == "UDPSource":
+            file = get_results_file(processor, name=".eeg", slot=0, results_dir=results_dir)
             signal, time = get_signal_data(file, channel=list(range(32)), timestamps=timestamps)
             if signal is None:
                 continue
             source_time = time["source_ts"]
             time = time["hardware_ts"]
             for idx, channel in enumerate(_iter_channels(signal)):
-                samples[f"SourceClient_{idx}"] = {"x": time, "y": channel, "source_ts": source_time}
+                samples[f"UDPSource_{idx}"] = {"x": time, "y": channel, "source_ts": source_time}
 
-            file = get_results_file(processor, slot=1, results_dir=results_dir)
-            # AUX channels are stored in slot 1 channels 0-7
+            file = get_results_file(processor, name=".aux", slot=0, results_dir=results_dir)
+            # AUX channels are stored on the aux port, channels 0-7
             signal, time = get_signal_data(file, channel=list(range(8)), timestamps=timestamps)
             if signal is not None:
                 source_time = time["source_ts"]
                 time = time["hardware_ts"]
                 for idx, channel in enumerate(_iter_channels(signal)):
-                    samples[f"SourceClient_AUX_{idx}"] = {"x": time, "y": channel, "source_ts": source_time}
-            # Trigger is stored in slot 1 channel 8
+                    samples[f"UDPSource_AUX_{idx}"] = {"x": time, "y": channel, "source_ts": source_time}
+            # Trigger is stored on the aux port, channel 8
             signal, time = get_signal_data(file, channel=8, timestamps=timestamps)
             if signal is not None:
                 source_time = time["source_ts"]
                 time = time["hardware_ts"]
                 binary = (signal > 0.5).astype(float)
-                samples["SourceClient_TRIGGER"] = {"x": time, "y": _trim_falling_edges(binary, fs, 11.0), "source_ts": source_time}
+                samples["UDPSource_TRIGGER"] = {"x": time, "y": _trim_falling_edges(binary, fs, 11.0), "source_ts": source_time}
 
-        elif processor == "PhaseEstimator":
-            file = get_results_file(processor, slot=0, results_dir=results_dir)
+        elif processor == "PhaseEstimation":
+            file = get_results_file(processor, name=".phase", slot=0, results_dir=results_dir)
             signal, time = get_signal_data(file, channel=0, timestamps=timestamps)
             if signal is not None:
                 samples[f"{processor}_phase"] = {"x": time["hardware_ts"], "y": signal, "source_ts": time["source_ts"]}
 
-            file = get_results_file(processor, slot=1, results_dir=results_dir)
+            file = get_results_file(processor, name=".real", slot=0, results_dir=results_dir)
             signal, time = get_signal_data(file, channel=0, timestamps=timestamps)
             if signal is not None:
                 samples[f"{processor}_real"] = {"x": time["hardware_ts"], "y": signal, "source_ts": time["source_ts"]}
 
-        elif processor == "StimulusController":
+        elif processor == "StimControl":
             file = get_results_file(processor, slot=0, results_dir=results_dir)
             if file is not None:
                 signal, time = get_signal_data(file, channel=0, timestamps=timestamps)
@@ -140,8 +140,7 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
                     samples[processor] = {"x": time["hardware_ts"], "y": signal, "source_ts": time["source_ts"]}
 
         else:
-            result_name = "ch_idx_out" if processor == "ChannelSelector" else ".out"
-            file = get_results_file(processor, name=result_name, slot=0, results_dir=results_dir)
+            file = get_results_file(processor, name=".out", slot=0, results_dir=results_dir)
             if file is not None:
                 signal, time = get_signal_data(file, channel=0, timestamps=timestamps)
                 if signal is not None:
@@ -166,25 +165,25 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
 
 
 def extract_ground_truth(samples: dict) -> dict | None:
-    """Extract ground-truth signals from SourceClient or Producer output."""
-    if "SourceClient_0" in samples:
-        if "ChannelSelector" in samples:
-            channel_selected = samples["ChannelSelector"]["y"] - 1  # convert to zero-based
+    """Extract ground-truth signals from UDPSource or SimulatedSource output."""
+    if "UDPSource_0" in samples:
+        if "ChannelSelection" in samples:
+            channel_selected = samples["ChannelSelection"]["y"] - 1  # convert to zero-based
             raw = []
             for sample_idx, select_idx in enumerate(channel_selected):
-                raw.append(samples[f"SourceClient_{select_idx}"]["y"][sample_idx])
+                raw.append(samples[f"UDPSource_{select_idx}"]["y"][sample_idx])
             raw = np.array(raw)
-            time        = samples[f"SourceClient_{select_idx}"]["x"]
-            source_time = samples[f"SourceClient_{select_idx}"]["source_ts"]
+            time        = samples[f"UDPSource_{select_idx}"]["x"]
+            source_time = samples[f"UDPSource_{select_idx}"]["source_ts"]
         else:
-            raw         = samples["SourceClient_0"]["y"]
-            time        = samples["SourceClient_0"]["x"]
-            source_time = samples["SourceClient_0"]["source_ts"]
+            raw         = samples["UDPSource_0"]["y"]
+            time        = samples["UDPSource_0"]["x"]
+            source_time = samples["UDPSource_0"]["source_ts"]
 
         if os.path.exists("simulated_signal.npy"):
             loaded = np.load("simulated_signal.npy")
             assert raw[0, 0] == loaded["value"][0], \
-                "Loaded simulated signal does not match SourceClient signal"
+                "Loaded simulated signal does not match UDPSource signal"
             return {
                 "raw":            raw,
                 "time":           time,
@@ -198,27 +197,27 @@ def extract_ground_truth(samples: dict) -> dict | None:
             "true_amplitude": None, "true_phase": None, "true_inst_freq": None,
         }
 
-    elif "Producer_0" in samples:
-        if "ChannelSelector" in samples:
-            channel_selected = samples["ChannelSelector"]["y"]
+    elif "SimulatedSource_0" in samples:
+        if "ChannelSelection" in samples:
+            channel_selected = samples["ChannelSelection"]["y"]
             raw = []
             for sample_idx, select_idx in enumerate(channel_selected):
-                raw.append(samples[f"Producer_{select_idx-1}"]["y"][sample_idx])
+                raw.append(samples[f"SimulatedSource_{select_idx-1}"]["y"][sample_idx])
             raw         = np.array(raw)
-            time        = samples[f"Producer_{select_idx-1}"]["x"]
-            source_time = samples[f"Producer_{select_idx-1}"]["source_ts"]
+            time        = samples[f"SimulatedSource_{select_idx-1}"]["x"]
+            source_time = samples[f"SimulatedSource_{select_idx-1}"]["source_ts"]
         else:
-            raw         = samples["Producer_0"]["y"]
-            time        = samples["Producer_0"]["x"]
-            source_time = samples["Producer_0"]["source_ts"]
+            raw         = samples["SimulatedSource_0"]["y"]
+            time        = samples["SimulatedSource_0"]["x"]
+            source_time = samples["SimulatedSource_0"]["source_ts"]
 
         return {
             "raw":            raw,
             "time":           time,
             "source_ts":      source_time,
-            "true_amplitude": samples.get("Producer_meta_0", {}).get("y"),
-            "true_phase":     np.angle(np.exp(1j * samples["Producer_meta_1"]["y"])),
-            "true_inst_freq": samples.get("Producer_meta_2", {}).get("y"),
+            "true_amplitude": samples.get("SimulatedSource_meta_0", {}).get("y"),
+            "true_phase":     np.angle(np.exp(1j * samples["SimulatedSource_meta_1"]["y"])),
+            "true_inst_freq": samples.get("SimulatedSource_meta_2", {}).get("y"),
         }
 
     return None
@@ -230,14 +229,14 @@ def extract_ground_truth(samples: dict) -> dict | None:
 
 def _parse_graph_structure(graph_config: dict) -> tuple[dict, list]:
     """Parse graph connections → (predecessors dict, topological order).
-    Serializers and Consumers are excluded."""
+    Serializers and BenchSinks are excluded."""
     processors  = graph_config.get("graph", {}).get("processors", {})
     connections = graph_config.get("graph", {}).get("connections", [])
 
-    skip_classes = {"FileSerializer", "Consumer"}
+    skip_classes = {"FileSerializer", "BenchSink"}
     skip_names = {name for name, cfg in processors.items()
                   if isinstance(cfg, dict) and cfg.get("class") in skip_classes}
-    skip_names |= {name for name in processors if "Serializer" in name or "Consumer" in name}
+    skip_names |= {name for name in processors if "Serializer" in name or "BenchSink" in name}
 
     all_procs = [name for name in processors if name not in skip_names]
     edges      = {p: [] for p in all_procs}
@@ -275,9 +274,9 @@ def _parse_graph_structure(graph_config: dict) -> tuple[dict, list]:
 
 def _get_source_ts(proc_name: str, samples: dict, ground_truth: dict):
     """Resolve source_ts array for a processor by its yaml name."""
-    if proc_name in ("SourceClient", "Producer"):
+    if proc_name in ("UDPSource", "SimulatedSource"):
         return ground_truth.get("source_ts")
-    key  = f"{proc_name}_phase" if proc_name == "PhaseEstimator" else proc_name
+    key  = f"{proc_name}_phase" if proc_name == "PhaseEstimation" else proc_name
     data = samples.get(key)
     return data.get("source_ts") if data else None
 
@@ -347,12 +346,12 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
     plt.ylim(0, 1000)
     # plt.savefig("latency_analysis.png", dpi=300, bbox_inches="tight")
 
-    # Latency between computed stimulus onset (StimulusController) and the
-    # recorded trigger onset (SourceClient_TRIGGER), matched edge-by-edge.
-    if "StimulusController" in samples and "SourceClient_TRIGGER" in samples:
+    # Latency between computed stimulus onset (StimControl) and the
+    # recorded trigger onset (UDPSource_TRIGGER), matched edge-by-edge.
+    if "StimControl" in samples and "UDPSource_TRIGGER" in samples:
         fig = plt.figure(figsize=FIGSIZE)
-        stim = samples["StimulusController"]
-        trig = samples["SourceClient_TRIGGER"]
+        stim = samples["StimControl"]
+        trig = samples["UDPSource_TRIGGER"]
 
         stim_edges = get_edges((stim["y"] > 0.5).astype(float), "rising")
         trig_edges = get_edges((trig["y"] > 0.5).astype(float), "rising")
@@ -376,13 +375,13 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
             plt.plot(latency_ms)
             plt.xlabel("Stimulus index")
             plt.ylabel("Latency (ms)")
-            plt.title("StimulusController → SourceClient_TRIGGER onset latency")
+            plt.title("StimControl → UDPSource_TRIGGER onset latency")
 
             save_pgf(fig, "latency_analysis")
 
             print(f" Audio onset latency (ms)")
             print(f"{'─' * W}")
-            print(f"  {'StimulusController':<{col}} {'SourceClient_TRIGGER':<{col}} "
+            print(f"  {'StimControl':<{col}} {'UDPSource_TRIGGER':<{col}} "
                   f"{np.mean(latency_ms):>8.2f} {np.median(latency_ms):>8.2f} "
                   f"{np.std(latency_ms):>8.2f} {np.max(latency_ms):>8.2f} {np.argmax(latency_ms):>8}")
             print(f"{'─' * W}\n")

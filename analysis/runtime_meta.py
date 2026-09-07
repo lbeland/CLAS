@@ -19,24 +19,24 @@ import h5py
 import numpy as np
 
 ONLINE_FIELDS = {
-    "StimulusController":  "stimulus",
-    "IAFEstimator":        "iaf",
-    "PhaseEstimator_phase": "phase",
+    "StimControl":  "stimulus",
+    "FrequencyEstimation":        "iaf",
+    "PhaseEstimation_phase": "phase",
     "ecHTFilter":           "filt",
-    "ChannelSelector":      "channel_idx",
+    "ChannelSelection":      "channel_idx",
 }
 
 SIMULATION_FIELDS = ("true_amplitude", "true_phase", "true_inst_freq")
 
 
 def _normalize_raw_channel_key(key: str) -> str:
-    """Raw per-channel keys come from either SourceClient_{idx} (real
-    hardware) or Producer_{idx} (simulated runs); edf_io.write_raw_signals_edf
+    """Raw per-channel keys come from either UDPSource_{idx} (real
+    hardware) or SimulatedSource_{idx} (simulated runs); edf_io.write_raw_signals_edf
     writes both the same way and edf_io.load_runtime() always reconstructs
-    them as SourceClient_{idx} on reload, so source_ts must be stored under
+    them as UDPSource_{idx} on reload, so source_ts must be stored under
     that same normalized name or the reload lookup silently misses it."""
-    if key.startswith("Producer_") and key[len("Producer_"):].isdigit():
-        return f"SourceClient_{key[len('Producer_'):]}"
+    if key.startswith("SimulatedSource_") and key[len("SimulatedSource_"):].isdigit():
+        return f"UDPSource_{key[len('SimulatedSource_'):]}"
     return key
 
 

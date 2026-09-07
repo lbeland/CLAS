@@ -18,7 +18,7 @@ from analysis.main import analyse_results
 REPO_ROOT = Path(__file__).resolve().parent
 WORKSPACE_FALCON_CONFIG = REPO_ROOT / ".falcon" / "config.yaml"
 RESULTS_DIR = "results"
-STIM_PROCESSOR_NAME = "StimulusController"
+STIM_PROCESSOR_NAME = "StimControl"
 
 import tty
 import termios
@@ -93,8 +93,8 @@ def main():
                     filter_name = filter_config.get("name")
                     gen_filter(filter_params, fs, filter_name, output_folder=os.path.join(resources_folder, "filters"))
                     # gen_filter(N, low_cutoff, high_cutoff, fs, length=None, output_folder=os.path.join(resources_folder, "filters"), btype=btype)
-            elif processor_config.get("class") == "PhaseEstimator":
-                # Check if processor PhaseEstimator is configured to use a non-file-based filter
+            elif processor_config.get("class") == "PhaseEstimation":
+                # Check if processor PhaseEstimation is configured to use a non-file-based filter
                 filter_config = processor_config.get("options", {}).get("filter", {})
                 if "file" not in filter_config:
                     for iaf in np.arange(4.9,18.1,0.1):
@@ -240,7 +240,7 @@ def load_stim_protocol(path):
 
 def run_stim_protocol(zmq_context, port, protocol, log_path, stop_event: threading.Event):
     """Runs a stimulation protocol on its own REQ socket (zmq sockets are not thread-safe,
-    so this must not share the main thread's socket), toggling StimulusController's gain
+    so this must not share the main thread's socket), toggling StimControl's gain
     on/off via the "set_enabled" apply command and logging each transition with a timestamp.
     """
     socket = zmq_context.socket(zmq.REQ)

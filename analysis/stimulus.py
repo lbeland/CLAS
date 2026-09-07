@@ -22,7 +22,7 @@ class StimulusConfig:
         opts = (
             graph_config.get("graph", {})
             .get("processors", {})
-            .get("StimulusController", {})
+            .get("StimControl", {})
             .get("options", {})
         )
         return cls(
@@ -48,7 +48,7 @@ def compute_reference_stimulus(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Reconstruct the ideal stimulus signal from a reference phase time series,
-    mirroring StimulusController::Process().
+    mirroring StimControl::Process().
 
     Returns
     -------

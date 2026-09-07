@@ -1,14 +1,14 @@
 """
 One-off test: plot the precomputed burst buffer (waveform + spectrum).
 
-Reads the debug dump written once by StimulusController::build_audio_buffers_()
+Reads the debug dump written once by StimControl::build_audio_buffers_()
 at results/burst_buffer_debug.txt (first line: "# fs_audio=<Hz> num_octaves=<n>",
 followed by one mono sample per line, normalized to peak amplitude 1).
 
-Run from the repo root after the falcon graph has run StimulusController at
+Run from the repo root after the falcon graph has run StimControl at
 least once:
 
-    python extensions/processors/StimulusController/plot_burst_buffer.py
+    python extensions/processors/StimControl/plot_burst_buffer.py
 """
 import sys
 from pathlib import Path
@@ -53,7 +53,7 @@ def fit_slope(freqs, psd, f_min=1.0, f_max=None):
 def main():
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PATH
     if not path.exists():
-        raise SystemExit(f"No debug dump found at {path}. Run StimulusController first.")
+        raise SystemExit(f"No debug dump found at {path}. Run StimControl first.")
 
     samples, fs_audio = load_burst_buffer(path)
     n = len(samples)

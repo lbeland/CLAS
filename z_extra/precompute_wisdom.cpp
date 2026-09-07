@@ -1,22 +1,22 @@
 // generate_fftw_wisdom.cpp
 //
-// Pre-generates FFTW wisdom for all FFT sizes required by PhaseEstimator and
-// IAFEstimator, so that neither processor ever falls back to planning
+// Pre-generates FFTW wisdom for all FFT sizes required by PhaseEstimation and
+// FrequencyEstimation, so that neither processor ever falls back to planning
 // (FFTW_PATIENT/FFTW_ESTIMATE) at runtime.
 //
-// PhaseEstimator: covers f0 values from 5.0 Hz to 16.0 Hz in 0.1 Hz steps.
-// The sizing logic mirrors PhaseEstimator exactly:
+// PhaseEstimation: covers f0 values from 5.0 Hz to 16.0 Hz in 0.1 Hz steps.
+// The sizing logic mirrors PhaseEstimation exactly:
 //   window_size = static_cast<int>(2.0 * fs / f0)
 //   n_fft       = good_size_real(window_size)
-// Two plan types are generated per unique n_fft, matching PhaseEstimator:
+// Two plan types are generated per unique n_fft, matching PhaseEstimation:
 //   - fftw_plan_dft_r2c_1d  (forward, real-to-complex; matches p_)
 //   - fftw_plan_dft_1d       (backward, complex-to-complex; matches p_inv_)
 //
-// IAFEstimator: a single fixed-size, r2c-forward-only plan (matches
+// FrequencyEstimation: a single fixed-size, r2c-forward-only plan (matches
 // fft_plan_), sized from window_size_sec rather than f0:
 //   window_size = window_size_sec * fs
 //   n_fft       = good_size_real(window_size)
-// This is a different sizing rule from PhaseEstimator's sweep above, so it
+// This is a different sizing rule from PhaseEstimation's sweep above, so it
 // is not automatically covered by it and is planned separately below.
 //
 // Build (both processors use double-precision FFTW):
@@ -39,15 +39,15 @@
 // Full path to the FFTW wisdom file (loaded first, then updated in-place).
 static const char* WISDOM_PATH = "resources/fft_wisdom/fftw_wisdom.txt";
 
-// Sample rate used by PhaseEstimator (Hz).
+// Sample rate used by PhaseEstimation (Hz).
 static const double FS = 10000.0;
 
-// f0 sweep parameters (Hz), for PhaseEstimator.
+// f0 sweep parameters (Hz), for PhaseEstimation.
 static const double F0_MIN  =  5.0;
 static const double F0_MAX  = 16.0;
 static const double F0_STEP =  0.1;
 
-// window_size_sec used by IAFEstimator (see TurboLinkCLAS/ERPCLAS/ReplayCLAS.yaml).
+// window_size_sec used by FrequencyEstimation (see TurboLinkCLAS/ERPCLAS/ReplayCLAS.yaml).
 static const double IAF_WINDOW_SIZE_SEC = 10.0;
 
 // FFTW planner flag.  Use FFTW_MEASURE for thorough wisdom; FFTW_PATIENT is
@@ -55,7 +55,7 @@ static const double IAF_WINDOW_SIZE_SEC = 10.0;
 // (fast but no real wisdom benefit).
 static const unsigned PLANNER_FLAG = FFTW_MEASURE;
 
-// ── HELPERS (identical to the anonymous-namespace helpers in PhaseEstimator) ─
+// ── HELPERS (identical to the anonymous-namespace helpers in PhaseEstimation) ─
 
 // https://github.com/mreineck/ducc/blob/ducc0/src/ducc0/fft/fft.h
 // same as used by scipy.fftpack.next_fast_len
@@ -145,7 +145,7 @@ int main()
             continue;
         }
 
-        // Forward real-to-complex plan  (matches p_ in PhaseEstimator).
+        // Forward real-to-complex plan  (matches p_ in PhaseEstimation).
         fftw_plan p_fwd = fftw_plan_dft_r2c_1d(n, real_buf, half_buf, PLANNER_FLAG);
         if (p_fwd)
         {
@@ -157,7 +157,7 @@ int main()
             fprintf(stderr, "  [r2c] plan FAILED for n=%d\n", n);
         }
 
-        // Backward complex-to-complex plan  (matches p_inv_ in PhaseEstimator).
+        // Backward complex-to-complex plan  (matches p_inv_ in PhaseEstimation).
         fftw_plan p_inv = fftw_plan_dft_1d(n, cx_in, cx_out, FFTW_BACKWARD, PLANNER_FLAG);
         if (p_inv)
         {
@@ -175,12 +175,12 @@ int main()
         fftw_free(cx_out);
     }
 
-    // 4. IAFEstimator's single fixed-size r2c-forward-only plan. Different
-    //    sizing rule from PhaseEstimator (window_size_sec * fs, not f0-based),
+    // 4. FrequencyEstimation's single fixed-size r2c-forward-only plan. Different
+    //    sizing rule from PhaseEstimation (window_size_sec * fs, not f0-based),
     //    so it is not covered by the sweep above and must be planned here.
     {
         int n = static_cast<int>(good_size_real(static_cast<size_t>(IAF_WINDOW_SIZE_SEC * FS)));
-        printf("[IAFEstimator] Planning n_fft = %d (window_size_sec=%.1f, fs=%.1f) ...\n",
+        printf("[FrequencyEstimation] Planning n_fft = %d (window_size_sec=%.1f, fs=%.1f) ...\n",
                n, IAF_WINDOW_SIZE_SEC, FS);
 
         double*       real_buf = fftw_alloc_real(n);
@@ -192,8 +192,8 @@ int main()
         }
         else
         {
-            // Forward real-to-complex plan (matches fft_plan_ in IAFEstimator;
-            // IAFEstimator never plans a backward transform).
+            // Forward real-to-complex plan (matches fft_plan_ in FrequencyEstimation;
+            // FrequencyEstimation never plans a backward transform).
             fftw_plan p_fwd = fftw_plan_dft_r2c_1d(n, real_buf, half_buf, PLANNER_FLAG);
             if (p_fwd)
             {

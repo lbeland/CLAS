@@ -88,7 +88,7 @@ def compute_echt_reference(
       3. the ECHT phase at that window's endpoint is the reference phase at ``x``.
 
     Window length (``n_cycles / f0`` s), pass-band width (``0.9 * f0``), filter
-    order and MSE calibration all match the online ``PhaseEstimator`` processor.
+    order and MSE calibration all match the online ``PhaseEstimation`` processor.
     ``f0(x)`` is snapped to a 0.1 Hz grid, as the online processor also does.
 
     Returns
@@ -266,9 +266,9 @@ def compute_errors(
     true_inst_freq = ground_truth["true_inst_freq"]
 
     # Phase error
-    if samples.get("PhaseEstimator_phase") is not None:
-        t   = (samples["PhaseEstimator_phase"]["x"] - start_ts) / 1e6
-        phi = samples["PhaseEstimator_phase"]["y"]
+    if samples.get("PhaseEstimation_phase") is not None:
+        t   = (samples["PhaseEstimation_phase"]["x"] - start_ts) / 1e6
+        phi = samples["PhaseEstimation_phase"]["y"]
         n   = len(phi)
         ref = true_phase[:n] if true_phase is not None else hilbert_phase[:n]
         err = np.angle(np.exp(1j * (ref - phi)), deg=True)
@@ -287,27 +287,27 @@ def compute_errors(
                            "unit": "degrees", "linestyle": ":"})
 
     # IAF error
-    if samples.get("IAFEstimator") is not None and true_inst_freq is not None:
-        t   = (samples["IAFEstimator"]["x"] - start_ts) / 1e6
-        iaf = samples["IAFEstimator"]["y"]
+    if samples.get("FrequencyEstimation") is not None and true_inst_freq is not None:
+        t   = (samples["FrequencyEstimation"]["x"] - start_ts) / 1e6
+        iaf = samples["FrequencyEstimation"]["y"]
         n   = min(len(iaf), len(true_inst_freq))
         errors.append({"label": "IAF error", "time_s": t[:n],
                        "values": iaf[:n] - true_inst_freq[:n], "unit": "Hz"})
 
     # Stimulus edge errors
     stim_ref = None
-    if samples.get("StimulusController") is not None:
+    if samples.get("StimControl") is not None:
         trigger_y = (
-            samples["SourceClient_TRIGGER"]["y"]
-            if "SourceClient_TRIGGER" in samples
-            else samples["StimulusController"]["y"]
+            samples["UDPSource_TRIGGER"]["y"]
+            if "UDPSource_TRIGGER" in samples
+            else samples["StimControl"]["y"]
         )
         ref_phase = true_phase if true_phase is not None else hilbert_phase
 
         if true_inst_freq is not None:
             iaf_y = true_inst_freq
-        elif samples.get("IAFEstimator") is not None:
-            iaf_y = samples["IAFEstimator"]["y"]
+        elif samples.get("FrequencyEstimation") is not None:
+            iaf_y = samples["FrequencyEstimation"]["y"]
         else:
             print("No IAF information available; using constant 10 Hz for stimulus reconstruction.")
             iaf_y = np.full(len(ground_truth["time"]), 10.0)
@@ -340,7 +340,7 @@ def compute_errors(
 
         if filtered is not None:
             filt_signal = filtered
-            iaf = iaf_y if samples.get("IAFEstimator") is not None else None
+            iaf = iaf_y if samples.get("FrequencyEstimation") is not None else None
             echt_phase = compute_echt_reference(filt_signal, iaf, fs, get_edges(trigger_binary, "rising"))
             echt_onset_err, _ = compute_stimulus_edge_errors(
                 trigger_binary, time_us, echt_phase, iaf_y, stim_cfg, start_ts)

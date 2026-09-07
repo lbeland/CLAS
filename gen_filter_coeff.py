@@ -47,7 +47,7 @@ def mse_optimal_calibration_gain(f0, fs, N, L, H):
 
     Ports the closed-form derivation from ECHT._calibration in
     IAF_Estimation/cecHT/phase.py so it can be precomputed here, offline,
-    instead of once per IAF update at runtime in PhaseEstimator.cpp.
+    instead of once per IAF update at runtime in PhaseEstimation.cpp.
 
     Parameters
     ----------
@@ -104,7 +104,7 @@ def gen_filter_ecHT(filter_params, output_folder):
 
     window_length = length  # time-domain sample count (the "N" in the Dirichlet-kernel sense), before FFT padding
     if length is not None:
-        # Store frequency response of bandpass filter (for PhaseEstimator)
+        # Store frequency response of bandpass filter (for PhaseEstimation)
         length = fftpack.next_fast_len(length)
 
     # Nudge away from exact .xx5 boundaries before rounding to 2 decimals, so that
@@ -127,7 +127,7 @@ def gen_filter_ecHT(filter_params, output_folder):
     sos_outputs.append(sos)
 
     if length is not None:
-        # Store frequency response of bandpass filter (for PhaseEstimator)
+        # Store frequency response of bandpass filter (for PhaseEstimation)
         filt_freq = np.fft.fftfreq(length, d=1 / fs)
         _, H = freqz_sos(sos, worN=filt_freq, fs=fs)
 
@@ -186,7 +186,7 @@ def gen_filter(filter_params, fs, filter_name, output_folder):
         for row in global_filter:
             f.write(" ".join(f"{coef:.18g}" for coef in row) + "\n")
 
-    # Store frequency response of bandpass filter (for Phasedrift compensation in PhaseEstimator)
+    # Store frequency response of bandpass filter (for Phasedrift compensation in PhaseEstimation)
     freqs = np.arange(0, high_cutoff, 0.1)  # from 0 to Nyquist in 0.1 Hz steps (because IAF can change in 0.1 Hz steps)
     w, H = freqz_sos(global_filter, worN=freqs, fs=fs)
     phase = np.angle(H)  # phase shift in radians at each 0.1 Hz step

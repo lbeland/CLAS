@@ -108,7 +108,7 @@ def discover_condition_runs(
             stim_onset_deg = (
                 graph_config.get("graph", {})
                 .get("processors", {})
-                .get("StimulusController", {})
+                .get("StimControl", {})
                 .get("options", {})
                 .get("stim_onset_deg")
             )

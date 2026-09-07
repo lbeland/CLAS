@@ -94,7 +94,7 @@ def load_yaml(path: Path) -> Dict[str, Any]:
 def parse_connection(connection: str) -> Tuple[str, str, int, str, str, int]:
     """
     Parse strings like:
-        Producer.out.0 = Consumer.in.0
+        SimulatedSource.out.0 = BenchSink.in.0
     """
     match = CONNECTION_RE.match(connection)
     if not match:
@@ -113,7 +113,7 @@ def parse_connection(connection: str) -> Tuple[str, str, int, str, str, int]:
 def parse_state_reference(reference: str) -> Tuple[str, str]:
     """
     Parse strings like:
-        IAFEstimator.iaf
+        FrequencyEstimation.iaf
     """
     match = STATE_REF_RE.match(reference)
     if not match:

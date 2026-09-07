@@ -89,7 +89,7 @@ Options:
     description: >
       Bursty signal - duration (s) of each OFF segment. 0 = signal always on.
       During OFF segments the signal is silenced (white noise only) and the
-      meta ground truth is set to NaN. iaf broadcaster holds its last valid value.
+      meta ground truth is set to NaN. f0 broadcaster holds its last valid value.
   - name: nchannels
     type: int
     default: 10

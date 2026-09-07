@@ -116,7 +116,7 @@ StimControl::StimControl() : IProcessor(PRIORITY_HIGH)
     add_option("audio_format", audio_format_, "Sample format: float (FLOAT_LE) or s16 (S16_LE). hw:* devices often require s16.");
 
     add_option("stim_dur_deg", stim_dur_deg_, "Stimulus duration in degrees.");
-    add_option("stim_dur_ms", stim_dur_ms_, "Fallback burst duration in ms (used only when IAF is unavailable).");
+    add_option("stim_dur_ms", stim_dur_ms_, "Fallback burst duration in ms (used only when f0 is unavailable).");
     add_option("stim_dur_unit", stim_dur_unit_, "Burst duration unit: 'deg' or 'ms' (default: 'deg').");
 
     add_option("randomize_stim_onset", randomize_stim_onset_, "Whether to randomize stimulus onset phase on each presentation (default: false).");
@@ -126,8 +126,8 @@ StimControl::StimControl() : IProcessor(PRIORITY_HIGH)
     add_option("use_background_sound", use_background_sound_, "Whether to play a continuous background sound (default: false).");
     add_option("background_dB", background_dB_, "Sound level of signal over background in dB (default: 18).");
 
-    iaf_state_ = create_follower_state<double>(
-        "iaf", 10.0, Permission::NONE,
+    f0_state_ = create_follower_state<double>(
+        "f0", 10.0, Permission::NONE,
         "Individual alpha frequency shared by an upstream processor.");
 }
 void StimControl::CreatePorts()
@@ -165,41 +165,41 @@ void StimControl::CompleteStreamInfo()
     }
 }
 
-bool StimControl::compute_burst_params_(double iaf)
+bool StimControl::compute_burst_params_(double f0)
 {
     double new_burst_ms = 0;
 
     if (dur_unit_ == DurUnit::kMs)
     {
-        // Fixed duration — IAF is irrelevant for burst length.
-        // stim_dur_rad_ still uses IAF so the phase window scales with alpha.
+        // Fixed duration — f0 is irrelevant for burst length.
+        // stim_dur_rad_ still uses f0 so the phase window scales with alpha.
         new_burst_ms = std::max(1.0, stim_dur_ms_());
-        if (std::isfinite(iaf) && iaf > 0.0)
+        if (std::isfinite(f0) && f0 > 0.0)
         {
-            stim_dur_rad_ = (new_burst_ms / 1000.0) * (2.0 * M_PI * iaf);
+            stim_dur_rad_ = (new_burst_ms / 1000.0) * (2.0 * M_PI * f0);
         }
         else
         {
-            // No IAF available: assume 10 Hz
+            // No f0 available: assume 10 Hz
             stim_dur_rad_ = (new_burst_ms / 1000.0) * (2.0 * M_PI * 10.0);
-            LOG(WARNING) << name() << " IAF unavailable in ms-mode; phase window assumes 10 Hz";
+            LOG(WARNING) << name() << " f0 unavailable in ms-mode; phase window assumes 10 Hz";
         }
     }
     else if (dur_unit_ == DurUnit::kDeg)
     {
-        // Duration tracks IAF — burst must be rebuilt whenever IAF changes.
-        if (!std::isfinite(iaf) || iaf <= 0.0)
+        // Duration tracks f0 — burst must be rebuilt whenever f0 changes.
+        if (!std::isfinite(f0) || f0 <= 0.0)
         {
-            // Fallback to stim_dur_ms_ until a valid IAF arrives.
+            // Fallback to stim_dur_ms_ until a valid f0 arrives.
             new_burst_ms = std::max(1.0, stim_dur_ms_());
             stim_dur_rad_ = stim_dur_deg_() * (1.0 / 180.0 * M_PI);
-            // LOG(WARNING) << name() << " IAF unavailable in deg-mode; using stim_dur_ms=" << new_burst_ms << " ms as fallback";
+            // LOG(WARNING) << name() << " f0 unavailable in deg-mode; using stim_dur_ms=" << new_burst_ms << " ms as fallback";
         }
         else
         {
             const double deg = std::clamp(stim_dur_deg_(), 0.0, 360.0);
             stim_dur_rad_ = deg * (1.0 / 180.0 * M_PI);
-            new_burst_ms = std::clamp((deg / 360.0) / iaf, 0.0, 5.0) * 1000.0;
+            new_burst_ms = std::clamp((deg / 360.0) / f0, 0.0, 5.0) * 1000.0;
         }
     }
     else
@@ -277,9 +277,9 @@ void StimControl::Prepare(GlobalContext &context)
 
 void StimControl::Preprocess(ProcessingContext &context)
 {
-    const double iaf = iaf_state_ ? iaf_state_->get() : std::numeric_limits<double>::quiet_NaN();
-    last_iaf_ = iaf;
-    compute_burst_params_(iaf); // sets stim_dur_rad_, burst_frames_, period_ms_
+    const double f0 = f0_state_ ? f0_state_->get() : std::numeric_limits<double>::quiet_NaN();
+    last_f0_ = f0;
+    compute_burst_params_(f0); // sets stim_dur_rad_, burst_frames_, period_ms_
     build_audio_buffers_();     // uses burst_frames_ and period_ms_ set above
 
     // Drain any leftover samples from a previous run
@@ -873,7 +873,7 @@ void StimControl::Process(ProcessingContext &context)
     MultiChannelType<double>::Data *data_in;
     MultiChannelType<double>::Data *data_out;
 
-    bool valid_iaf_and_phase = true;
+    bool valid_f0_and_phase = true;
 
     // Randomization setup for stimulus timing
     TimePoint last_stim_time_ = Clock::now();
@@ -909,7 +909,7 @@ void StimControl::Process(ProcessingContext &context)
             break;
         }
         // At the start of each loop assume that stimulation is valid
-        valid_iaf_and_phase = true;
+        valid_f0_and_phase = true;
 
         data_out = data_out_port_->slot(0)->ClaimData(false);
 
@@ -920,31 +920,31 @@ void StimControl::Process(ProcessingContext &context)
         double phase = data_in->data_sample(0, 0);
         if (std::isnan(phase))
         {
-            valid_iaf_and_phase = false;
+            valid_f0_and_phase = false;
             // LOG(WARNING) << name() << " Received NaN phase; skipping stimulation for this packet.";
         }
-        const double iaf_ = iaf_state_->get();
+        const double f0 = f0_state_->get();
 
-        // In "deg" mode the burst duration depends on IAF, so burst_ms_/burst_frames_
-        // are recomputed here when IAF changes
-        if (std::isnan(iaf_))
+        // In "deg" mode the burst duration depends on f0, so burst_ms_/burst_frames_
+        // are recomputed here when f0 changes
+        if (std::isnan(f0))
         {
-            valid_iaf_and_phase = false;
-            // LOG(WARNING) << name() << " IAF is NaN; skipping stimulation for this packet.";
+            valid_f0_and_phase = false;
+            // LOG(WARNING) << name() << " f0 is NaN; skipping stimulation for this packet.";
         }
-        else if ((std::isnan(last_iaf_) && std::isfinite(iaf_)) || std::abs(iaf_ - last_iaf_) > 1e-1)
+        else if ((std::isnan(last_f0_) && std::isfinite(f0)) || std::abs(f0 - last_f0_) > 1e-1)
         {
-            compute_burst_params_(iaf_);
+            compute_burst_params_(f0);
 
             if (!randomize_stim_onset_() && min_stim_dist_sec_() == 0)
             {
                 // Allow the next stimuli to fire only at the tail of this cycle
-                // Period of a rate 10% faster than IAF
-                double min_dist = 1 / (iaf_ + iaf_ * 0.1); // 10% faster than IAF
+                // Period of a rate 10% faster than f0
+                double min_dist = 1 / (f0 + f0 * 0.1); // 10% faster than f0
                 distrib_interval = std::uniform_real_distribution<double>(min_dist, min_dist);
                 stim_dist_sec_ = distrib_interval(gen);
             }
-            last_iaf_ = iaf_;
+            last_f0_ = f0;
         }
 
         TimePoint now = Clock::now();
@@ -975,7 +975,7 @@ void StimControl::Process(ProcessingContext &context)
             {
                 stimulate = true;
             }
-            else if (valid_iaf_and_phase)
+            else if (valid_f0_and_phase)
             {
                 double delay_sec = 0;
                 if (correct_latencies_())
@@ -986,7 +986,7 @@ void StimControl::Process(ProcessingContext &context)
                     delay_sec += audio_latency_s_() + erp_latency_s_();
                 }
 
-                double phase_advance = 2.0 * M_PI * iaf_ * delay_sec;
+                double phase_advance = 2.0 * M_PI * f0 * delay_sec;
                 double diff = phase + phase_advance - stim_onset_rad_;
 
                 // Wrap diff to [0, 2*pi)
@@ -1011,8 +1011,8 @@ void StimControl::Process(ProcessingContext &context)
 
                 // output_ mirrors the full nominal stimulus duration (in samples of
                 // the phase stream), independent of how the trigger was decided.
-                // Uses burst_ms_ (rather than stim_dur_rad_/iaf_) so this stays valid
-                // when iaf_ is NaN, e.g. in fully randomized mode.
+                // Uses burst_ms_ (rather than stim_dur_rad_/f0) so this stays valid
+                // when f0 is NaN, e.g. in fully randomized mode.
                 output_samples_remaining_ = std::max(1, (int)std::round(
                     burst_ms_ / 1000.0 * fs_));
                 in_stim_window = true;

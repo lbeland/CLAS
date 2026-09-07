@@ -2,7 +2,7 @@ Description: Presents phase-locked auditory stimuli. Consumes an instantaneous-p
   schedules a pink-noise (Voss-McCartney) burst when the predicted phase reaches the target
   onset phase - optionally corrected for audio-output and auditory-ERP latency - and plays it
   through ALSA on a dedicated audio thread. Burst length can be a fixed duration or a fraction
-  of the alpha cycle scaled by the shared IAF. Emits a gate stream marking active stimulus
+  of the alpha cycle scaled by the shared f0. Emits a gate stream marking active stimulus
   windows. Stops the graph after max_n_stimuli presentations.
 
 Input port:
@@ -19,7 +19,7 @@ Output port:
     description: Stimulus gate: 1.0 while a stimulus window is active, 0.0 otherwise.
 
 Shared state:
-  - name: iaf
+  - name: f0
     type: follower <double>
     default: 10.0
     description: Individual alpha frequency (Hz) from an upstream processor; scales the phase
@@ -96,7 +96,7 @@ Options:
   - name: stim_dur_ms
     type: double
     default: 20
-    description: Fallback burst duration in ms (used when stim_dur_unit is "ms" or the IAF is unavailable).
+    description: Fallback burst duration in ms (used when stim_dur_unit is "ms" or the f0 is unavailable).
   - name: randomize_stim_onset
     type: bool
     default: false

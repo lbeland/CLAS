@@ -64,7 +64,7 @@ class StimControl : public IProcessor {
     options::Int    stim_num_octaves_{16};      // Voss-McCartney pink noise octaves
 
     options::String stim_dur_unit_{"deg"};     // "deg" or "ms"
-    options::Double stim_dur_ms_{20};          // fallback burst duration when IAF is unavailable
+    options::Double stim_dur_ms_{20};          // fallback burst duration when f0 is unavailable
     options::Double stim_dur_deg_{90};
 
     options::String audio_device_{"hw:1,0"};
@@ -91,10 +91,10 @@ class StimControl : public IProcessor {
     DurUnit dur_unit_ = DurUnit::kMs;
 
     double fs_ = 0;          // input stream sample rate (Hz), set in CompleteStreamInfo
-    FollowerState<double> *iaf_state_ = nullptr;
+    FollowerState<double> *f0_state_ = nullptr;
 
     // Audio burst playback
-    virtual bool compute_burst_params_(double iaf);
+    virtual bool compute_burst_params_(double f0);
 
     void build_audio_buffers_();
     void set_master_volume_(const std::string &card, long pct);
@@ -123,7 +123,7 @@ class StimControl : public IProcessor {
     double period_ms_ = 0;
     double burst_precompute_ms_ = 500; // pre-compute 0.5 second of audio buffers
     double burst_ms_ = 0;
-    double last_iaf_ = std::numeric_limits<double>::quiet_NaN();
+    double last_f0_ = std::numeric_limits<double>::quiet_NaN();
 
     double fs_audio_ = 0;
     int burst_frames_ = 0;

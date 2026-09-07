@@ -181,8 +181,8 @@ SimulatedSource::SimulatedSource() : IProcessor(PRIORITY_HIGH)
                "sample rate. When false, generate packets as fast as possible with no "
                "inter-packet sleep.");
 
-    iaf_state_ = create_broadcaster_state<double>(
-        "iaf", current_iaf_, Permission::NONE,
+    f0_state_ = create_broadcaster_state<double>(
+        "f0", current_f0_, Permission::NONE,
         "Individual alpha frequency shared with downstream processors.");
 }
 
@@ -371,14 +371,14 @@ void SimulatedSource::Process(ProcessingContext &context)
         if (signal_on)
         {
             meta_data = {state.amplitude, state.theta, state.inst_freq};
-            current_iaf_ = state.inst_freq;
-            iaf_state_->set(current_iaf_);
+            current_f0_ = state.inst_freq;
+            f0_state_->set(current_f0_);
         }
         else
         {
             state.value = 0.0;  // only white noise remains
             meta_data = {kNaN, kNaN, kNaN};
-            // iaf broadcaster holds its last valid value for downstream processors.
+            // f0 broadcaster holds its last valid value for downstream processors.
         }
 
         // hardware_time_us is in steady_clock µs; convert to wall-clock for hardware_timestamp

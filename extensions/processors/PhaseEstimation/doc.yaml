@@ -1,8 +1,8 @@
 Description: Estimates the instantaneous phase of the ongoing alpha oscillation with a causal
-  end-corrected Hilbert transform (cecHT). A sliding window of 2 IAF cycles is FFT'd, turned
+  end-corrected Hilbert transform (cecHT). A sliding window of 2 f0 cycles is FFT'd, turned
   into an analytic spectrum, multiplied by a bandpass filter (loaded from file or derived from
-  the IAF), and inverse-transformed; phase and real part are read at the last window sample.
-  The window, FFT size, filter and calibration are retuned whenever the shared IAF changes.
+  the f0), and inverse-transformed; phase and real part are read at the last window sample.
+  The window, FFT size, filter and calibration are retuned whenever the shared f0 changes.
 
 Input port:
   - name: in
@@ -15,17 +15,17 @@ Output ports:
     type: MultiChannelType <double>
     slots: 1
     description: >
-      Instantaneous phase (rad). NaN while the shared IAF is invalid (NaN or
+      Instantaneous phase (rad). NaN while the shared f0 is invalid (NaN or
       outside 5-18 Hz) or the sample window is not yet full.
   - name: real
     type: MultiChannelType <double>
     slots: 1
     description: >
-      Filtered analytic real part. NaN while the shared IAF is invalid (NaN or
+      Filtered analytic real part. NaN while the shared f0 is invalid (NaN or
       outside 5-18 Hz) or the sample window is not yet full.
 
 Shared state:
-  - name: iaf
+  - name: f0
     type: follower <double>
     description: Individual alpha frequency (Hz) provided by an upstream FrequencyEstimation.
 
@@ -39,16 +39,16 @@ Options:
     default: false
     description: Apply the MSE-optimal calibration gain to the cecHT output (requires a
       precomputed "calibration gain" entry in the coefficient file; falls back to unity gain).
-  - name: iaf_read_interval
+  - name: f0_read_interval
     type: unsigned int
     default: 5000
-    description: Number of packets between polls of the shared IAF state.
+    description: Number of packets between polls of the shared f0 state.
   - name: filter
     type: yaml node (optional)
-    default: no default - filter is derived from the IAF (bandwidth = 0.9 * IAF)
+    default: no default - filter is derived from the f0 (bandwidth = 0.9 * f0)
     description: Filter definition. If it contains a "file" key, frequency-response
       coefficients are loaded from filters://<file>; otherwise a coefficient file name is
-      built from the IAF, sample rate and window size.
+      built from the f0, sample rate and window size.
   - name: compensate_filter
     type: bool
     default: true

@@ -38,7 +38,7 @@ namespace
     struct PeakSeed
     {
         int bin = -1;
-        double iaf_hz = std::numeric_limits<double>::quiet_NaN();
+        double f0_hz = std::numeric_limits<double>::quiet_NaN();
         double peak_value = std::numeric_limits<double>::quiet_NaN();
     };
 
@@ -46,7 +46,7 @@ namespace
     {
         bool valid = false;
         int bin = -1;
-        double iaf_hz = std::numeric_limits<double>::quiet_NaN();
+        double f0_hz = std::numeric_limits<double>::quiet_NaN();
         double sigma_hz = std::numeric_limits<double>::quiet_NaN();
         double amplitude = std::numeric_limits<double>::quiet_NaN();
         double delta_bic = std::numeric_limits<double>::quiet_NaN();
@@ -101,7 +101,7 @@ namespace
 
         int max_bin = -1;
         double max_value = -1.0;
-        double iaf = -1.0;
+        double f0 = -1.0;
 
         for (size_t k = f_min_bin; k <= f_max_bin; ++k)
         {
@@ -109,7 +109,7 @@ namespace
             {
                 max_value = smoothed_power[k];
                 max_bin = static_cast<int>(k);
-                iaf = max_bin * resolution;
+                f0 = max_bin * resolution;
             }
         }
 
@@ -128,12 +128,12 @@ namespace
             if (denom != 0)
             {
                 double delta = 0.5 * (y1 - y3) / denom;
-                iaf += delta * resolution;
+                f0 += delta * resolution;
             }
         }
 
         seed.bin = max_bin;
-        seed.iaf_hz = iaf;
+        seed.f0_hz = f0;
         seed.peak_value = max_value;
         return seed;
     }
@@ -166,7 +166,7 @@ namespace
         double std_gauss = fwhm / (2.0 * std::sqrt(2.0 * std::log(2.0)));
 
         result.bin = seed.bin;
-        result.iaf_hz = seed.iaf_hz;
+        result.f0_hz = seed.f0_hz;
         result.sigma_hz = std_gauss;
         result.amplitude = amplitude;
 
@@ -318,13 +318,13 @@ FrequencyEstimation::FrequencyEstimation() : IProcessor(PRIORITY_HIGH)
     add_option("window_size_sec", window_size_sec_, "Window size in seconds.");
     add_option("f_min", f_min_, "Left bound of alpha search range (Hz).");
     add_option("f_max", f_max_, "Right bound of alpha search range (Hz).");
-    add_option("calc_interval", calc_interval_, "Number of packets between IAF calculations.");
+    add_option("calc_interval", calc_interval_, "Number of packets between f0 calculations.");
     add_option("max_invalid_sec", max_invalid_sec_, "Maximum duration of invalid data in seconds before reset of estimation.");
-    add_option("kalman_iaf_std", kalman_iaf_std_, "Std of the IAF drift [Hz/s]. Sets Kalman Q.");
+    add_option("kalman_f0_std", kalman_f0_std_, "Std of the f0 drift [Hz/s]. Sets Kalman Q.");
     add_option("kalman_full", kalman_full_, "If true, use full Kalman filter with adaptive gain and cold-start. If false, use EMA-equivalent fixed gain.");
 
-    iaf_state_ = create_broadcaster_state<double>(
-        "iaf", current_iaf_, Permission::NONE,
+    f0_state_ = create_broadcaster_state<double>(
+        "f0", current_f0_, Permission::NONE,
         "Individual alpha frequency shared with downstream processors.");
 }
 
@@ -360,13 +360,13 @@ void FrequencyEstimation::Prepare(GlobalContext &context)
     sample_window.set_capacity(n_fft_);
     LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
-    iaf_state_->set(current_iaf_);
+    f0_state_->set(current_f0_);
 
     const double update_interval_s = static_cast<double>(calc_interval_()) / p.sample_rate;
 
     kf_R_ = 0.9933; // measurement noise variance (empirically determined)
 
-    const double drift_var_per_s = kalman_iaf_std_() * kalman_iaf_std_();
+    const double drift_var_per_s = kalman_f0_std_() * kalman_f0_std_();
     kf_Q_ = drift_var_per_s * update_interval_s;
 
     // Full KF: start uncertain (P = R) for fast cold-start acquisition.
@@ -407,7 +407,7 @@ void FrequencyEstimation::Prepare(GlobalContext &context)
 
     f_min_bin_ = std::floor(f_min_() / freq_resolution_);
     f_max_bin_ = std::ceil(f_max_() / freq_resolution_);
-    LOG(INFO) << name() << " IAF search range: " << f_min_() << " - " << f_max_() << " Hz (bins " << f_min_bin_ << " - " << f_max_bin_ << ")";
+    LOG(INFO) << name() << " f0 search range: " << f_min_() << " - " << f_max_() << " Hz (bins " << f_min_bin_ << " - " << f_max_bin_ << ")";
 
     max_analyze_bin_ = 30 / freq_resolution_ + 1; // analyze up to 30 Hz to avoid high-frequency noise
 
@@ -434,9 +434,9 @@ void FrequencyEstimation::Prepare(GlobalContext &context)
 
 void FrequencyEstimation::Preprocess(ProcessingContext &context)
 {
-    current_iaf_ = std::numeric_limits<double>::quiet_NaN();
-    iaf_state_->set(current_iaf_);
-    last_valid_iaf_ = std::numeric_limits<double>::quiet_NaN();
+    current_f0_ = std::numeric_limits<double>::quiet_NaN();
+    f0_state_->set(current_f0_);
+    last_valid_f0_ = std::numeric_limits<double>::quiet_NaN();
     current_gauss_sigma_ = std::numeric_limits<double>::quiet_NaN();
     kf_x_ = std::numeric_limits<double>::quiet_NaN();
     kf_P_ = kalman_full_() ? kf_R_ : std::sqrt(kf_Q_ * kf_R_);
@@ -514,7 +514,7 @@ void FrequencyEstimation::Process(ProcessingContext &context)
             PeakSeed seed = find_peak_seed(power_smooth, f_min_bin_, f_max_bin_, freq_resolution_, true);
             PeakFitResult peak = fit_gaussian_peak(power_smooth, seed, freq_resolution_);
 
-            std::vector<double> gauss = gaussian(freqs_, peak.amplitude, peak.iaf_hz, peak.sigma_hz);
+            std::vector<double> gauss = gaussian(freqs_, peak.amplitude, peak.f0_hz, peak.sigma_hz);
 
             if (peak.sigma_hz > max_gauss_width_hz_())
             {
@@ -531,13 +531,13 @@ void FrequencyEstimation::Process(ProcessingContext &context)
             if (peak.valid)
             {
                 invalid_count_ = std::max(0, invalid_count_ - 1);
-                current_iaf_ = peak.iaf_hz;
-                last_valid_iaf_ = peak.iaf_hz;
+                current_f0_ = peak.f0_hz;
+                last_valid_f0_ = peak.f0_hz;
                 current_gauss_sigma_ = peak.sigma_hz;
                 if (std::isnan(kf_x_))
                 {
                     // First valid estimate — initialize directly (no smoothing yet)
-                    kf_x_ = peak.iaf_hz;
+                    kf_x_ = peak.f0_hz;
                 }
                 else
                 {
@@ -548,7 +548,7 @@ void FrequencyEstimation::Process(ProcessingContext &context)
                         // Compute SNR from Gaussian peak power within ±2σ
                         for (int k = 0; k < max_analyze_bin_; ++k)
                         {
-                            if (std::abs(freqs_[k] - peak.iaf_hz) <= 2 * peak.sigma_hz)
+                            if (std::abs(freqs_[k] - peak.f0_hz) <= 2 * peak.sigma_hz)
                             {
                                 double aperiodic_lin = std::pow(10, aperiodic[k]);
                                 double gauss_lin = std::pow(10, gauss[k]) - 1.0;
@@ -560,24 +560,24 @@ void FrequencyEstimation::Process(ProcessingContext &context)
 
                         double R_n = current_gauss_sigma_ * current_gauss_sigma_ / (2 * SNR_);
                         //double R_n = current_gauss_sigma_  /  SNR_;
-                        kalman_update(peak.iaf_hz, R_n);
+                        kalman_update(peak.f0_hz, R_n);
                     }
                     else
                     {
                         // EMA-equivalent fixed-gain update
-                        kalman_update(peak.iaf_hz, kf_R_);
+                        kalman_update(peak.f0_hz, kf_R_);
                     }
                 }
             }
             else
             {
                 invalid_count_ = std::min(invalid_count_ + 1, invalid_threshold_ + 1);
-                current_iaf_ = std::numeric_limits<double>::quiet_NaN();
+                current_f0_ = std::numeric_limits<double>::quiet_NaN();
                 current_gauss_sigma_ = std::numeric_limits<double>::quiet_NaN();
             }
             if (invalid_count_ == invalid_threshold_)
             {
-                LOG(WARNING) << name() << " Packet " << packet_count_ << ": Too many consecutive invalid estimates, resetting IAF estimation.";
+                LOG(WARNING) << name() << " Packet " << packet_count_ << ": Too many consecutive invalid estimates, resetting f0 estimation.";
             }
             if (invalid_count_ >= invalid_threshold_)
             {
@@ -585,11 +585,11 @@ void FrequencyEstimation::Process(ProcessingContext &context)
                 kf_P_ = kalman_full_() ? kf_R_ : std::sqrt(kf_Q_ * kf_R_);
             }
 
-            iaf_state_->set(kf_x_);
+            f0_state_->set(kf_x_);
             TimePoint end_time = Clock::now();
             if (packet_count_ % static_cast<int>(fs_) == 0)
             {
-                LOG(INFO) << name() << " Packet " << packet_count_ << " (" << invalid_count_ << " invalid): Estimated IAF = " << current_iaf_ << " Hz (sigma: " << current_gauss_sigma_ << "), KF estimate: " << kf_x_ << " Hz (R=" << kf_R_ << ", SNR(dB)=" << 20 * std::log10(SNR_) << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
+                LOG(INFO) << name() << " Packet " << packet_count_ << " (" << invalid_count_ << " invalid): Estimated f0 = " << current_f0_ << " Hz (sigma: " << current_gauss_sigma_ << "), KF estimate: " << kf_x_ << " Hz (R=" << kf_R_ << ", SNR(dB)=" << 20 * std::log10(SNR_) << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
             }
         }
         data_out->set_data(kf_x_);
@@ -605,7 +605,7 @@ void FrequencyEstimation::Process(ProcessingContext &context)
 void FrequencyEstimation::Postprocess(ProcessingContext &context)
 {
     sample_window.clear();
-    iaf_state_->set(std::numeric_limits<double>::quiet_NaN());
+    f0_state_->set(std::numeric_limits<double>::quiet_NaN());
     LOG(INFO) << name() << ": Total messages processed: " << packet_count_;
 }
 

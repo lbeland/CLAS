@@ -52,18 +52,18 @@ class FrequencyEstimation : public IProcessor {
     options::Double f_max_{18.0};
     options::Value<unsigned int, false> calc_interval_{100};
     options::Double max_invalid_sec_{1.0};
-    options::Double kalman_iaf_std_{0.397857};  // IAF drift std [Hz/s], sets Kalman Q
+    options::Double kalman_f0_std_{0.397857};  // f0 drift std [Hz/s], sets Kalman Q
     options::Bool   kalman_full_{true};          // true = full KF (adaptive gain), false = EMA-equivalent (fixed gain)
     options::Double max_gauss_width_hz_{2.0};    // reject peaks broader than this (Hz)
 
-    // Runtime state — shared IAF broadcaster
-    BroadcasterState<double> *iaf_state_ = nullptr;
-    double current_iaf_ = std::numeric_limits<double>::quiet_NaN();
-    double last_valid_iaf_ = std::numeric_limits<double>::quiet_NaN();
+    // Runtime state — shared f0 broadcaster
+    BroadcasterState<double> *f0_state_ = nullptr;
+    double current_f0_ = std::numeric_limits<double>::quiet_NaN();
+    double last_valid_f0_ = std::numeric_limits<double>::quiet_NaN();
     double current_gauss_sigma_ = std::numeric_limits<double>::quiet_NaN();
 
     // Kalman filter state
-    double kf_x_ = 0.0;  // state estimate (smoothed IAF)
+    double kf_x_ = 0.0;  // state estimate (smoothed f0)
     double kf_P_ = 0.0;  // state uncertainty
     double kf_Q_ = 0.0;  // process noise variance per update step
     double kf_R_ = 0.0;  // measurement noise variance

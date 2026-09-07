@@ -1,4 +1,4 @@
-Description: Estimates the Individual Alpha Frequency (IAF) from the running power spectrum.
+Description: Estimates the Individual Alpha Frequency (f0) from the running power spectrum.
   Every calc_interval packets it FFTs a sliding window, removes the aperiodic (1/f) component
   by a two-pass log-log linear fit, smooths with a Savitzky-Golay filter, seeds a peak in the
   [f_min, f_max] band, fits a Gaussian, and accepts it with a BIC test. Accepted estimates
@@ -15,13 +15,13 @@ Output port:
   - name: out
     type: ScalarType <double>
     slots: 1-256
-    description: Kalman-smoothed IAF estimate (Hz), one value per input packet (NaN until the
+    description: Kalman-smoothed f0 estimate (Hz), one value per input packet (NaN until the
       first valid estimate or after a reset). Stream rate is input rate / calc_interval.
 
 Shared state:
-  - name: iaf
+  - name: f0
     type: broadcaster <double>
-    description: Kalman-smoothed IAF (Hz) shared with downstream processors; set to NaN while
+    description: Kalman-smoothed f0 (Hz) shared with downstream processors; set to NaN while
       invalid and on Postprocess.
 
 Options:
@@ -44,15 +44,15 @@ Options:
   - name: calc_interval
     type: unsigned int
     default: 100
-    description: Number of packets between IAF recalculations.
+    description: Number of packets between f0 recalculations.
   - name: max_invalid_sec
     type: double
     default: 1.0
-    description: Maximum duration of invalid estimates (seconds) before the IAF estimation is reset.
-  - name: kalman_iaf_std
+    description: Maximum duration of invalid estimates (seconds) before the f0 estimation is reset.
+  - name: kalman_f0_std
     type: double
     default: 0.397857
-    description: Std of the assumed IAF drift [Hz/s]; sets the Kalman process noise Q.
+    description: Std of the assumed f0 drift [Hz/s]; sets the Kalman process noise Q.
   - name: kalman_full
     type: bool
     default: true

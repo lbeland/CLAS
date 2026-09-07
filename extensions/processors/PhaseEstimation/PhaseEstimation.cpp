@@ -109,12 +109,12 @@ PhaseEstimation::PhaseEstimation() : IProcessor(PRIORITY_HIGH)
 {
     add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
     add_option("calibrate", calibrate_, "Whether to apply MSE-optimal calibration gain to cecHT.");
-    add_option("iaf_read_interval", iaf_read_interval_, "Packets between shared IAF polling steps.");
+    add_option("f0_read_interval", f0_read_interval_, "Packets between shared f0 polling steps.");
     add_option("filter", filter_def_, "Filter definition.", false);
     add_option("compensate_filter", compensate_filter_, "Whether to compensate the phase distortion of the preceding bandpass filter.", false);
 
-    iaf_state_ = create_follower_state<double>(
-        "iaf", std::numeric_limits<double>::quiet_NaN(), Permission::NONE,
+    f0_state_ = create_follower_state<double>(
+        "f0", std::numeric_limits<double>::quiet_NaN(), Permission::NONE,
         "Individual alpha frequency shared by an upstream processor.");
 }
 
@@ -150,15 +150,15 @@ void PhaseEstimation::CompleteStreamInfo()
     }
 }
 
-void PhaseEstimation::load_filter_coeffs(const StorageContext &context, double iaf)
+void PhaseEstimation::load_filter_coeffs(const StorageContext &context, double f0)
 {
     if (!filter_def_()["file"])
     {
         int N = 1;
         // double bandwidth = filter_def_()["bandwidth"].as<double>(4.0);
-        double bandwidth = 0.9 * iaf; // 90% of IAF as bandwidth
-        double low_cutoff = iaf - bandwidth / 2.0;
-        double high_cutoff = iaf + bandwidth / 2.0;
+        double bandwidth = 0.9 * f0; // 90% of f0 as bandwidth
+        double low_cutoff = f0 - bandwidth / 2.0;
+        double high_cutoff = f0 + bandwidth / 2.0;
         int window_size = n_fft_;
         // Nudge away from exact .xx5 boundaries before rounding to 2 decimals, so that
         // tiny floating-point noise relative to the Python precompute script can't flip the rounding direction and produce
@@ -224,7 +224,7 @@ void PhaseEstimation::load_filter_coeffs(const StorageContext &context, double i
     }
 }
 
-void PhaseEstimation::load_phase_shift(const StorageContext &context, double iaf)
+void PhaseEstimation::load_phase_shift(const StorageContext &context, double f0)
 {
     std::string filename = "ecHTfilter_" + std::to_string(fs_) + "_phase.txt";
     std::string phase_shift_file_ = context.resolve_path(filename, "filters");
@@ -248,8 +248,8 @@ void PhaseEstimation::load_phase_shift(const StorageContext &context, double iaf
     {
         filter_phase_shift_values_.emplace_back(phase_shift_rad);
     }
-    // Phase shift values are stored at 0.1 Hz increments, so index = round(iaf * 10)
-    filter_phase_shift_ = filter_phase_shift_values_[static_cast<size_t>(std::round(iaf * 10))];
+    // Phase shift values are stored at 0.1 Hz increments, so index = round(f0 * 10)
+    filter_phase_shift_ = filter_phase_shift_values_[static_cast<size_t>(std::round(f0 * 10))];
     LOG(INFO) << name() << " Loaded phase shift of " << filter_phase_shift_ << " radians for compensation";
 }
 
@@ -260,9 +260,9 @@ void PhaseEstimation::Prepare(GlobalContext &context)
     LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
     fs_ = p.sample_rate;
 
-    window_size_ = static_cast<int>(fs_ * (1.0 / f0_) * 2.0); // 2 cycles of the current IAF
+    window_size_ = static_cast<int>(fs_ * (1.0 / f0_) * 2.0); // 2 cycles of the current f0
     n_fft_ = static_cast<int>(good_size_real(window_size_));
-    // Pre-size the circular buffer for the worst-case IAF (5 Hz → 2 cycles = 2/5 * fs samples)
+    // Pre-size the circular buffer for the worst-case f0 (5 Hz → 2 cycles = 2/5 * fs samples)
     sample_window.set_capacity(static_cast<int>(fs_ * (1.0 / 5.0) * 2.0));
     LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
@@ -296,11 +296,11 @@ void PhaseEstimation::Preprocess(ProcessingContext &context)
 {
     packet_count_ = 0;
 
-    f0_ = 10.0; // default IAF, will be updated from shared state
+    f0_ = 10.0; // default f0, will be updated from shared state
 
-    window_size_ = static_cast<int>(fs_ * (1.0 / f0_) * 2.0); // 2 cycles of the current IAF
+    window_size_ = static_cast<int>(fs_ * (1.0 / f0_) * 2.0); // 2 cycles of the current f0
     n_fft_ = static_cast<int>(good_size_real(window_size_));
-    // Pre-size the circular buffer for the worst-case IAF (5 Hz → 2 cycles = 2/5 * fs samples)
+    // Pre-size the circular buffer for the worst-case f0 (5 Hz → 2 cycles = 2/5 * fs samples)
     sample_window.set_capacity(static_cast<int>(fs_ * (1.0 / 5.0) * 2.0));
     LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
@@ -348,32 +348,32 @@ void PhaseEstimation::Process(ProcessingContext &context)
 
         data_in_port_->slot(0)->ReleaseData();
 
-        if (packet_count_ % iaf_read_interval_() == 0)
+        if (packet_count_ % f0_read_interval_() == 0)
         {
-            double new_f0 = iaf_state_->get();
+            double new_f0 = f0_state_->get();
             if (std::isnan(new_f0) || new_f0 < 5.0 || new_f0 > 18.0)
             {
-                valid_iaf_ = false;
+                valid_f0_ = false;
             }
             else
             {
-                valid_iaf_ = true;
-                // Round to 0.1 Hz to avoid excessive recalibration from small IAF fluctuations
+                valid_f0_ = true;
+                // Round to 0.1 Hz to avoid excessive recalibration from small f0 fluctuations
                 new_f0 = round(new_f0, 0.1);
 
                 if (std::abs(new_f0 - f0_) >= 0.1)
                 {
-                    // IAF changed — update window, FFT, and calibration
+                    // f0 changed — update window, FFT, and calibration
                     f0_ = new_f0;
                     int old_n_fft = n_fft_;
-                    window_size_ = static_cast<int>(2.0 * fs_ / f0_); // 2 cycles of new IAF
+                    window_size_ = static_cast<int>(2.0 * fs_ / f0_); // 2 cycles of new f0
                     if (window_size_ > sample_window.capacity())
                     {
                         LOG(WARNING) << name() << " New window size " << window_size_ << " exceeds circular buffer capacity " << sample_window.capacity() << ". Resizing.";
                         sample_window.rset_capacity(window_size_);
                     }
                     n_fft_ = good_size_real(window_size_);
-                    LOG(DEBUG) << name() << " Packet " << packet_count_ << ": IAF updated to " << f0_ << " Hz, window: " << window_size_ << ", FFT size: " << n_fft_;
+                    LOG(DEBUG) << name() << " Packet " << packet_count_ << ": f0 updated to " << f0_ << " Hz, window: " << window_size_ << ", FFT size: " << n_fft_;
 
                     load_filter_coeffs(context, f0_);
 
@@ -420,7 +420,7 @@ void PhaseEstimation::Process(ProcessingContext &context)
             }
         }
 
-        if (valid_iaf_ && (sample_window.size() >= static_cast<size_t>(window_size_)))
+        if (valid_f0_ && (sample_window.size() >= static_cast<size_t>(window_size_)))
         {
             // Copy the most recent window_size_ samples into contiguous FFTW input; zero-pad
             auto a1 = sample_window.array_one();
@@ -481,7 +481,7 @@ void PhaseEstimation::Process(ProcessingContext &context)
         }
         else
         {
-            // Output NaN while IAF is invalid or window is not yet full
+            // Output NaN while f0 is invalid or window is not yet full
             data_phase_out->set_data_sample(0, 0, std::numeric_limits<double>::quiet_NaN());
             data_phase_out->set_sample_timestamps(data_in->sample_timestamps());
             data_real_out->set_data_sample(0, 0, std::numeric_limits<double>::quiet_NaN());

@@ -71,8 +71,8 @@ protected:
     options::Bool inter_packet_sleep_{true};
 
     // Runtime state
-    BroadcasterState<double> *iaf_state_ = nullptr;
-    double current_iaf_ = 10.0;
+    BroadcasterState<double> *f0_state_ = nullptr;
+    double current_f0_ = 10.0;
     int packet_count_ = 0;
     TimePoint last_emit_time_{};  // wall-clock time of the previous emit, used to pace output
 };

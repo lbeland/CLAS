@@ -30,8 +30,8 @@ class PhaseEstimation : public IProcessor {
   public:
     PhaseEstimation();
 
-    void load_filter_coeffs(const StorageContext &context, double iaf);
-    void load_phase_shift(const StorageContext &context, double iaf);
+    void load_filter_coeffs(const StorageContext &context, double f0);
+    void load_phase_shift(const StorageContext &context, double f0);
 
     void CreatePorts() override;
     void CompleteStreamInfo() override;
@@ -50,7 +50,7 @@ class PhaseEstimation : public IProcessor {
     // Options
     options::Int n_messages_{-1};
     options::Bool calibrate_{false};
-    options::Value<unsigned int, false> iaf_read_interval_{5000};
+    options::Value<unsigned int, false> f0_read_interval_{5000};
     options::Value<YAML::Node, false> filter_def_{};
     options::Bool compensate_filter_{true};
 
@@ -58,7 +58,7 @@ class PhaseEstimation : public IProcessor {
     unsigned int packet_count_ = 0;
     double first_timestamp_ = 0.0;
     double fs_ = 0.0;
-    double f0_ = 10.0;         // current IAF (updated from shared state)
+    double f0_ = 10.0;         // current f0 (updated from shared state)
     size_t n_fft_ = 0;
     size_t window_size_ = 1;
 
@@ -70,8 +70,8 @@ class PhaseEstimation : public IProcessor {
     std::vector<double> filter_phase_shift_values_; // phase shift per 0.1 Hz increment
     double filter_phase_shift_ = 0.0;               // active phase shift for current f0_
 
-    FollowerState<double> *iaf_state_ = nullptr;
-    bool valid_iaf_ = false;
+    FollowerState<double> *f0_state_ = nullptr;
+    bool valid_f0_ = false;
 
     // FFTW resources (allocated in Preprocess, freed in Unprepare)
     double       *signal_in = nullptr;

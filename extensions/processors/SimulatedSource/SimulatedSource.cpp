@@ -279,9 +279,17 @@ void SimulatedSource::Process(ProcessingContext &context)
     }
     else
     {
+        // ---- In-band white-noise SNR (original) ----
         // White noise: flat one-sided PSD = var / nyquist, so the power in a band of
         // width band_width is var * band_width / nyquist.
         noise_gain = std::sqrt(target_inband_power * nyquist / band_width);
+
+        // ---- Broadband white-noise SNR (matches _snr_one_point) ----
+        // snr_db := 10*log10( P_carrier / var(noise_total) ): the reference is the
+        // *total* noise variance over [0, nyquist], so noise_band_hz is ignored here.
+        // target_inband_power == carrier_power * 10^(-snr_db/10) is now the target
+        // total variance, and white_dist has unit variance, so noise_gain is its sqrt.
+        // noise_gain = std::sqrt(target_inband_power);
     }
 
     // Bursty signal: alternate ON/OFF segments. OFF => signal silenced, ground truth = NaN.
@@ -321,11 +329,9 @@ void SimulatedSource::Process(ProcessingContext &context)
             const TimePoint now = Clock::now();
             if (target_emit_time > now)
             {
-                constexpr int64_t puffer = 5;
                 const int64_t remaining_us = std::chrono::duration_cast<std::chrono::microseconds>(
                     target_emit_time - now).count();
-                const int64_t sleep_for = std::max<int64_t>(remaining_us - puffer, 0);
-                custom_sleep_for(static_cast<uint64_t>(sleep_for));
+                std::this_thread::sleep_until(target_emit_time);
             }
         }
 

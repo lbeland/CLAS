@@ -266,12 +266,12 @@ void PhaseEstimation::Prepare(GlobalContext &context)
     sample_window.set_capacity(static_cast<int>(fs_ * (1.0 / 5.0) * 2.0));
     LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
-    load_filter_coeffs(context, f0_);
-
     signal_in = fftw_alloc_real(n_fft_);
     freq_half = fftw_alloc_complex(n_fft_ / 2 + 1);
     freq = fftw_alloc_complex(n_fft_);
     out = fftw_alloc_complex(n_fft_);
+    
+    load_filter_coeffs(context, f0_);
 
     {
         std::lock_guard<std::mutex> lock(dsp::fftw::planner_mutex);

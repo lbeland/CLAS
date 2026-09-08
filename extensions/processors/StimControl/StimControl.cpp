@@ -171,19 +171,8 @@ bool StimControl::compute_burst_params_(double f0)
 
     if (dur_unit_ == DurUnit::kMs)
     {
-        // Fixed duration — f0 is irrelevant for burst length.
-        // stim_dur_rad_ still uses f0 so the phase window scales with alpha.
+        // Fixed duration
         new_burst_ms = std::max(1.0, stim_dur_ms_());
-        if (std::isfinite(f0) && f0 > 0.0)
-        {
-            stim_dur_rad_ = (new_burst_ms / 1000.0) * (2.0 * M_PI * f0);
-        }
-        else
-        {
-            // No f0 available: assume 10 Hz
-            stim_dur_rad_ = (new_burst_ms / 1000.0) * (2.0 * M_PI * 10.0);
-            LOG(WARNING) << name() << " f0 unavailable in ms-mode; phase window assumes 10 Hz";
-        }
     }
     else if (dur_unit_ == DurUnit::kDeg)
     {
@@ -192,21 +181,12 @@ bool StimControl::compute_burst_params_(double f0)
         {
             // Fallback to stim_dur_ms_ until a valid f0 arrives.
             new_burst_ms = std::max(1.0, stim_dur_ms_());
-            stim_dur_rad_ = stim_dur_deg_() * (1.0 / 180.0 * M_PI);
-            // LOG(WARNING) << name() << " f0 unavailable in deg-mode; using stim_dur_ms=" << new_burst_ms << " ms as fallback";
         }
         else
         {
             const double deg = std::clamp(stim_dur_deg_(), 0.0, 360.0);
-            stim_dur_rad_ = deg * (1.0 / 180.0 * M_PI);
-            new_burst_ms = std::clamp((deg / 360.0) / f0, 0.0, 5.0) * 1000.0;
+            new_burst_ms = std::clamp((deg / 360.0) / f0, 0.0, 5.0) * 1000.0;   // clamp to 5 seconds max
         }
-    }
-    else
-    {
-        // Should never reach here — dur_unit_ only ever takes kMs or kDeg, assigned in Prepare().
-        LOG(ERROR) << name() << " Invalid dur_unit_ enum value";
-        throw std::runtime_error("Invalid dur_unit_: must be kMs or kDeg");
     }
 
     // Safety clamp to not exceed the sound buffer length (500ms)
@@ -254,7 +234,7 @@ void StimControl::Prepare(GlobalContext &context)
     // Load background sound if enabled
     if (use_background_sound_())
     {
-        std::string file = context.resolve_path("background.mp3","sounds");
+        std::string file = context.resolve_path("background.wav","sounds");
         const char *sound_path = file.c_str();
         LOG(INFO) << name() << " Loading background sound from " << sound_path;
 
@@ -279,7 +259,7 @@ void StimControl::Preprocess(ProcessingContext &context)
 {
     const double f0 = f0_state_ ? f0_state_->get() : std::numeric_limits<double>::quiet_NaN();
     last_f0_ = f0;
-    compute_burst_params_(f0); // sets stim_dur_rad_, burst_frames_, period_ms_
+    compute_burst_params_(f0); // sets burst_frames_, period_ms_
     build_audio_buffers_();     // uses burst_frames_ and period_ms_ set above
 
     // Drain any leftover samples from a previous run
@@ -1011,10 +991,8 @@ void StimControl::Process(ProcessingContext &context)
 
                 // output_ mirrors the full nominal stimulus duration (in samples of
                 // the phase stream), independent of how the trigger was decided.
-                // Uses burst_ms_ (rather than stim_dur_rad_/f0) so this stays valid
-                // when f0 is NaN, e.g. in fully randomized mode.
-                output_samples_remaining_ = std::max(1, (int)std::round(
-                    burst_ms_ / 1000.0 * fs_));
+                // Uses burst_ms_ so this stays valid when f0 is NaN, e.g. in fully randomized mode.
+                output_samples_remaining_ = std::max(1, (int)std::round(burst_ms_ / 1000.0 * fs_));
                 in_stim_window = true;
 
                 // LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated phase = " << phase << " , delay = " << delay_sec << " s, corr_phase = " << corrected_phase;

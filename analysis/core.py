@@ -33,8 +33,8 @@ def compute_hilbert_reference(
     """
     X_white = None
     n = len(raw)
-    taper = windows.tukey(n, alpha=0.01)
-    raw = raw * taper
+    # taper = windows.tukey(n, alpha=0.01)
+    # raw = raw * taper
     if (aperiodic_params is not None) and (all(np.isfinite(aperiodic_params))):
         # Use aperiodic parameters to adjust the bandpass filter
         slope, intercept = aperiodic_params
@@ -54,7 +54,13 @@ def compute_hilbert_reference(
 
         raw = np.fft.irfft(X_white, n=n)
 
-    sos      = butter(4, [f0-3, f0+3], btype="band", fs=fs, output="sos")
+    # # Geometric passband edges: sqrt(f_lo * f_hi) == f0, so the Butterworth
+    # # band-pass is (log-)symmetric about f0 instead of peaking ~4.6% below it.
+    # k        = np.sqrt(1.3 / 0.7)          # same edge ratio as the old [0.7 f0, 1.3 f0]
+    # sos      = butter(4, [f0 / k, f0 * k], btype="band", fs=fs, output="sos")
+    # filtered = sosfiltfilt(sos, raw)
+
+    sos      = butter(4, [0.7*f0, 1.3*f0], btype="band", fs=fs, output="sos")
     filtered = sosfiltfilt(sos, raw)
 
     return filtered, np.angle(hilbert(filtered)), X_white
@@ -239,7 +245,8 @@ def compute_jade_errors(
 
     n   = len(est_phase)
     t_s = (time_us[start:start + n] - start_ts) / 1e6
-    phase_err = np.angle(np.exp(1j * (true_phase[start:start + n] - est_phase)), deg=True)
+    # Sign convention: estimate - reference (matches compute_errors()).
+    phase_err = np.angle(np.exp(1j * (est_phase - true_phase[start:start + n])), deg=True)
     if_err    = IF[:n - 1] - true_inst_freq[start:start + n - 1]
 
     return [
@@ -260,6 +267,10 @@ def compute_errors(
     """
     Compute phase, f0, and stimulus edge errors.
     Returns (list of error dicts, stim_ref array or None).
+
+    Sign convention for every error series here: estimate - reference
+    (wrapped to (-180, 180] for phases). Positive => the estimate leads /
+    overshoots the reference.
     """
     errors         = []
     true_phase     = ground_truth["true_phase"]
@@ -271,18 +282,18 @@ def compute_errors(
         phi = samples["PhaseEstimation_phase"]["y"]
         n   = len(phi)
         ref = true_phase[:n] if true_phase is not None else hilbert_phase[:n]
-        err = np.angle(np.exp(1j * (ref - phi)), deg=True)
+        err = np.angle(np.exp(1j * (phi - ref)), deg=True)
         errors.append({"label": "Phase error", "time_s": t, "values": err, "unit": "degrees"})
 
         if true_phase is not None:
-            h_err = np.angle(np.exp(1j * (true_phase[:n] - hilbert_phase[:n])), deg=True)
+            h_err = np.angle(np.exp(1j * (hilbert_phase[:n] - true_phase[:n])), deg=True)
             errors.append({"label": "Hilbert ref error", "time_s": t, "values": h_err,
                            "unit": "degrees", "linestyle": "--"})
 
             # Online estimate vs the offline Hilbert estimate, as if Hilbert
             # were ground truth. When there's no true_phase this is identical
             # to "Phase error", so it's only added here to avoid a duplicate.
-            oh_err = np.angle(np.exp(1j * (hilbert_phase[:n] - phi)), deg=True)
+            oh_err = np.angle(np.exp(1j * (phi - hilbert_phase[:n])), deg=True)
             errors.append({"label": "Online vs Hilbert", "time_s": t, "values": oh_err,
                            "unit": "degrees", "linestyle": ":"})
 

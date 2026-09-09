@@ -144,8 +144,8 @@ def plot_errors(errors: list[dict], plot_time=False, time_range: tuple = None,ti
     # of its own sampling rate, so sparse series (e.g. the stimulus-edge
     # errors, one value per stimulus) aren't sliced away to nothing.
     ref_t      = np.asarray(errors[0]["time_s"], dtype=float)
-    lo_idx     = int(0.05 * len(ref_t))
-    hi_idx     = min(int(0.95 * len(ref_t)), len(ref_t) - 1)
+    lo_idx     = int(0.1 * len(ref_t))
+    hi_idx     = min(int(0.90 * len(ref_t)), len(ref_t) - 1)
     t_lo, t_hi = ref_t[lo_idx], ref_t[hi_idx]
     for i in deg_indices:
         t    = np.asarray(errors[i]["time_s"], dtype=float)
@@ -211,63 +211,6 @@ def plot_errors(errors: list[dict], plot_time=False, time_range: tuple = None,ti
     if plot_time:
         save_png(fig_time, "error_timeseries")
     save_png(fig_polars, "error_distributions")
-
-
-
-# ---------------------------------------------------------------------------
-# SNR sweep
-# ---------------------------------------------------------------------------
-
-def plot_snr_sweep(sweep_data: dict[str, list[dict]], output_name: str = "snr_sweep") -> None:
-    """Plot phase-error mean vs SNR, one line per noise type, on shared axes.
-
-    sweep_data maps a noise-type label ("white", "pink", ...) to a list of
-    per-run dicts with keys "snr_db" plus "<key>_mean" / "<key>_std" (in
-    degrees) for each error series. Three side-by-side panels sharing a y-axis:
-      1. ecHT online phase error (mean +/- 1 SD band per noise type),
-      2. offline Hilbert reference error (same),
-      3. ecHT online estimate minus the Hilbert offline estimate, i.e. the
-         online error taking Hilbert as ground truth (key "cmp").
-    """
-    fig, (ax_online, ax_hilb, ax_cmp) = plt.subplots(
-        1, 3, figsize=(FIG_WIDTH * 1.7, FIG_HEIGHT * 0.95), sharey=True)
-    colors = {"white": "tab:blue", "pink": "tab:red"}
-
-    def _series(runs, key):
-        runs = sorted(runs, key=lambda r: r["snr_db"])
-        snr  = np.array([r["snr_db"]      for r in runs], dtype=float)
-        mean = np.array([r[f"{key}_mean"] for r in runs], dtype=float)
-        std  = np.array([r[f"{key}_std"]  for r in runs], dtype=float)
-        return snr, mean, std
-
-    def _draw(ax, runs, key, color, *, linestyle="-", band=True, label=None):
-        snr, mean, std = _series(runs, key)
-        if not np.any(np.isfinite(mean)):
-            return
-        ax.plot(snr, mean, linestyle=linestyle, marker="o", color=color,
-                linewidth=1.5, markersize=3, label=label)
-        if band:
-            ax.fill_between(snr, mean - std, mean + std, color=color, alpha=0.25, linewidth=0)
-
-    for noise_type, runs in sorted(sweep_data.items()):
-        color = colors.get(noise_type)
-        _draw(ax_online, runs, "phase",   color, label=f"{noise_type} noise")
-        _draw(ax_hilb,   runs, "hilbert", color, label=f"{noise_type} noise")
-        _draw(ax_cmp,    runs, "cmp",     color, label=f"{noise_type} noise")
-
-    for ax, title in ((ax_online, "ecHT online phase error"),
-                      (ax_hilb,   "Hilbert offline error"),
-                      (ax_cmp,    r"ecHT online $-$ Hilbert offline")):
-        ax.axhline(0, color="0.5", linewidth=0.8, linestyle="--")
-        ax.set_xlabel("In-band SNR (dB)")
-        ax.set_title(title)
-        ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
-
-    ax_online.set_ylabel(r"Phase error (degrees)")
-    ax_online.legend(loc="upper right")
-    fig.tight_layout()
-    save_pgf(fig, output_name)
-
 
 # ---------------------------------------------------------------------------
 # f0 time series
@@ -338,21 +281,118 @@ def plot_f0(ground_truth: dict, f0_continuous: np.ndarray, samples: dict, start_
 
 
 # ---------------------------------------------------------------------------
+# Combined analysis figure
+# ---------------------------------------------------------------------------
+
+def plot_analysis(ground_truth: dict, f0_continuous: np.ndarray, samples: dict,
+                  start_ts: float, errors: list[dict], time_range: tuple = None,
+                  title: str = None, output_name: str = "analysis_timeseries") -> None:
+    """Produce the standard per-recording analysis plots:
+
+      1. one combined two-row time-domain figure sharing a common time axis --
+         estimated/true f0 on top (as plot_f0() draws it, minus its own error
+         subplot, since row 2 already carries the error traces), error time
+         series below (as the plot_time branch of plot_errors() draws it);
+      2. the usual polar error-distribution figure, delegated unchanged to
+         plot_errors().
+    """
+    fig, (ax_f0, ax_ts) = plt.subplots(2, 1, sharex=True,
+                                       figsize=(FIG_WIDTH, FIG_HEIGHT * 1.6))
+
+    # --- Row 1: f0 over time (cf. plot_f0) ---------------------------------
+    has_estimated = samples.get("FrequencyEstimation") is not None
+    has_true      = ground_truth.get("true_inst_freq") is not None
+    ax_f0_r = None
+    if has_estimated or has_true:
+        time_s = (ground_truth["time"] - start_ts) / 1e6
+        if has_true:
+            ax_f0.plot(time_s, ground_truth["true_inst_freq"],
+                       linewidth=1.5, alpha=0.8, label="True f0")
+            if ground_truth.get("true_amplitude") is not None:
+                ax_f0_r = ax_f0.twinx()
+                ax_f0_r.plot(time_s, ground_truth["true_amplitude"],
+                             linestyle="--", linewidth=1.2, alpha=0.6,
+                             color="tab:gray", label="True amplitude")
+                ax_f0_r.set_ylabel("Amplitude")
+        else:
+            ax_f0.plot(time_s, f0_continuous, linewidth=1.5, alpha=0.8,
+                       label="Estimated f0 (Hilbert)")
+
+        if has_estimated:
+            x_est  = (samples["FrequencyEstimation"]["x"] - start_ts) / 1e6
+            f0_est = samples["FrequencyEstimation"]["y"]
+            ax_f0.plot(x_est, f0_est, "o-", markersize=2.5, linewidth=1.2,
+                       label="Estimated f0")
+
+        ax_f0.set_ylabel("Frequency (Hz)")
+        ax_f0.set_title("(a)")
+        ax_f0.yaxis.get_major_formatter().set_useOffset(False)
+        ax_f0.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
+        ax_f0.set_ylim(5, 16)
+        h,  l  = ax_f0.get_legend_handles_labels()
+        hr, lr = ax_f0_r.get_legend_handles_labels() if ax_f0_r is not None else ([], [])
+        ax_f0.legend(h + hr, l + lr, loc="upper right")
+
+    # --- Row 2: error time series (cf. plot_errors, plot_time branch) -----
+    ax_ts_twin = ax_ts.twinx()  # Hz-unit error series go here
+    colors     = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
+    ref_t = np.asarray(errors[0]["time_s"], dtype=float) if errors else np.array([])
+    if ref_t.size:
+        lo_idx     = int(0.1 * len(ref_t))
+        hi_idx     = min(int(0.90 * len(ref_t)), len(ref_t) - 1)
+        t_lo, t_hi = ref_t[lo_idx], ref_t[hi_idx]
+        ax_ts.axvline(x=t_lo, color="0.5", linewidth=0.8, linestyle="--")
+        ax_ts.axvline(x=t_hi, color="0.5", linewidth=0.8, linestyle="--")
+
+    for i, err in enumerate(errors):
+        color  = colors[i % len(colors)]
+        ls     = err.get("linestyle", "-")
+        target = ax_ts if err["unit"] == "degrees" else ax_ts_twin
+        target.plot(err["time_s"], err["values"], linestyle=ls, linewidth=1.2,
+                    color=color, label=f"{err['label']} ({err['unit']})", alpha=0.85)
+
+    handles_ts,   labels_ts   = ax_ts.get_legend_handles_labels()
+    handles_twin, labels_twin = ax_ts_twin.get_legend_handles_labels()
+    ax_ts.legend(handles_ts + handles_twin, labels_ts + labels_twin,
+                 frameon=True, fontsize=8, loc="upper right")
+    ax_ts.set_xlabel("Time (s)")
+    ax_ts.set_ylabel("Error")
+    ax_ts_twin.set_ylabel("Error (Hz)")
+    ax_ts.set_title("(b)")
+    ax_ts.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
+    if time_range is not None:
+        ax_ts.set_xlim(time_range)
+
+    if title:
+        fig.suptitle(title, fontsize=12)
+    fig.tight_layout()
+    save_png(fig, output_name)
+    # save_pgf(fig, output_name)
+
+    # The usual error plots (polar distributions), unchanged.
+    plot_errors(errors, plot_time=False, time_range=time_range, title=title)
+
+
+# ---------------------------------------------------------------------------
 # Spectrum and time-series plots
 # ---------------------------------------------------------------------------
 
 def plot_spectrum(raw: np.ndarray, samples: dict, filtered: np.ndarray, fs: float, aperiodic_params: tuple = None, X_white: np.ndarray = None) -> None:
     """Plot FFT magnitude spectrum of raw and filtered signals."""
     freqs = np.fft.rfftfreq(len(raw), d=1 / fs)
-    slope, intercept = aperiodic_params
 
     # aperiodic_params were fit to a density-scaled PSD (Welch), where
     # Pxx(f) = 2*|X(f)|^2 / (fs*n). Rescale the intercept to raw FFT power
     # units: L(f) ~ |X(f)|^2. Take sqrt(L) to compare against the amplitude
     # spectrum plotted below (same convention as compute_hilbert_reference).
-    n = len(raw)
-    intercept_fft = intercept + np.log10(fs * n / 2)
-    L = freqs[1:] ** slope * 10 ** intercept_fft  # skip f=0
+    # aperiodic_params is None when f0 was taken as ground truth (no 1/f fit).
+    L = None
+    if aperiodic_params is not None:
+        slope, intercept = aperiodic_params
+        n = len(raw)
+        intercept_fft = intercept + np.log10(fs * n / 2)
+        L = freqs[1:] ** slope * 10 ** intercept_fft  # skip f=0
 
     # plt.figure()
     # plt.plot(np.log10(freqs[1:]), np.log10(np.abs(np.fft.rfft(raw))[1:]), label="Raw", alpha=0.7, color="blue")
@@ -372,7 +412,8 @@ def plot_spectrum(raw: np.ndarray, samples: dict, filtered: np.ndarray, fs: floa
         freqs_filt  = np.fft.rfftfreq(len(filt), d=1 / fs)
         ax.plot(freqs_filt, np.abs(np.fft.rfft(filt_wind)), label="Filtered (online)", alpha=0.7, color="orange")
 
-    ax.plot(freqs[1:], np.sqrt(L), label="Aperiodic fit", alpha=0.7, color="red", linestyle="--")
+    if L is not None:
+        ax.plot(freqs[1:], np.sqrt(L), label="Aperiodic fit", alpha=0.7, color="red", linestyle="--")
 
     if X_white is not None:
         ax2 = axes[1, 0]
@@ -401,7 +442,7 @@ def plot_spectrum(raw: np.ndarray, samples: dict, filtered: np.ndarray, fs: floa
     # plt.ylabel('Frequency [Hz]')
     # plt.xlabel('Time [sec]')
 
-    save_pgf(fig, "spectrum")
+    # save_pgf(fig, "spectrum")
 
 
 def plot_time_series(
@@ -468,7 +509,7 @@ def plot_time_series(
     for ax in axes:
         ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
-    save_pgf(fig, "time_series")
+    # save_pgf(fig, "time_series")
 
 
 # ---------------------------------------------------------------------------

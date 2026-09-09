@@ -92,14 +92,15 @@ def _fmt_mean_std(mean_val, std_val, bold=False):
     return rf"$\mathbf{{{body}}}$" if bold else rf"${body}$"
 
 
-def save_mae_summary_latex(summary_df, out_path, window_length_sec):
-    """summary_df: index "algorithm", columns median/mean/std (Hz) -- as
-    built in main()'s per-window-length loop."""
+def save_ae_summary_latex(summary_df, out_path, window_length_sec):
+    """summary_df: index "algorithm", columns median/mean/std (Hz) of the
+    per-seed absolute error pooled over every condition at this window length
+    -- as built in main()'s per-window-length loop."""
     table = summary_df.reset_index().rename(columns={"algorithm": "Algorithm"})
     latex = table.to_latex(
         index=False, escape=False, float_format="%.2f",
-        caption=f"MAE summary [Hz], window length = {window_length_sec}\\,s",
-        label=f"tab:mae_summary_wl{window_length_sec}",
+        caption=f"Absolute error summary [Hz], window length = {window_length_sec}\\,s",
+        label=f"tab:ae_summary_wl{window_length_sec}",
     )
     # to_latex omits \centering, so the tabular floats flush-left -- add it.
     latex = latex.replace(r"\begin{table}", "\\begin{table}\n\\centering", 1)
@@ -124,7 +125,7 @@ def save_big_comparison_table(df_metrics, wl_filter, sweeps, param_names, out_pa
     lines = [
         r"\begin{table}[ht]",
         r"\centering",
-        rf"\caption{{MAE $\pm$ std of the absolute error [Hz], by algorithm and"
+        rf"\caption{{Mean $\pm$ std of the absolute error [Hz], by algorithm and"
         rf" swept-parameter value (window length = {window_length_sec}\,s)}}",
         rf"\label{{tab:big_comparison_wl{window_length_sec}}}",
         rf"\begin{{tabular}}{{{col_spec}}}",
@@ -545,22 +546,31 @@ def main():
         if has_trial_source:
             pooled_filter["trial_source"] = "window_length_sweep"
 
+        pooled_samples = load_samples_for_plot(HDF_PATH, df_metrics, **pooled_filter)
+
         plot_box(
-            load_samples_for_plot(HDF_PATH, df_metrics, **pooled_filter),
+            pooled_samples,
             HDF_PATH,
             x="algorithm", y=error_label,
             title=f"Error distribution across all conditions{suffix}",
             save_name=f"{prefix}_all_conditions",
         )
 
+        # mean/median/std of the per-seed absolute error [Hz], pooled over
+        # every seed of every (non-window-length) condition at this window
+        # length -- one fresh pool, NOT a mean over the per-condition MAEs
+        # (which weights every condition equally regardless of seed count and
+        # discards the within-condition spread). NaN abs_error rows (FN/TN
+        # seeds) drop out, exactly as in compute_pooled_metrics; "std" is the
+        # population std (ddof=0) of the pooled absolute errors, to match it.
         summary = order_by_algo(
-            with_display_names(filter_df(df_metrics, **pooled_filter))
-            .groupby("algorithm")["mae"]
-            .agg(["median", "mean", "std"])
+            with_display_names(pooled_samples)
+            .groupby("algorithm")["abs_error"]
+            .agg(median="median", mean="mean", std=lambda s: s.std(ddof=0))
             .round(4))
-        print(f"\n=== MAE Summary (in Hz), window_length_sec={window_length_sec} ===")
+        print(f"\n=== Absolute Error Summary (in Hz), window_length_sec={window_length_sec} ===")
         print(summary.to_string())
-        save_mae_summary_latex(summary, TABLE_DIR / f"mae_summary_wl{window_length_sec}.tex",
+        save_ae_summary_latex(summary, TABLE_DIR / f"ae_summary_wl{window_length_sec}.tex",
                                window_length_sec)
 
         save_big_comparison_table(

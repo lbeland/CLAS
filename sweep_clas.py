@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """
-Automated SNR / noise-type sweep for the ecHT phase-estimation graph.
+Automated SNR / noise-type sweep for the ecHT phase- and f0-estimation graphs.
 
-For every (snr_db, noise_color) combination on the grid this script:
+For every graph and every (snr_db, noise_color) combination on the grid this
+script:
   1. patches ``SimulatedSource.options.snr_db`` / ``noise_color`` in the graph config
      (writing a throwaway ``_sweep_<graph>`` copy so the original is untouched),
   2. runs one Falcon session head-less -- no keypress handling, no stim
      protocol -- and waits for Falcon to auto-exit after ``n_messages``,
-  3. moves that run's ``results/<run>`` folder into a single sweep directory.
+  3. moves that run's ``results/<run>`` folder into ``results/<name>/<graph stem>/``.
 
-When every run is done it builds the phase-error-vs-SNR figure by calling
-``analysis.main.analyse_snr_sweep`` on the sweep directory.
+When every run is done it prints -- and writes as CSV + LaTeX -- one summary
+error table per graph via ``analysis.sweep.snr_sweep_table``: a phase-error
+table for the ecHT graph, an f0-error table for the frequency-estimation graph.
 
 Examples
 --------
     python sweep_clas.py
-    python sweep_clas.py --snr -10 0 10 20 50 --noise white pink --name my_sweep
+    python sweep_clas.py --graphs ecHTtests.yaml f0tests.yaml --snr -10 0 10 20 50 --noise white pink
     python sweep_clas.py --no-analyse          # just collect the runs
     python sweep_clas.py --dry-run             # print the plan and exit
 """
@@ -81,6 +83,19 @@ def patch_graph(base_graph_path: Path, out_graph_path: Path,
     fs        = cfg["graph"].get("defaults", {}).get("fs") or opts.get("fs", 10000)
     nsamples  = opts.get("nsamples", 1)
     return opts["n_messages"] * nsamples / float(fs)
+
+
+def graph_kind(graph_path: Path) -> str:
+    """Which summary table a graph's runs feed: 'echt' if it runs
+    PhaseEstimation, 'f0' if it runs FrequencyEstimation."""
+    with open(graph_path) as f:
+        procs = yaml.safe_load(f)["graph"]["processors"]
+    if "PhaseEstimation" in procs:
+        return "echt"
+    if "FrequencyEstimation" in procs:
+        return "f0"
+    raise ValueError(f"{graph_path.name}: no PhaseEstimation / FrequencyEstimation "
+                     "processor -- don't know which summary table to build.")
 
 
 def set_falcon_log_path(log_path: Path) -> None:
@@ -171,10 +186,11 @@ def run_one(ctx: zmq.Context, port: int, graph_name: str, out_graph_path: Path,
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--graph", default="ecHTtests.yaml",
-                   help="base graph in resources/graphs/ (default: ecHTtests.yaml)")
+    p.add_argument("--graphs", nargs="+", default=["ecHTtests.yaml", "f0tests.yaml"],
+                   help="base graphs in resources/graphs/ "
+                        "(default: ecHTtests.yaml f0tests.yaml)")
     p.add_argument("--snr", type=float, nargs="+", default=[-10, 0, 10, 20, 50],
-                   help="SNR levels in dB (default: -10 -5 0 5 10 15 20 50)")
+                   help="SNR levels in dB (default: -10 0 10 20 50)")
     p.add_argument("--noise", nargs="+", default=["white", "pink"],
                    choices=["white", "pink"], help="noise colours (default: white pink)")
     p.add_argument("--name", default="snr_sweep",
@@ -189,7 +205,7 @@ def main() -> None:
     p.add_argument("--shutdown", type=float, default=30.0,
                    help="seconds to wait for Falcon to quit after stop (default: 30)")
     p.add_argument("--no-analyse", action="store_true",
-                   help="collect the runs but skip the summary plot")
+                   help="collect the runs but skip the summary tables")
     p.add_argument("--dry-run", action="store_true", help="print the plan and exit")
     args = p.parse_args()
 
@@ -200,14 +216,21 @@ def main() -> None:
     if not resources_folder.is_absolute():
         resources_folder = REPO_ROOT / resources_folder
 
-    base_graph_path = resources_folder / "graphs" / args.graph
-    out_graph_path  = resources_folder / "graphs" / f"_sweep_{args.graph}"
-    sweep_dir       = REPO_ROOT / RESULTS_DIR / args.name
+    sweep_dir = REPO_ROOT / RESULTS_DIR / args.name
+    graphs = [
+        {"name": g,
+         "base": resources_folder / "graphs" / g,
+         "out":  resources_folder / "graphs" / f"_sweep_{g}",
+         "dir":  sweep_dir / Path(g).stem,
+         "kind": graph_kind(resources_folder / "graphs" / g)}
+        for g in args.graphs
+    ]
 
     grid = [(snr, noise) for noise in args.noise for snr in args.snr]
-    print(f"Base graph : {base_graph_path}")
     print(f"Sweep dir  : {sweep_dir}")
-    print(f"Runs ({len(grid)}): " +
+    for g in graphs:
+        print(f"Graph      : {g['name']}  ->  {g['dir']}  ({g['kind']} table)")
+    print(f"Runs/graph ({len(grid)}): " +
           ", ".join(f"{s:g}dB/{n}" for s, n in grid))
     if args.dry_run:
         return
@@ -218,28 +241,37 @@ def main() -> None:
     falcon_cfg_backup = FALCON_CONFIG.read_text()
     ctx = zmq.Context()
 
-    completed = []
+    completed: dict[str, list[Path]] = {}
     try:
-        for snr_db, noise_color in grid:
-            signal_len = patch_graph(base_graph_path, out_graph_path,
-                                     snr_db, noise_color, args.n_messages)
-            run_seconds = args.run_seconds if args.run_seconds is not None \
-                else signal_len + args.settle
-            dest = run_one(ctx, port, args.graph, out_graph_path,
-                           snr_db, noise_color, sweep_dir, run_seconds, args.shutdown)
-            if dest is not None:
-                completed.append(dest)
+        for g in graphs:
+            g["dir"].mkdir(parents=True, exist_ok=True)
+            print(f"\n{'#' * 80}\n# {g['name']}\n{'#' * 80}")
+            for snr_db, noise_color in grid:
+                signal_len = patch_graph(g["base"], g["out"],
+                                         snr_db, noise_color, args.n_messages)
+                run_seconds = args.run_seconds if args.run_seconds is not None \
+                    else signal_len + args.settle
+                dest = run_one(ctx, port, g["name"], g["out"],
+                               snr_db, noise_color, g["dir"], run_seconds, args.shutdown)
+                if dest is not None:
+                    completed.setdefault(g["name"], []).append(dest)
     except KeyboardInterrupt:
         print("\nInterrupted; keeping the runs completed so far.")
     finally:
         ctx.term()
-        out_graph_path.unlink(missing_ok=True)
+        for g in graphs:
+            g["out"].unlink(missing_ok=True)
         FALCON_CONFIG.write_text(falcon_cfg_backup)
 
-    print(f"\n{len(completed)}/{len(grid)} runs completed into {sweep_dir}")
+    n_done = sum(len(v) for v in completed.values())
+    print(f"\n{n_done}/{len(grid) * len(graphs)} runs completed into {sweep_dir}")
     if completed and not args.no_analyse:
-        from analysis.main import analyse_snr_sweep
-        analyse_snr_sweep(str(sweep_dir))
+        from analysis.sweep import snr_sweep_table
+        for g in graphs:
+            if g["name"] not in completed:
+                continue
+            print(f"\n{'=' * 80}\n# summary table: {g['name']} ({g['kind']})\n{'=' * 80}")
+            snr_sweep_table(str(g["dir"]), kind=g["kind"])
 
 
 if __name__ == "__main__":

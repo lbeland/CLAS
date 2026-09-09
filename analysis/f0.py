@@ -1,11 +1,6 @@
 """
 Fundamental frequency (f0) estimation.
 
-``alpha_fast`` below is an independent, hand-synced copy of
-``IAF_Estimation/compare_f0_algos/iaf_compare/algorithms.py::alpha_fast``.
-It is deliberately not shared: the analysis pipeline keeps no dependency on the
-research comparison harness. If you change the algorithm here, mirror it there
-(and in the C++ ``FrequencyEstimation`` processor).
 """
 
 import numpy as np
@@ -48,8 +43,12 @@ def alpha_fast(psd, freq_bins, config):
     ``approve_peak``.
 
     Returns ``(est_pf, [slope, intercept])`` -- the peak frequency (Hz) and the
-    refined aperiodic-fit parameters -- or ``(np.nan, [np.nan, np.nan])`` when
-    no peak is found or it fails the BIC test.
+    refined aperiodic-fit parameters. When no peak is found or it fails the BIC
+    test, ``est_pf`` is ``np.nan`` but ``[slope, intercept]`` still holds the
+    refined aperiodic fit (it doesn't depend on a peak existing), so callers
+    that only want the 1/f fit -- e.g. spectral whitening -- can still use it.
+    ``[slope, intercept]`` is ``[np.nan, np.nan]`` only if the linear fit itself
+    degenerates (too few sub-fit points).
     """
     band = (freq_bins >= config["freq_range"][0]) & (freq_bins <= config["freq_range"][1])
     psd_band = psd[band]
@@ -107,7 +106,7 @@ def alpha_fast(psd, freq_bins, config):
     # Reject outright if the smoothed peak doesn't clear the aperiodic fit
     # (log-ratio <= 0) -- there's no bump to fit a Gaussian to.
     if amplitude <= 0.0:
-        return np.nan, [np.nan, np.nan]
+        return np.nan, [slope, intercept]
 
     # FWHM: walk outward from the peak bin, in each direction, until the
     # smoothed spectrum drops below half-max (over the full spectrum, not
@@ -123,7 +122,7 @@ def alpha_fast(psd, freq_bins, config):
     std_gauss = fwhm / (2 * np.sqrt(2 * np.log(2)))
 
     if std_gauss > 2:
-        return np.nan, [np.nan, np.nan]
+        return np.nan, [slope, intercept]
 
     popt = [amplitude, est_pf, std_gauss]
 
@@ -133,7 +132,7 @@ def alpha_fast(psd, freq_bins, config):
                                  aperiodic_simple, config["alpha_band"], floor_value=floor_value)
 
     if not peak_approved:
-        return np.nan, [np.nan, np.nan]
+        return np.nan, [slope, intercept]
 
     return est_pf, [slope, intercept]
 
@@ -159,7 +158,7 @@ def estimate_f0(raw: np.ndarray, fs: float) -> list:
             f0, aperiodic_params = alpha_fast(psd, freqs, config)
             f0_windowed.append(f0)
             aperiodic_params_windowed.append(aperiodic_params)
-        return f0_windowed, np.nanmean(np.array(aperiodic_params_windowed), axis=0)  # Return mean aperiodic params across windows, ignoring windows with no approved peak
+        return f0_windowed, np.nanmean(np.array(aperiodic_params_windowed), axis=0)  # mean aperiodic fit across windows (alpha_fast returns one even with no approved peak; nanmean still guards degenerate fits)
 
     else:
         # freqs, psd = welch(raw, fs=fs, nperseg=int(fs * 30))

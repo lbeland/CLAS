@@ -14,7 +14,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from pathlib import Path
-from scipy.stats import circmean, circstd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -24,8 +23,8 @@ from analysis.core         import compute_hilbert_reference, compute_errors, com
 from analysis.edf_io       import write_raw_signals_edf, load_runtime, write_analysis_edf
 from analysis.runtime_meta import write_runtime_metadata
 from analysis.plot         import plot_errors, plot_spectrum, plot_time_series, \
-                                  plot_f0, plot_snr_sweep, get_erp_windows, plot_erp_latency, \
-                                  load_stim_annotations
+                                  plot_analysis, get_erp_windows, \
+                                  plot_erp_latency, load_stim_annotations
 
 
 @dataclass
@@ -51,11 +50,24 @@ class RecordingAnalysis:
     stim_ref:         "np.ndarray | None"
 
 
-def load_and_analyse(f0: float, results_dir: str) -> "RecordingAnalysis | None":
+def load_and_analyse(f0: float, results_dir: str, f0_is_truth: bool = False,
+                     whiten: bool = True) -> "RecordingAnalysis | None":
     """Load one results folder (from cache if available, else the raw .bin
     files) and run the offline analysis on it: f0 estimate, Hilbert
     reference, phase/f0/stimulus-edge errors. Returns None if the folder
-    can't be loaded (no graph config / no source signal)."""
+    can't be loaded (no graph config / no source signal).
+
+    f0 sets the centre frequency of the pre-Hilbert bandpass. By default it
+    is only a fallback: f0 is re-estimated offline from the recording and the
+    passed value is used only if that estimation yields nothing. With
+    f0_is_truth=True the passed f0 is used directly (the offline f0 estimate
+    is not adopted) -- for synthetic runs whose carrier frequency is known
+    exactly.
+
+    whiten (default True): still run the 1/f aperiodic fit and pass it to
+    compute_hilbert_reference() for spectral whitening before the bandpass,
+    regardless of f0_is_truth. Set whiten=False to skip that whitening; with
+    f0_is_truth=True as well, the offline aperiodic/f0 fit is skipped entirely."""
     graph_files = glob.glob(os.path.join(results_dir, "*.yaml"))
     if not graph_files:
         print(f"Error: no graph config (.yaml) found in {results_dir}")
@@ -89,13 +101,24 @@ def load_and_analyse(f0: float, results_dir: str) -> "RecordingAnalysis | None":
         write_raw_signals_edf(raw_edf_path, fs, samples, ground_truth, annotations=annotations)
         write_runtime_metadata(meta_h5_path, fs, samples, ground_truth)
 
-    # Estimate f0 offline on the full recording
-    f0_windows, aperiodic_params = estimate_f0(ground_truth["raw"], fs)
-    if np.all(~np.isfinite(f0_windows)):
-        print("Could not estimate f0 from ground truth; using default f0 =", f0)
+    # Centre frequency f0 for the pre-Hilbert bandpass + 1/f aperiodic fit for
+    # spectral whitening. estimate_f0() returns both; run it unless neither is
+    # wanted (known carrier and whitening disabled).
+    if f0_is_truth and not whiten:
+        aperiodic_params = None
+        print(f"Using provided f0 = {f0:.2f} Hz as ground truth; skipping offline estimation.")
     else:
-        f0 = float(np.nanmean(f0_windows))
-        print(f"Estimated f0 on 30-second windows: mean={f0:.2f} Hz, all={f0_windows}")
+        f0_windows, aperiodic_params = estimate_f0(ground_truth["raw"], fs)
+        if f0_is_truth:
+            print(f"Using provided f0 = {f0:.2f} Hz as ground truth "
+                  f"(offline f0 estimate ignored; aperiodic fit kept for whitening).")
+        elif np.all(~np.isfinite(f0_windows)):
+            print("Could not estimate f0 from ground truth; using default f0 =", f0)
+        else:
+            f0 = float(np.nanmean(f0_windows))
+            print(f"Estimated f0 on 30-second windows: mean={f0:.2f} Hz, all={f0_windows}")
+    if not whiten:
+        aperiodic_params = None  # disable whitening in compute_hilbert_reference
 
     # Offline Hilbert reference
     raw = ground_truth["raw"]
@@ -123,14 +146,15 @@ def load_and_analyse(f0: float, results_dir: str) -> "RecordingAnalysis | None":
     )
 
 
-def analyse_results(f0: float, results_dir: str, show: bool = True) -> None:
-    analysis = load_and_analyse(f0, results_dir)
+def analyse_results(f0: float, results_dir: str, show: bool = True,
+                    f0_is_truth: bool = False, whiten: bool = True) -> None:
+    analysis = load_and_analyse(f0, results_dir, f0_is_truth=f0_is_truth, whiten=whiten)
     if analysis is None:
         return
 
     # Pipeline latency analysis. Reproducible from cache too, since
     # runtime_metadata.h5 preserves source_ts exactly (unlike an EDF round-trip).
-    analyse_latencies(analysis.samples, analysis.ground_truth, analysis.graph_config)
+    # analyse_latencies(analysis.samples, analysis.ground_truth, analysis.graph_config)
 
     # ERPCLAS-specific: ERP average plot
     if os.path.basename(analysis.graph_file) == "ERPCLAS.yaml":
@@ -143,12 +167,10 @@ def analyse_results(f0: float, results_dir: str, show: bool = True) -> None:
                         analysis.filtered, analysis.hilbert_phase, analysis.f0_continuous,
                         analysis.stim_ref, annotations=analysis.annotations)
 
-    # Plot errors
-    plot_errors(analysis.errors, plot_time=False)
-
-    # f0 time series
+    # Combined f0 + error time-domain figure, plus the usual error plots
     start_ts = analysis.ground_truth["time"][0]
-    plot_f0(analysis.ground_truth, analysis.f0_continuous, analysis.samples, start_ts)
+    plot_analysis(analysis.ground_truth, analysis.f0_continuous, analysis.samples,
+                  start_ts, analysis.errors)
 
     # Plot spectrum
     plot_spectrum(analysis.raw, analysis.samples, analysis.filtered, analysis.fs,
@@ -156,8 +178,8 @@ def analyse_results(f0: float, results_dir: str, show: bool = True) -> None:
 
     # Plot time series
     time_range = None #(10, 20)  # set to e.g. (17, 18) to zoom in seconds
-    # plot_time_series(analysis.ground_truth, analysis.samples, analysis.hilbert_phase,
-    #                   analysis.stim_ref, time_range=time_range)
+    plot_time_series(analysis.ground_truth, analysis.samples, analysis.hilbert_phase,
+                      analysis.stim_ref, time_range=time_range)
 
     if show:
         plt.show()
@@ -200,11 +222,14 @@ def analyse_all_results(f0: float = 10, base_dir: str = "results") -> None:
     print("=" * 80)
 
 
-def compute_recording_errors(f0: float, results_dir: str) -> list[dict]:
+def compute_recording_errors(f0: float, results_dir: str, f0_is_truth: bool = False,
+                             whiten: bool = True) -> list[dict]:
     """Load one results folder and compute its phase/f0/stimulus-edge
     errors, without writing files or plotting. Returns [] if the folder
-    can't be loaded or has no source signal."""
-    analysis = load_and_analyse(f0, results_dir)
+    can't be loaded or has no source signal. See load_and_analyse() for
+    f0_is_truth (take the passed f0 as the known carrier vs. fall back to it)
+    and whiten (spectral whitening before the offline bandpass)."""
+    analysis = load_and_analyse(f0, results_dir, f0_is_truth=f0_is_truth, whiten=whiten)
     return analysis.errors if analysis is not None else []
 
 
@@ -269,95 +294,13 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
     plt.show()
 
 
-def _phase_error_stats(values: np.ndarray, trim_frac: float = 0.05) -> "tuple[float, float, int]":
-    """Circular mean and SD (both in degrees) of a phase-error series, after
-    dropping non-finite samples and trimming trim_frac off each end to skip
-    filter edge transients -- same trimming convention as plot_errors()."""
-    vals = np.asarray(values, dtype=float)
-    vals = vals[np.isfinite(vals)]
-    lo, hi = int(trim_frac * len(vals)), int((1.0 - trim_frac) * len(vals))
-    vals = vals[lo:hi]
-    if vals.size == 0:
-        return np.nan, np.nan, 0
-    phi = np.radians(vals)
-    mean = float(np.degrees(circmean(phi, high=np.pi, low=-np.pi)))
-    std  = float(np.degrees(circstd(phi,  high=np.pi, low=-np.pi)))
-    return mean, std, vals.size
-
-
-def analyse_snr_sweep(sweep_dir: str, f0: float = 10, trim_frac: float = 0.05) -> None:
-    """Sweep summary across a folder of CLAS runs: for every results
-    subfolder under sweep_dir, read that run's SimulatedSource SNR and noise colour
-    from its graph .yaml, compute the online phase error and the offline
-    Hilbert reference error, and plot their mean +/- SD against SNR with one
-    line per noise type (white and pink on the same axes: solid mean line,
-    translucent +/-1 SD band). Three side-by-side panels (shared y-axis):
-    ecHT online phase error, offline Hilbert error, and the two overlaid for
-    a direct online-vs-offline comparison.
-
-    Put one CLAS run per subfolder inside sweep_dir -- each subfolder needs
-    the serializer output (*.bin, or the cached *.edf / *.h5) plus the graph
-    .yaml, exactly as produced by a single clas.py run. Runs are grouped by
-    SimulatedSource.options.noise_color and placed on the x-axis by
-    SimulatedSource.options.snr_db.
-    """
-    run_dirs = find_result_dirs(sweep_dir)
-    print(f"Found {len(run_dirs)} run folder(s) under {sweep_dir!r}.")
-
-    sweep_data: dict[str, list[dict]] = {}
-    for i, results_dir in enumerate(run_dirs, 1):
-        print(f"\n{'=' * 80}\n[{i}/{len(run_dirs)}] {results_dir}\n{'=' * 80}")
-        try:
-            graph_file = glob.glob(os.path.join(results_dir, "*.yaml"))[0]
-            with open(graph_file) as fh:
-                opts = yaml.safe_load(fh)["graph"]["processors"]["SimulatedSource"]["options"]
-            snr_db     = float(opts["snr_db"])
-            noise_type = str(opts.get("noise_color", "white"))
-
-            errors = compute_recording_errors(f0, results_dir)
-            online = next((e for e in errors if e["label"] == "Phase error"), None)
-            hilb   = next((e for e in errors if e["label"] == "Hilbert ref error"), None)
-            cmp    = next((e for e in errors if e["label"] == "Online vs Hilbert"), None)
-            if online is None:
-                print("  No 'Phase error' in this run; skipping.")
-                continue
-
-            p_mean, p_std, n = _phase_error_stats(online["values"], trim_frac)
-            if n == 0:
-                print("  No finite phase-error samples; skipping.")
-                continue
-            h_mean, h_std, hn = (
-                _phase_error_stats(hilb["values"], trim_frac) if hilb is not None
-                else (np.nan, np.nan, 0)
-            )
-            c_mean, c_std, cn = (
-                _phase_error_stats(cmp["values"], trim_frac) if cmp is not None
-                else (np.nan, np.nan, 0)
-            )
-            print(f"  {noise_type} noise, SNR = {snr_db:g} dB: "
-                  f"online {p_mean:.2f} +/- {p_std:.2f} deg (n = {n}); "
-                  f"hilbert {h_mean:.2f} +/- {h_std:.2f} deg (n = {hn}); "
-                  f"online-vs-hilbert {c_mean:.2f} +/- {c_std:.2f} deg (n = {cn})")
-            sweep_data.setdefault(noise_type, []).append({
-                "snr_db": snr_db,
-                "phase_mean":   p_mean, "phase_std":   p_std,
-                "hilbert_mean": h_mean, "hilbert_std": h_std,
-                "cmp_mean":     c_mean, "cmp_std":     c_std,
-            })
-        except Exception:
-            print(f"FAILED: {results_dir}")
-            traceback.print_exc()
-
-    if not sweep_data:
-        print("No sweep data collected; nothing to plot.")
-        return
-
-    plot_snr_sweep(sweep_data)
-    plt.show()
-
-
 if __name__ == "__main__":
     # analyse_all_results(f0=10)
-    analyse_results(f0=10, results_dir="results/CLAS_felix/felix_330_20260903_145040")
+
+    # analyse_results(f0=10, results_dir="_last_run")
+    analyse_results(f0=10, results_dir="results/sim_20260909_111051", f0_is_truth=True)
+
     # analyse_pooled_errors(f0=10) #, names=["victor", "dorothea"])
-    # analyse_snr_sweep("results/snr_sweep", f0=10)
+
+    # SNR / noise sweeps live in analysis/sweep.py:
+    #   from analysis.sweep import analyse_snr_sweep, snr_sweep_table

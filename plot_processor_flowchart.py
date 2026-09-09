@@ -319,7 +319,7 @@ def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
         if dst_proc not in processors:
             raise SystemExit(f"Connection references unknown destination processor: {dst_proc}")
 
-        edge_label = f"out.{src_idx} → in.{dst_idx}"
+        edge_label = f"{src_port}" # → {dst_port}"
         dot.edge(src_proc, dst_proc, label=edge_label)
         flow_edges.append((src_proc, dst_proc))
 

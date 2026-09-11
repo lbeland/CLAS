@@ -6,15 +6,15 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from scipy.signal import ellip, butter, firwin, filtfilt, sosfiltfilt, hilbert, windows
+from scipy.signal import butter, sosfiltfilt, hilbert, windows
 from tqdm import tqdm
 
-from .stimulus import StimulusConfig, compute_reference_stimulus, compute_stimulus_edge_errors, get_edges
+from .stimulus import StimulusConfig, compute_reference_stimulus, compute_stimulus_edge_errors, \
+    compute_stimulus_duration_error, get_edges
 from .f0 import alpha_fast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PHASE_estimation.jade import jade_v3
-from IAF_Estimation.cecHT.phase import ECHT
 
 
 def compute_hilbert_reference(
@@ -33,8 +33,8 @@ def compute_hilbert_reference(
     """
     X_white = None
     n = len(raw)
-    # taper = windows.tukey(n, alpha=0.01)
-    # raw = raw * taper
+    taper = windows.tukey(n, alpha=0.01)
+    raw = raw * taper
     if (aperiodic_params is not None) and (all(np.isfinite(aperiodic_params))):
         # Use aperiodic parameters to adjust the bandpass filter
         slope, intercept = aperiodic_params
@@ -67,100 +67,6 @@ def compute_hilbert_reference(
 
 
 _F0_CONFIG = {"alpha_band": (5, 18), "freq_range": (0.01, 30.0)}
-
-
-def compute_echt_reference(
-    filtered: np.ndarray,
-    f0_series: np.ndarray | None,
-    fs: float,
-    eval_idx: np.ndarray,
-    freq_window_s: float = 10.0,
-    n_cycles: float = 2.0,
-    bw_factor: float = 0.9,
-) -> np.ndarray:
-    """Sparse offline phase reference: a calibrated, endpoint-corrected Hilbert
-    transform (ECHT) whose centre frequency is re-estimated locally, evaluated
-    only at the caller-chosen samples ``eval_idx`` (here: every stimulus onset).
-
-    For every sample ``x`` in ``eval_idx``:
-
-      1. estimate the dominant alpha frequency ``f0(x)`` with
-         :func:`analysis.f0.alpha_fast` on the periodogram of the
-         ``freq_window_s``-second slice of ``filtered`` *centred* on ``x``;
-      2. take the calibrated ECHT (see ``IAF_Estimation/cecHT/phase.py``) of
-         the ``n_cycles``-cycle slice of ``filtered`` *ending at* ``x``, with
-         ``f0(x)`` as the calibration centre frequency and an order-1
-         Butterworth pass-band ``f0(x) * (1 ± bw_factor / 2)``;
-      3. the ECHT phase at that window's endpoint is the reference phase at ``x``.
-
-    Window length (``n_cycles / f0`` s), pass-band width (``0.9 * f0``), filter
-    order and MSE calibration all match the online ``PhaseEstimation`` processor.
-    ``f0(x)`` is snapped to a 0.1 Hz grid, as the online processor also does.
-
-    Returns
-    -------
-    echt_phase : np.ndarray, shape ``(len(filtered),)``
-        Peak-referenced, wrapped reference phase (rad) at each evaluated
-        sample; ``np.nan`` everywhere else (including any ``eval_idx`` sample
-        where ``alpha_fast`` approved no alpha peak or a window ran off a
-        recording edge).
-    """
-    filtered = np.asarray(filtered, dtype=float)
-    n  = len(filtered)
-    fs = float(fs)
-    eval_idx = np.unique(np.asarray(eval_idx, dtype=int))
-    eval_idx = eval_idx[(eval_idx >= 0) & (eval_idx < n)]
-
-    echt_phase = np.full(n, np.nan)
-    if eval_idx.size == 0:
-        return echt_phase
-
-    half_freq = int(round(freq_window_s * fs / 2.0))
-    n_nopeak = n_edge = 0
-    for x in tqdm(eval_idx, desc="ECHT reference"):
-        if x - half_freq < 0 or x + half_freq > n:
-            n_edge += 1
-            continue
-
-        if f0_series is not None:
-            # Use the local f0 estimate if available, rather than a global
-            # alpha_fast() call, to avoid spurious peaks in the periodogram
-            # from corrupting the ECHT reference.
-            f0 = f0_series[x]
-            if not np.isfinite(f0):
-                n_nopeak += 1
-                continue
-        else:
-            seg   = filtered[x - half_freq : x + half_freq]
-            freqs = np.fft.rfftfreq(len(seg), d=1.0 / fs)
-            X     = np.fft.rfft(seg)
-            psd   = (np.abs(X) ** 2) / (fs * len(seg))
-            psd[1:-1] *= 2
-            try:
-                f0, _ = alpha_fast(psd, freqs, _F0_CONFIG)
-            except Exception:
-                f0 = np.nan
-            if not np.isfinite(f0):
-                n_nopeak += 1
-                continue                  # 0.1 Hz grid, like the online processor
-
-        bw     = bw_factor * f0
-        l_freq = f0 - bw / 2.0
-        h_freq = f0 + bw / 2.0
-        w      = int(round(n_cycles * fs / f0))
-        if l_freq <= 0.0 or h_freq >= fs / 2.0 or w < 3 or x - w + 1 < 0:
-            n_edge += 1
-            continue
-
-        echt = ECHT(l_freq=l_freq, h_freq=h_freq, sfreq=fs, filt_order=1,
-                    filter_type="butter", calibrate=True, f0=f0, fft_mode="fast")
-        z = np.squeeze(echt.fit_transform(filtered[x - w + 1 : x + 1]))
-        echt_phase[x] = np.angle(z[-1])
-
-    n_ok = int(np.isfinite(echt_phase[eval_idx]).sum())
-    print(f"compute_echt_reference: {n_ok}/{eval_idx.size} onset(s) evaluated "
-          f"({n_nopeak} without an approved peak, {n_edge} skipped at edges)")
-    return echt_phase
 
 
 def _fif_isolate_component(
@@ -282,20 +188,22 @@ def compute_errors(
         phi = samples["PhaseEstimation_phase"]["y"]
         n   = len(phi)
         ref = true_phase[:n] if true_phase is not None else hilbert_phase[:n]
+        label = r"$\hat \theta - \theta$" if true_phase is not None else r"$\hat \theta - \theta_{\mathrm{HT}}$"
         err = np.angle(np.exp(1j * (phi - ref)), deg=True)
-        errors.append({"label": "Phase error", "time_s": t, "values": err, "unit": "degrees"})
+        errors.append({"label": label, "time_s": t, "values": err,
+                        "unit": "degrees", "linestyle": "-"})
 
         if true_phase is not None:
             h_err = np.angle(np.exp(1j * (hilbert_phase[:n] - true_phase[:n])), deg=True)
-            errors.append({"label": "Hilbert ref error", "time_s": t, "values": h_err,
-                           "unit": "degrees", "linestyle": "--"})
+            errors.append({"label": r"$\theta_{\mathrm{HT}} - \theta$", "time_s": t, "values": h_err,
+                           "unit": "degrees", "linestyle": "-"})
 
             # Online estimate vs the offline Hilbert estimate, as if Hilbert
             # were ground truth. When there's no true_phase this is identical
             # to "Phase error", so it's only added here to avoid a duplicate.
             oh_err = np.angle(np.exp(1j * (phi - hilbert_phase[:n])), deg=True)
-            errors.append({"label": "Online vs Hilbert", "time_s": t, "values": oh_err,
-                           "unit": "degrees", "linestyle": ":"})
+            errors.append({"label": r"$\hat\theta - \theta_{\mathrm{HT}}$", "time_s": t, "values": oh_err,
+                           "unit": "degrees", "linestyle": "--"})
 
     # f0 error
     if samples.get("FrequencyEstimation") is not None and true_inst_freq is not None:
@@ -336,28 +244,46 @@ def compute_errors(
             print(f"Stimulus: {n_actual} onset(s) delivered vs {n_ideal} ideal.")
 
         # Phase error at each trigger edge vs the phase the controller targets,
-        # scored against the offline Hilbert/true reference and -- for onsets
-        # only -- also against the per-onset ECHT reference (compute_echt_reference).
+        # scored against the offline reference phase (true_phase if available,
+        # else the offline Hilbert phase).
         onset_err, offset_err = compute_stimulus_edge_errors(
-            trigger_binary, time_us, ref_phase, f0_y, stim_cfg, start_ts)
+            trigger_binary, time_us, ref_phase, stim_cfg, start_ts, fs)
         if onset_err is not None:
-            errors.append({"label": "Stim onset error",
+            errors.append({"label": "Stim onset",
                            "time_s": onset_err["time_s"], "values": onset_err["values"],
                            "unit": "degrees"})
         if offset_err is not None:
-            errors.append({"label": "Stim offset error",
+            errors.append({"label": "Stim offset",
                            "time_s": offset_err["time_s"], "values": offset_err["values"],
                            "unit": "degrees", "linestyle": "--"})
 
-        if filtered is not None:
-            filt_signal = filtered
-            f0 = f0_y if samples.get("FrequencyEstimation") is not None else None
-            echt_phase = compute_echt_reference(filt_signal, f0, fs, get_edges(trigger_binary, "rising"))
-            echt_onset_err, _ = compute_stimulus_edge_errors(
-                trigger_binary, time_us, echt_phase, f0_y, stim_cfg, start_ts)
-            if echt_onset_err is not None:
-                errors.append({"label": "Stim onset error (ECHT)",
-                               "time_s": echt_onset_err["time_s"], "values": echt_onset_err["values"],
-                               "unit": "degrees", "linestyle": ":"})
+        # With stim_dur_unit == "ms" there's no target phase for the falling
+        # edge (the burst is timed, not phase-targeted), so offset_err above
+        # is None; score the actual-vs-target burst length in ms instead.
+        if stim_cfg.stim_dur_unit != "deg":
+            dur_err = compute_stimulus_duration_error(trigger_binary, time_us, stim_cfg, start_ts)
+            if dur_err is not None:
+                print(f"Stim duration error: {np.nanmean(dur_err['values']):.2f} ms "
+                      f"+- {np.nanstd(dur_err['values']):.2f} ms")
+                errors.append({"label": "Stim duration error",
+                               "time_s": dur_err["time_s"], "values": dur_err["values"],
+                               "unit": "ms"})
+
+        # Same edges again, but scored against the online phase estimate
+        # (`PhaseEstimation_phase`, produced live by the real-time ECHT-based
+        # PhaseEstimation processor) instead of the offline/ground-truth
+        # reference above -- i.e. what the running system actually saw,
+        # rather than an offline reconstruction.
+        echt_phase = samples.get("PhaseEstimation_phase", {}).get("y")
+        echt_onset_err, echt_offset_err = compute_stimulus_edge_errors(
+            trigger_binary, time_us, echt_phase, stim_cfg, start_ts, fs)
+        if echt_onset_err is not None:
+            errors.append({"label": "Stim onset error (ECHT)",
+                            "time_s": echt_onset_err["time_s"], "values": echt_onset_err["values"],
+                            "unit": "degrees", "linestyle": ":"})
+        if echt_offset_err is not None:
+            errors.append({"label": "Stim offset error (ECHT)",
+                            "time_s": echt_offset_err["time_s"], "values": echt_offset_err["values"],
+                            "unit": "degrees", "linestyle": ":"})
 
     return errors, stim_ref

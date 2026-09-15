@@ -32,10 +32,11 @@ def compute_hilbert_reference(
     since only the Hilbert phase (angle) is used downstream, not amplitude.
     """
     X_white = None
-    n = len(raw)
-    taper = windows.tukey(n, alpha=0.01)
-    raw = raw * taper
+
     if (aperiodic_params is not None) and (all(np.isfinite(aperiodic_params))):
+        n = len(raw)
+        taper = windows.tukey(n, alpha=0.01)
+        raw = raw * taper
         # Use aperiodic parameters to adjust the bandpass filter
         slope, intercept = aperiodic_params
         freqs = np.fft.rfftfreq(n, d=1/fs)
@@ -51,22 +52,14 @@ def compute_hilbert_reference(
 
         X_white = np.ones_like(X)
         X_white[1:] = X[1:] / np.maximum(1e-12,np.sqrt( np.array(L[1:])))
+        X_white[0] = 1.0  # avoid a DC offset in the whitened signal
 
         raw = np.fft.irfft(X_white, n=n)
-
-    # # Geometric passband edges: sqrt(f_lo * f_hi) == f0, so the Butterworth
-    # # band-pass is (log-)symmetric about f0 instead of peaking ~4.6% below it.
-    # k        = np.sqrt(1.3 / 0.7)          # same edge ratio as the old [0.7 f0, 1.3 f0]
-    # sos      = butter(4, [f0 / k, f0 * k], btype="band", fs=fs, output="sos")
-    # filtered = sosfiltfilt(sos, raw)
 
     sos      = butter(4, [0.7*f0, 1.3*f0], btype="band", fs=fs, output="sos")
     filtered = sosfiltfilt(sos, raw)
 
     return filtered, np.angle(hilbert(filtered)), X_white
-
-
-_F0_CONFIG = {"alpha_band": (5, 18), "freq_range": (0.01, 30.0)}
 
 
 def _fif_isolate_component(
@@ -168,7 +161,6 @@ def compute_errors(
     start_ts: float,
     fs: float,
     graph_config: dict,
-    filtered: "np.ndarray | None" = None,
 ) -> tuple[list[dict], np.ndarray | None]:
     """
     Compute phase, f0, and stimulus edge errors.
@@ -249,11 +241,11 @@ def compute_errors(
         onset_err, offset_err = compute_stimulus_edge_errors(
             trigger_binary, time_us, ref_phase, stim_cfg, start_ts, fs)
         if onset_err is not None:
-            errors.append({"label": "Stim onset",
+            errors.append({"label": r"Stim onset ($\theta_{\mathrm{HT}}$)",
                            "time_s": onset_err["time_s"], "values": onset_err["values"],
                            "unit": "degrees"})
         if offset_err is not None:
-            errors.append({"label": "Stim offset",
+            errors.append({"label": r"Stim offset ($\theta_{\mathrm{HT}}$)",
                            "time_s": offset_err["time_s"], "values": offset_err["values"],
                            "unit": "degrees", "linestyle": "--"})
 
@@ -278,11 +270,11 @@ def compute_errors(
         echt_onset_err, echt_offset_err = compute_stimulus_edge_errors(
             trigger_binary, time_us, echt_phase, stim_cfg, start_ts, fs)
         if echt_onset_err is not None:
-            errors.append({"label": "Stim onset error (ECHT)",
+            errors.append({"label": r"Stim onset ($\hat\theta$)",
                             "time_s": echt_onset_err["time_s"], "values": echt_onset_err["values"],
                             "unit": "degrees", "linestyle": ":"})
         if echt_offset_err is not None:
-            errors.append({"label": "Stim offset error (ECHT)",
+            errors.append({"label": r"Stim offset ($\hat\theta$)",
                             "time_s": echt_offset_err["time_s"], "values": echt_offset_err["values"],
                             "unit": "degrees", "linestyle": ":"})
 

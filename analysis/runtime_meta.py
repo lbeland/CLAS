@@ -1,8 +1,7 @@
 """
 runtime_metadata.h5: pipeline-internal data that has no business in a
-generic, tool-agnostic EDF (raw hardware timestamps, online f0/phase/
-filter estimates, the selected-channel index, simulation-only ground
-truth). Written once alongside raw_signals.edf (see edf_io.py) and read
+generic, tool-agnostic EDF (raw hardware timestamps, the selected-channel index,
+simulation-only ground truth). Written once alongside raw_signals.edf (see edf_io.py) and read
 back on every later run.
 
 HDF5's native typing sidesteps three real EDF limitations discovered while
@@ -21,6 +20,7 @@ import numpy as np
 ONLINE_FIELDS = {
     "StimControl":  "stimulus",
     "FrequencyEstimation":        "f0",
+    "FrequencyEstimation_raw":    "f0_raw",  # optional: raw pre-Kalman peak f0 (debug_output=true)
     "PhaseEstimation_phase": "phase",
     "ecHTFilter":           "filt",
     "ChannelSelection":      "channel_idx",

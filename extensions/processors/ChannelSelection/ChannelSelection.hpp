@@ -42,7 +42,7 @@ class ChannelSelection : public IProcessor {
     // Options
     options::Int n_messages_{-1};
     options::Vector<int, false> channel_indices_;
-    options::Double rms_window_seconds_{5.0};
+    options::Double rms_window_seconds_{2.5};
     options::Double rms_threshold_uv_{2.0};
 
     // Runtime state

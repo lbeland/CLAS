@@ -61,7 +61,7 @@ class UDPSource : public IProcessor {
     // At 10 kHz, 1000 packets ≈ 100 ms of startup delay.
     options::Int calib_packets_{10000};
     // Time constant [s] of the exponential forgetting factor
-    options::Double fs_tau_s_{15.0};
+    options::Double fs_tau_s_{30.0};
     // Duration [s] of the RLS warm-up
     options::Double recal_warmup_s_{60.0};
 

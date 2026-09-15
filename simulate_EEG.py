@@ -34,7 +34,7 @@ def angle_mod(t, A_c, f_c, A_m, f_m):
 
     return value, amplitude, theta, inst_freq
 
-def client_simulate(n_samples=-1):
+def EEG_simulate(n_samples=-1):
     UDP_IP = "127.0.0.1"
     UDP_PORT = 25000
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -93,7 +93,7 @@ def client_simulate(n_samples=-1):
                 eeg.append(value)
 
             source_ts = datetime.now().replace(tzinfo=timezone.utc).timestamp()
-            storage.append((t, value, amplitude, theta, inst_freq, source_ts))
+            storage.append((t, sample_counter, value, amplitude, theta, inst_freq, source_ts))
 
             # eeg[9] *= 10    # Make channel 9 stand out for testing
 
@@ -132,11 +132,14 @@ def client_simulate(n_samples=-1):
     except KeyboardInterrupt:
         print("Simulation interrupted by user")
     finally:
-        np.save("simulated_signal.npy", np.array(storage, dtype=[("time", "f4"), ("value", "f4"), ("amplitude", "f4"), ("phase", "f4"), ("inst_freq", "f4"), ("source_ts", "f8")]))
+        np.save("simulated_signal.npy", np.array(storage, dtype=[
+            ("time", "f4"), ("sample_counter", "u4"), ("value", "f4"), ("amplitude", "f4"),
+            ("phase", "f4"), ("inst_freq", "f4"), ("source_ts", "f8"),
+        ]))
 
 
 def main():
-    client_simulate(-1)
+    EEG_simulate(-1)
     # loaded = np.load("simulated_signal.npy")
 
     # fig, axes = plt.subplots(3,1, figsize=(10,7), sharex=True)

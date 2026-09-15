@@ -26,7 +26,7 @@ Dependencies: numpy, scipy, statsmodels
 import warnings
 
 import numpy as np
-from scipy.signal import firls, filtfilt, hilbert, medfilt
+from scipy.signal import firls, filtfilt, fftconvolve, hilbert, medfilt
 from scipy.ndimage import label
 import statsmodels.api as sm
 
@@ -59,7 +59,10 @@ def _morlet_wavelet_power(signal, wavefreqs, srate, wavecycles=6):
         wavelet = np.exp(2j * np.pi * f * t) * np.exp(-t ** 2 / (2 * sigma_t ** 2))
         # normalize wavelet energy
         wavelet = wavelet / np.sqrt(np.sum(np.abs(wavelet) ** 2))
-        conv = np.convolve(signal, wavelet, mode="same")
+        # FFT-based convolution -- at real recording lengths/sample rates the
+        # direct-form np.convolve this was ported from is intractable (a
+        # low-frequency wavelet's kernel can run to tens of thousands of taps).
+        conv = fftconvolve(signal, wavelet, mode="same")
         pow_out[i, :] = np.abs(conv) ** 2
 
     return pow_out
@@ -308,24 +311,32 @@ def modal(signal, params):
         FS[i_band, :] = median_of_meds
 
     # ---- Optional Key Step #3: local 1/f thresholding ----
-    frequency_sliding_windows = np.tile(FS[:, :, None], (1, 1, len(wins)))
+    # An empty `wins` (params["local_winsize_sec"] = []) means "skip this
+    # step": just return FS for every timepoint, matching MODAL.m (there,
+    # `for iW = 1:length(wins)` never executes when wins is empty, leaving
+    # frequency_sliding == FS untouched).
+    if len(wins) == 0:
+        frequency_sliding = FS
+    else:
+        frequency_sliding_windows = np.tile(FS[:, :, None], (1, 1, len(wins)))
 
-    for i_w, winsize in enumerate(wins):
-        winsize = int(winsize)
-        for i_win_start in range(0, n_samples, winsize):
-            windex = np.arange(i_win_start, min(i_win_start + winsize + 1, n_samples))
+        for i_w, winsize in enumerate(wins):
+            winsize = int(winsize)
+            for i_win_start in range(0, n_samples, winsize):
+                windex = np.arange(i_win_start, min(i_win_start + winsize + 1, n_samples))
 
-            n_nan = np.sum(np.isnan(pow_mat[:, windex]))
-            if n_nan < (len(windex) * len(wavefreqs)):  # skip if window is all-NaN
-                frequency_sliding_windows[:, windex, i_w] = _fit_one_over_f_windows(
-                    FS[:, windex], wavefreqs, pow_mat[:, windex], bandidx
-                )
-            else:
-                frequency_sliding_windows[:, windex, i_w] = np.nan
+                n_nan = np.sum(np.isnan(pow_mat[:, windex]))
+                if n_nan < (len(windex) * len(wavefreqs)):  # skip if window is all-NaN
+                    frequency_sliding_windows[:, windex, i_w] = _fit_one_over_f_windows(
+                        FS[:, windex], wavefreqs, pow_mat[:, windex], bandidx
+                    )
+                else:
+                    frequency_sliding_windows[:, windex, i_w] = np.nan
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        frequency_sliding = np.nanmean(frequency_sliding_windows, axis=2)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            frequency_sliding = np.nanmean(frequency_sliding_windows, axis=2)
+
     frequency_sliding = frequency_sliding.astype(np.float32)
 
     return frequency_sliding
@@ -337,7 +348,7 @@ if __name__ == "__main__":
     np.random.seed(0)
     srate = 500
     t = np.arange(0, 20, 1 / srate)
-    sig = np.sin(2 * np.pi * 10 * t) * 3 + np.random.randn(len(t))
+    sig = np.sin(2 * np.pi * 12.4 * t) * 3 + np.random.randn(len(t))
 
     params = {
         "srate": srate,

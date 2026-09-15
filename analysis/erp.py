@@ -75,7 +75,7 @@ def analyse_erp() -> None:
             samples, ground_truth, _ = load_runtime(raw_edf_path, meta_h5_path)
         else:
             samples      = load_processor_signals(fs, results_dir, processors)
-            ground_truth = extract_ground_truth(samples)
+            ground_truth = extract_ground_truth(samples, graph_config)
             if os.path.basename(graph_files[0]) == "ERPCLAS.yaml":
                 write_raw_signals_edf(raw_edf_path, fs, samples, ground_truth)
                 write_runtime_metadata(meta_h5_path, fs, samples, ground_truth)

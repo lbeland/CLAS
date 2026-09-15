@@ -167,10 +167,9 @@ def compute_stimulus_edge_errors(
     Returns (onset_error, offset_error) dicts with ``time_s`` / ``values``
     (degrees), or None for an edge kind with nothing to score.
     """
-    n = min(len(trigger_binary), len(time_us), len(phase))
-    trigger_binary = np.asarray(trigger_binary)[:n]
-    time_us        = np.asarray(time_us)[:n]
-    phase          = np.asarray(phase, dtype=float)[:n]
+    trigger_binary = np.asarray(trigger_binary)
+    time_us        = np.asarray(time_us)
+    phase          = np.asarray(phase, dtype=float)
 
     onset_rad       = np.deg2rad(config.stim_onset_deg)
     latency_samples = int(round(config.erp_latency_s * fs))

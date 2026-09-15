@@ -1,152 +1,142 @@
 graph:
   name: CLAS
   defaults:
-    n_messages: &n_messages 1000000
-    window_size: &window_size 100000
+    n_messages: &n_messages 900000
+    # window_size: &window_size 50000
     fs: &fs 10000
-    threadpriority: &threadpriority 100
+    use_stim_protocol: false
   processors:
-    SimulatedSource:
-      class: SimulatedSource
+    UDPSource:
+      class: UDPSource
       options:
         fs: *fs
-        nchannels: 1
-        nsamples: 1
-        n_messages: *n_messages
-        carrier_amplitude: 3
-        carrier_frequency: 10.334
-        modulation_type: "none"
-        modulation_amplitude: 5
-        modulation_frequency: 0.05
+        nchannels: 3          # default
+        # nsamples: 1
+        n_messages: *n_messages  # default
+        # store_aux: true        # default
+        calib_packets: 30000
+        fs_tau_s: 30
       advanced:
         buffer_sizes:
-          data: 1024
-          meta: 1024
+          eeg: 2048
+          aux: 2048
         thread_core: [6,18]
-        threadpriority: *threadpriority
     SelectionFilter:
       class: MultiChannelFilter
       options:
         filter:
-          # file: filters://2_2.0_20.0_10000.txt
-          N: [1, 4]
-          low_cutoff: [7, 40]
-          high_cutoff: [16, 60]
-          btype: [bandpass, bandstop]
+          N: [4]
+          low_cutoff: [7]
+          high_cutoff: [18]
+          btype: [bandpass]
           name: selection
-        n_messages: *n_messages
+        # n_messages: *n_messages  # default
       advanced:
         buffer_sizes:
-          out: 1024
+          out: 2048
         thread_core: [7,19]
-        threadpriority: *threadpriority
     ChannelSelection:
       class: ChannelSelection
       options:
-        n_messages: *n_messages
-        channel_indices: [1]   # 1-based indices of channels to select
+        # n_messages: *n_messages  # default
+        channel_indices: [1,2,3]   # 1-based indices of channels to select
+        rms_threshold_uv: 4000
+        rms_window_seconds: 2.5
       advanced:
         buffer_sizes:
-          out: 1024
+          out: 2048
         thread_core: [7,19]
-        threadpriority: *threadpriority
     ChannelReduction:
       class: ChannelReduction
       options:
-        n_messages: *n_messages
+        # n_messages: *n_messages  # default
         default_channel_index: 1  # 1-based
       advanced:
         buffer_sizes:
-          out: 1024
+          out: 2048
         thread_core: [7,19]
-        threadpriority: *threadpriority
     ecHTFilter:
       class: MultiChannelFilter
       options:
         filter:
-          # file: filters://2_2.0_20.0_10000.txt
           N: [1, 1]
           low_cutoff: [5, 46]
-          high_cutoff: [15, 54]
+          high_cutoff: [16, 54]
           btype: [bandpass, bandstop]
           name: ecHTfilter
-        n_messages: *n_messages
+        # n_messages: *n_messages  # default
       advanced:
         buffer_sizes:
-          out: 1024
+          out: 2048
         thread_core: [7,19]
-        threadpriority: *threadpriority
     FrequencyEstimation:
       class: FrequencyEstimation
       options:
-        n_messages: *n_messages
-        calc_interval: 100
+        # n_messages: *n_messages  # default
+        # calc_interval: 100      # default
         window_size_sec: 10
         max_invalid_sec: 3
         kalman_f0_std: 0.1
-        kalman_full: true
+        # kalman_full: true       # default
         f_min: 7.0
         f_max: 16.0
       advanced:
         buffer_sizes:
-          out: 1024
+          out: 2048
         thread_core: [11,23]
-        threadpriority: *threadpriority
     PhaseEstimation:
       class: PhaseEstimation
       options:
-        n_messages: *n_messages
+        # n_messages: *n_messages  # default
         # n_fft: *window_size
         f0_read_interval: 1
         calibrate: true
-        compensate_filter: true
+        # compensate_filter: true  # default
       advanced:
         buffer_sizes:
-          phase: 1024
-          real: 1024
+          phase: 2048
+          real: 2048
         thread_core: [9,21]
-        threadpriority: *threadpriority
     StimControl:
       class: StimControl
       options:
-        n_messages: *n_messages
-        stim_onset_deg: 0
-        stim_dur_unit: "ms"
+        # n_messages: *n_messages  # default
+        stim_onset_deg: 0        #### TODO ####### pre-peak 330°, post-peak 60°, pre-trough 150°, post-trough 240°,
+        stim_dur_unit: "deg"
         stim_dur_deg: 45
-        stim_dur_ms: 20
-        correct_latencies: false
-        audio_latency_s: 0.0 #0.004
-        erp_latency_s: 0
-        stim_period_ms: 1
-        stim_amplitude: 0.5
-        use_background_sound: true
-        background_dB: 18
+        # stim_dur_ms: 20         # default
+        # correct_latencies: true  # default
+        audio_latency_s: 0.005
+        erp_latency_s: 0.0 #631   ###### TODO #########
+        stim_amplitude: 1.0
+        stim_period_ms: 0.8
+        # use_background_sound: true  # default
+        # background_dB: 18       # default
       advanced:
         buffer_sizes:
-          out: 1024
+          out: 2048
         thread_core: [10,22,5,17]
     Serializer(1-5):    # one serializers per output stream
       class: FileSerializer
-      options:
-        encoding: binary
-        throttle/enabled: false
-        overwrite: false 
-        format: FULL
-        n_messages: *n_messages
+      #options:
+        # encoding: binary        # default
+        # throttle/enabled: false # default
+        # overwrite: false        # default
+        # format: full            # default
+        # n_messages: *n_messages  # default
       advanced:
         thread_core: [8,20]
   connections:
-  - SimulatedSource.data.0 = SelectionFilter.in
-  - SimulatedSource.data.0 = ChannelReduction.in
+  - UDPSource.eeg.0 = SelectionFilter.in
+  - UDPSource.eeg.0 = ChannelReduction.in
   - SelectionFilter.out.0 = ChannelSelection.in
   - ChannelReduction.out.0 = ecHTFilter.in
   - ecHTFilter.out.0 = PhaseEstimation.in
   - ChannelReduction.out.0 = FrequencyEstimation.in
   - PhaseEstimation.phase.0 = StimControl.in
-  # - StimControl.out.0 = BenchSink.in
 
-  - SimulatedSource.data = Serializer1.in
-  - SimulatedSource.meta = Serializer1.in
+  - UDPSource.eeg.0 = Serializer1.in
+  - UDPSource.aux.0 = Serializer1.in
   - ecHTFilter.out.0 = Serializer2.in
   - PhaseEstimation.phase.0 = Serializer3.in
   - PhaseEstimation.real.0 = Serializer3.in
@@ -157,4 +147,5 @@ graph:
   states:
   - F0: [FrequencyEstimation.f0, PhaseEstimation.f0, StimControl.f0]
   - CH_IDX: [ChannelSelection.ch_idx, ChannelReduction.ch_idx]
+
 

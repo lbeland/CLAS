@@ -1,7 +1,7 @@
 graph:
   name: CLAS
   defaults:
-    n_messages: &n_messages 200000
+    n_messages: &n_messages 50000
     fs: &fs 10000
   processors:
     SimulatedSource:
@@ -12,26 +12,27 @@ graph:
         nsamples: 1
         n_messages: *n_messages
         inter_packet_sleep: false
-        carrier_amplitude: 3.0
+        # noise_seed: 42
+        carrier_amplitude: 1
         carrier_frequency: 10.0
         # Signal mode (mutually exclusive):
         #   none | amplitude | phase | phase_jump | freq_step | chirp
-        modulation_type: "none"
-        modulation_amplitude: 2      # amplitude/phase: modulation depth
-        modulation_frequency: 0.1    # amplitude/phase: modulation rate (Hz)
-        mod_period_s: 3.0            # phase_jump/freq_step: unperturbed segment length (s)
+        modulation_type: "amplitude"
+        modulation_amplitude: 1      # amplitude/phase: modulation depth
+        modulation_frequency: 0.2    # amplitude/phase: modulation rate (Hz)
+        mod_period_s: 3.13            # phase_jump/freq_step: unperturbed segment length (s)
         phase_jump_angle: 3.14159265358979  # phase_jump: jump angle (rad)
         freq_step_size: -2          # freq_step: frequency offset while toggled (Hz)
         chirp_slope: 1.0             # chirp: linear frequency slope (Hz/s)
         # Imperfections applied to every mode:
         noise_color: "white"        # white | pink (Voss-McCartney 1/f)
-        snr_db: -10.0                 # in-band SNR (dB): carrier power vs noise power in noise_band_hz
+        snr_db: 100.0                 # in-band SNR (dB): carrier power vs noise power in noise_band_hz
         noise_band_hz: 4.0          # width of the SNR reference band around carrier_frequency (Hz)
         burst_on_s: 1.0             # bursty signal: ON duration (s)
         burst_off_s: 0.0            # bursty signal: OFF duration (s); 0 = always on
       advanced:
         buffer_sizes:
-          data: 32
+          data: 2
         thread_core: 7
     ecHTFilter:
       class: MultiChannelFilter
@@ -42,10 +43,10 @@ graph:
           high_cutoff: [16, 54]
           btype: [bandpass, bandstop]
           name: ecHTfilter
-        # n_messages: *n_messages  # default
+        n_messages: *n_messages  # default
       advanced:
         buffer_sizes:
-          out: 256
+          out: 2
         thread_core: 10
     PhaseEstimation:
       class: PhaseEstimation
@@ -66,6 +67,7 @@ graph:
   connections:
   - SimulatedSource.data.0 = ecHTFilter.in
   - ecHTFilter.out.0 = PhaseEstimation.in
+  # - SimulatedSource.data.0 = PhaseEstimation.in
   - SimulatedSource.data.0 = Serializer1.in
   - SimulatedSource.meta.0 = Serializer1.in   # ground truth: [amplitude, theta, inst_freq], NaN while burst-off
   - PhaseEstimation.phase.0 = Serializer2.in

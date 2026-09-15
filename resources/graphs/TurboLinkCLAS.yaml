@@ -25,10 +25,10 @@ graph:
       class: MultiChannelFilter
       options:
         filter:
-          N: [1, 4]
-          low_cutoff: [7, 30]
-          high_cutoff: [18, 70]
-          btype: [bandpass, bandstop]
+          N: [4]
+          low_cutoff: [7]
+          high_cutoff: [18]
+          btype: [bandpass]
           name: selection
         # n_messages: *n_messages  # default
       advanced:

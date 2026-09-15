@@ -182,6 +182,8 @@ def load_runtime(raw_edf_path: str, meta_h5_path: str) -> tuple[dict, dict, "mne
         samples["StimControl"] = {"x": time, "y": online["stimulus"], "source_ts": source_ts("StimControl")}
     if "f0" in online:
         samples["FrequencyEstimation"] = {"x": time, "y": online["f0"], "source_ts": source_ts("FrequencyEstimation")}
+    if "f0_raw" in online:
+        samples["FrequencyEstimation_raw"] = {"x": time, "y": online["f0_raw"], "source_ts": source_ts("FrequencyEstimation_raw")}
     if "phase" in online:
         samples["PhaseEstimation_phase"] = {"x": time, "y": online["phase"], "source_ts": source_ts("PhaseEstimation_phase")}
     if "filt" in online:
@@ -237,7 +239,7 @@ def write_analysis_edf(
         # (by any reader, mne included) and stay visually comparable.
         channels.append(("Filt_on", "eeg", samples["ecHTFilter"]["y"][:n]))
     if hilbert_phase is not None:
-        channels.append(("Phase_off", "stim", hilbert_phase[:n]))
+        channels.append(("Phase_off", "stim", np.nan_to_num(hilbert_phase, nan=-2 * np.pi)[:n]))
     if samples.get("PhaseEstimation_phase") is not None:
         phase_est = np.nan_to_num(samples["PhaseEstimation_phase"]["y"], nan=-2 * np.pi)
         channels.append(("Phase_on", "stim", phase_est[:n]))

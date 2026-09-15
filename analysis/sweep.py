@@ -15,9 +15,8 @@ Run from the repo root, either as a module or as a script:
 
 or from your own code / a REPL:
 
-    from analysis.sweep import analyse_snr_sweep, snr_sweep_table
+    from analysis.sweep import snr_sweep_table
     snr_sweep_table("results/snr_sweep/ecHTtests", kind="echt")
-    snr_sweep_table("results/snr_sweep/f0tests",   kind="f0")
 """
 
 import csv
@@ -39,37 +38,71 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from analysis.main import compute_recording_errors, find_result_dirs
 from analysis.plot import PLOTS_DIR
 
+# Error-series labels emitted by analysis.core.compute_errors(). Kept here as
+# constants so this module tracks any rename there in one place.
+ONLINE_VS_GT      = r"$\hat \theta - \theta$"            # online estimate - ground truth
+HILBERT_VS_GT     = r"$\theta_{\mathrm{HT}} - \theta$"   # offline Hilbert - ground truth
+ONLINE_VS_HILBERT = r"$\hat\theta - \theta_{\mathrm{HT}}$"  # online estimate - offline Hilbert
 
-def _phase_error_stats(values: np.ndarray, times: np.ndarray,
-                       trim_frac: float = 0.10) -> "tuple[float, float, int]":
+
+def _phase_error_stats(values: np.ndarray) -> "tuple[float, float, int]":
     """Circular mean and circular SD (both in degrees) of a wrapped phase-error
-    series, after dropping non-finite samples and trimming trim_frac of the
-    record's time span off each end to skip filter edge transients.
+    series, after dropping non-finite samples.
 
-    The trim window matches plot_errors(): take the timestamps at the
-    trim_frac / (1 - trim_frac) index positions and keep only samples inside
-    [t_lo, t_hi]. Circular statistics (scipy.stats.circmean / circstd) are used
-    because the error is an angle: the mean stays a meaningful lead/lag bias
-    even for a broad distribution, and the SD isn't inflated by the (-180, 180]
-    wrap. With this trim and these statistics the numbers match the polar-plot
-    annotations in plot_errors()."""
-    vals   = np.asarray(values, dtype=float)
-    times  = np.asarray(times, dtype=float)
-    finite = np.isfinite(vals)
-    if times.size:
-        lo_idx = int(trim_frac * len(times))
-        hi_idx = min(int((1.0 - trim_frac) * len(times)), len(times) - 1)
-        t_lo, t_hi = times[lo_idx], times[hi_idx]
-        keep = finite & (times >= t_lo) & (times <= t_hi)
-    else:
-        keep = finite
-    vals = vals[keep]
+    Series derived from the offline Hilbert phase (HILBERT_VS_GT,
+    ONLINE_VS_HILBERT) already carry NaN on their own leading/trailing edges
+    (hilbert_phase is NaN-masked at its own edges in
+    analysis.main.load_and_analyse), so no separate time-window trim is
+    needed here -- and one that isn't Hilbert-derived (ONLINE_VS_GT, the
+    online estimate scored directly against true_phase) is used in full
+    instead of being needlessly cut at both ends. Circular statistics
+    (scipy.stats.circmean / circstd) are used because the error is an angle:
+    the mean stays a meaningful lead/lag bias even for a broad distribution,
+    and the SD isn't inflated by the (-180, 180] wrap. These numbers match
+    the polar-plot annotations in plot_errors()."""
+    vals = np.asarray(values, dtype=float)
+    vals = vals[np.isfinite(vals)]
     if vals.size == 0:
         return np.nan, np.nan, 0
     phi  = np.radians(vals)
     mean = float(np.degrees(circmean(phi, high=np.pi, low=-np.pi)))
     std  = float(np.degrees(circstd(phi,  high=np.pi, low=-np.pi)))
     return mean, std, vals.size
+
+
+def _phase_correlation(a_vals: np.ndarray, b_vals: np.ndarray) -> "tuple[float, int]":
+    """Jammalamadaka-Sarma circular correlation between two wrapped
+    phase-error series -- here the online estimate's error vs. ground truth
+    (theta_hat - theta) and the offline Hilbert error vs. ground truth
+    (theta_HT - theta).
+
+    Both series are first centred on their own circular mean and the sine of
+    each residual is taken; the correlation is the mean product of those
+    sines normalised by the two sine RMS values:
+    rho_JS = E[sin(a-mu_a) sin(b-mu_b)] / sqrt(E[sin^2(a-mu_a)] E[sin^2(b-mu_b)]).
+    Ground truth is common to both series, so this isolates shared *error*
+    structure: a positive value means the online and offline estimates tend
+    to lead / lag the true phase together in this run, near zero means their
+    departures from truth are unrelated.
+
+    Only non-finite samples are dropped (see _phase_error_stats() for why no
+    time-window trim is needed): b_vals is the Hilbert-derived series here,
+    so its NaN edges alone already exclude those samples from both series via
+    the shared `keep` mask. Returns (corr, n)."""
+    a = np.asarray(a_vals, dtype=float)
+    b = np.asarray(b_vals, dtype=float)
+    n = min(len(a), len(b))
+    a, b = a[:n], b[:n]
+    keep = np.isfinite(a) & np.isfinite(b)
+    a, b = a[keep], b[keep]
+    if a.size == 0:
+        return np.nan, 0
+    ra, rb = np.radians(a), np.radians(b)
+    da = np.sin(ra - circmean(ra, high=np.pi, low=-np.pi))
+    db = np.sin(rb - circmean(rb, high=np.pi, low=-np.pi))
+    denom = float(np.sqrt(np.mean(da ** 2) * np.mean(db ** 2)))
+    corr = float(np.mean(da * db) / denom) if denom > 0 else np.nan
+    return corr, a.size
 
 
 def _run_carrier_f0(opts: dict, fallback: float) -> float:
@@ -80,30 +113,6 @@ def _run_carrier_f0(opts: dict, fallback: float) -> float:
     except (KeyError, TypeError, ValueError):
         return fallback
 
-def _hz_error_stats(values: np.ndarray, times: np.ndarray,
-                    warmup_s: float = 10.0) -> "tuple[float, float, float, float, float]":
-    """(signed mean, mean |err|, SD of |err|, RMSE, valid_ratio) in Hz for an
-    f0-error series, over the record *after* its first warmup_s seconds.
-
-    The f0 estimator produces nothing until its sliding buffer has filled
-    (~warmup_s), so that opening stretch isn't counted either way: it's
-    excluded from the stats and it's not in the valid_ratio denominator.
-    valid_ratio is finite estimates / all estimates in the post-warm-up
-    window -- 1.0 means the estimator returned a value at every sample once
-    it was running, lower means it flagged some samples invalid."""
-    vals  = np.asarray(values, dtype=float)
-    times = np.asarray(times, dtype=float)
-    if times.size:
-        vals = vals[times - times[0] >= warmup_s]
-    total = vals.size
-    vals  = vals[np.isfinite(vals)]
-    if total == 0 or vals.size == 0:
-        return np.nan, np.nan, np.nan, np.nan, (np.nan if total == 0 else 0.0)
-    return (float(np.mean(vals)), float(np.mean(np.abs(vals))),
-            float(np.std(np.abs(vals))), float(np.sqrt(np.mean(vals ** 2))),
-            vals.size / total)
-
-
 # Per-kind table layout: (spec, plain-text header, LaTeX header, per-value format).
 # `spec` is a row key, or a (mean_key, std_key) pair rendered as "mean +/- std"
 # ("$mean \\pm std$" in LaTeX).
@@ -111,18 +120,10 @@ _SWEEP_TABLE_COLUMNS = {
     "echt": [
         ("noise",                                 "noise",               "Noise",                              "{}"),
         ("snr_db",                                "SNR (dB)",             "SNR [dB]",                           "{:g}"),
-        (("err_mean", "err_std"),                 "phase err (deg)",      r"$\hat\theta - \theta$",             "{:.2f}"),
-        (("hilb_vs_gt_mean", "hilb_vs_gt_std"),   "Hilbert-vs-GT (deg)",  r"$\theta_{\text{HT}} - \theta$",     "{:.2f}"),
-        (("vs_hilbert", "vs_hilbert_std"),        "vs-Hilbert (deg)",     r"$\hat\theta - \theta_{\text{HT}}$", "{:.2f}"),
-    ],
-    "f0": [
-        ("noise",       "noise",              "Noise",                             "{}"),
-        ("snr_db",      "SNR (dB)",           "SNR [dB]",                          "{:g}"),
-        ("signed_mean", "mean err (Hz)",      "mean err (Hz)",                     "{:.3f}"),
-        ("abs_mean",    "abs err mean (Hz)",  r"$\overline{|\Delta f_0|}$ (Hz)",   "{:.3f}"),
-        ("abs_std",     "SD (Hz)",            "SD (Hz)",                           "{:.3f}"),
-        ("rmse",        "RMSE (Hz)",          "RMSE (Hz)",                         "{:.3f}"),
-        ("valid_ratio", "valid ratio",        "valid ratio",                       "{:.3f}"),
+        (("err_mean", "err_std"),                 "phase err (deg)",      r"$\hat\theta - \theta\,  [\degree]$",             "{:.2f}"),
+        (("hilb_vs_gt_mean", "hilb_vs_gt_std"),   "Hilbert-vs-GT (deg)",  r"$\theta_{\text{HT}} - \theta\,  [\degree]$",     "{:.2f}"),
+        (("vs_hilbert", "vs_hilbert_std"),        "vs-Hilbert (deg)",     r"$\hat\theta - \theta_{\text{HT}}\,  [\degree]$", "{:.2f}"),
+        ("corr_online_hilb",                      "corr(on,HT)",          r"$\rho_{JS}$",                          "{:.3f}"),
     ],
 }
 
@@ -135,45 +136,46 @@ _SWEEP_TABLE_CAPTIONS = {
              r"the online estimate against the offline Hilbert phase "
              r"($\hat\theta - \theta_{\text{HT}}$), and the Hilbert phase "
              r"against ground truth ($\theta_{\text{HT}} - \theta$). A non-zero "
-             r"mean indicates a systematic phase lead ($>0$) or lag ($<0$); the "
-             r"first and last 10\% of each run are discarded as filter edge "
-             r"transients."),
-    "f0":   (r"Offline $f_0$-estimation error across the SNR / noise-colour "
-             r"sweep: signed mean error, mean absolute error $\pm$ SD, RMSE, and "
-             r"the fraction of valid estimates after the estimator's warm-up."),
+             r"mean indicates a systematic phase lead ($>0$) or lag ($<0$). The "
+             r"last column is the Jammalamadaka--Sarma circular correlation "
+             r"$\rho_{JS}$ between the online and offline Hilbert errors vs.\ "
+             r"ground truth, i.e.\ how much the two estimators depart from the "
+             r"true phase together. Columns involving the offline Hilbert "
+             r"phase have the first and last 10\% of each run excluded as "
+             r"filter edge transients; the online-vs-ground-truth column "
+             r"does not."),
 }
 
 
 def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
-                    trim_frac: float = 0.10, out_dir: str = None,
-                    f0_is_truth: bool = True, whiten: bool = True,
+                    out_dir: str = None,
+                    f0_is_truth: bool = True, whiten: bool = False,
                     caption: str = None, label: str = None) -> "list[dict]":
     """Summarise an SNR / noise-colour sweep as a table instead of a plot.
 
     One row per run folder under sweep_dir, keyed by that run's SimulatedSource
-    snr_db / noise_color:
-
-      kind="echt": circular mean phase error +/- circular SD (deg) from the
-                   "Phase error" series (online ecHT vs. ground-truth phase),
-                   plus the same for the online-vs-Hilbert error. Errors carry
-                   the (estimate - reference) sign, i.e. theta_hat - theta, and
-                   match plot_errors()'s polar annotations.
-      kind="f0":   signed mean, mean |error| +/- SD and RMSE (Hz) from the
-                   "f0 error" series (FrequencyEstimation vs. true inst. freq),
-                   plus valid_ratio = finite estimates / all estimates once the
-                   estimator is running (its first window_size_sec seconds,
-                   read from the run's graph, are excluded as buffer warm-up).
+    snr_db / noise_color: circular mean phase error +/- circular SD (deg) from
+    the online-vs-ground-truth phase-error series (online ecHT vs. true phase),
+    plus the same for the online-vs-Hilbert and Hilbert-vs-GT errors. Errors
+    carry the (estimate - reference) sign, i.e. theta_hat - theta, and match
+    plot_errors()'s polar annotations. One extra column gives the circular
+    correlation between the online and offline Hilbert errors vs. ground
+    truth, per noise type and level -- a measure of how much the two phase
+    estimators depart from the true phase together.
 
     f0_is_truth (default True): take each run's known carrier_frequency as the
     pre-Hilbert bandpass centre instead of re-estimating f0 offline (see
     analysis.main.load_and_analyse). Pass False to fall back to offline
-    estimation with `f0` as the default. whiten (default True) keeps the 1/f
-    aperiodic whitening of the offline reference on regardless; pass
-    whiten=False to compare against the un-whitened reference.
+    estimation with `f0` as the default. whiten (default False) leaves the 1/f
+    aperiodic whitening of the offline reference off; pass whiten=True to
+    compare against the whitened reference instead.
 
-    trim_frac drops that fraction of the record's time span off each end of the
-    phase-error series to skip filter edge transients (kind="echt" only; same
-    window as plot_errors()); the f0 error is not trimmed.
+    The offline-Hilbert-derived columns (vs_hilbert*, hilb_vs_gt*, and
+    corr_online_hilb) already exclude their own leading/trailing edge
+    transients -- hilbert_phase is NaN-masked at its own edges in
+    analysis.main.load_and_analyse, so those NaNs simply drop out of the
+    circular stats below. The online-vs-ground-truth column (err_mean/std)
+    doesn't touch the Hilbert phase at all and is computed over the full run.
 
     Prints the table and writes snr_sweep_<kind>.csv / .tex into out_dir
     (default: the shared plots directory). The .tex is a full centred table
@@ -202,49 +204,37 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
             errors = compute_recording_errors(run_f0, results_dir,
                                               f0_is_truth=f0_is_truth, whiten=whiten)
 
-            if kind == "echt":
-                series = next((e for e in errors if e["label"] == "Phase error"), None)
-                if series is None:
-                    print("  No 'Phase error' series; skipping.")
-                    continue
-                e_mean, e_std, n = _phase_error_stats(series["values"], series["time_s"], trim_frac)
-                if n == 0:
-                    print("  No finite phase-error samples; skipping.")
-                    continue
-                cmp = next((e for e in errors if e["label"] == "Online vs Hilbert"), None)
-                vh_mean, vh_std, _ = (_phase_error_stats(cmp["values"], cmp["time_s"], trim_frac)
-                                      if cmp is not None else (np.nan, np.nan, 0))
-                hgt = next((e for e in errors if e["label"] == "Hilbert ref error"), None)
-                hgt_mean, hgt_std, _ = (_phase_error_stats(hgt["values"], hgt["time_s"], trim_frac)
-                                        if hgt is not None else (np.nan, np.nan, 0))
-                # compute_errors() already uses the (estimate - reference) sign,
-                # i.e. these means are circmean(theta_hat - theta) directly.
-                rows.append({"noise": noise_type, "snr_db": snr_db,
-                             "err_mean": e_mean, "err_std": e_std,
-                             "vs_hilbert": vh_mean, "vs_hilbert_std": vh_std,
-                             "hilb_vs_gt_mean": hgt_mean, "hilb_vs_gt_std": hgt_std})
-                print(f"  {noise_type}, SNR {snr_db:g} dB: phase err "
-                      f"{e_mean:.2f} +/- {e_std:.2f} deg; "
-                      f"online-vs-Hilbert {vh_mean:.2f} +/- {vh_std:.2f} deg; "
-                      f"Hilbert-vs-GT {hgt_mean:.2f} +/- {hgt_std:.2f} deg")
-            else:  # "f0"
-                series = next((e for e in errors if e["label"] == "f0 error"), None)
-                if series is None:
-                    print("  No 'f0 error' series; skipping.")
-                    continue
-                warmup_s = float(procs.get("FrequencyEstimation", {})
-                                 .get("options", {}).get("window_size_sec", 10.0))
-                s_mean, a_mean, a_std, rmse, valid_ratio = _hz_error_stats(
-                    series["values"], series["time_s"], warmup_s)
-                if not np.isfinite(a_mean):
-                    print("  No valid f0-error samples after warm-up; skipping.")
-                    continue
-                rows.append({"noise": noise_type, "snr_db": snr_db, "signed_mean": s_mean,
-                             "abs_mean": a_mean, "abs_std": a_std, "rmse": rmse,
-                             "valid_ratio": valid_ratio})
-                print(f"  {noise_type}, SNR {snr_db:g} dB: f0 err {s_mean:.3f} Hz, "
-                      f"|f0 err| {a_mean:.3f} +/- {a_std:.3f} Hz, RMSE {rmse:.3f} Hz "
-                      f"(valid {valid_ratio:.1%} after {warmup_s:g}s warm-up)")
+            series = next((e for e in errors if e["label"] == ONLINE_VS_GT), None)
+            if series is None:
+                print(f"  No {ONLINE_VS_GT!r} series; skipping.")
+                continue
+            e_mean, e_std, n = _phase_error_stats(series["values"])
+            if n == 0:
+                print("  No finite phase-error samples; skipping.")
+                continue
+            cmp = next((e for e in errors if e["label"] == ONLINE_VS_HILBERT), None)
+            vh_mean, vh_std, _ = (_phase_error_stats(cmp["values"])
+                                  if cmp is not None else (np.nan, np.nan, 0))
+            hgt = next((e for e in errors if e["label"] == HILBERT_VS_GT), None)
+            hgt_mean, hgt_std, _ = (_phase_error_stats(hgt["values"])
+                                    if hgt is not None else (np.nan, np.nan, 0))
+            # Circular correlation between the online estimate's error vs.
+            # ground truth and the offline Hilbert error vs. ground truth
+            # (shared truth cancels, so this is shared *error* structure).
+            corr_oh, _ = (_phase_correlation(series["values"], hgt["values"])
+                         if hgt is not None else (np.nan, 0))
+            # compute_errors() already uses the (estimate - reference) sign,
+            # i.e. these means are circmean(theta_hat - theta) directly.
+            rows.append({"noise": noise_type, "snr_db": snr_db,
+                         "err_mean": e_mean, "err_std": e_std,
+                         "vs_hilbert": vh_mean, "vs_hilbert_std": vh_std,
+                         "hilb_vs_gt_mean": hgt_mean, "hilb_vs_gt_std": hgt_std,
+                         "corr_online_hilb": corr_oh})
+            print(f"  {noise_type}, SNR {snr_db:g} dB: phase err "
+                  f"{e_mean:.2f} +/- {e_std:.2f} deg; "
+                  f"online-vs-Hilbert {vh_mean:.2f} +/- {vh_std:.2f} deg; "
+                  f"Hilbert-vs-GT {hgt_mean:.2f} +/- {hgt_std:.2f} deg; "
+                  f"corr(online,Hilbert) {corr_oh:.3f}")
         except Exception:
             print(f"FAILED: {results_dir}")
             traceback.print_exc()
@@ -341,4 +331,3 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
 
 if __name__ == "__main__":
     snr_sweep_table("results/snr_sweep/ecHTtests", kind="echt")
-    snr_sweep_table("results/snr_sweep/f0tests",   kind="f0")

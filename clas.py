@@ -208,7 +208,7 @@ def main():
     context.term()
 
     # Postprocessing results
-    analyse_results(10, "_last_run/")
+    analyse_results("_last_run/")
     # plot_results(fs, 7.5, GRAPH_CONFIG)
 
 def terminate(proc):

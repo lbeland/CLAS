@@ -3,49 +3,26 @@ Test script: does spectral whitening (removal of the 1/f aperiodic component)
 improve or degrade instantaneous-phase estimation of an alpha oscillation,
 compared to plain bandpass + Hilbert transform?
 
-Signal model (log-space, FOOOF generative model)
---------------------------------------------------
-Reuses the aperiodic / periodic / noise generators from
-`fooof.sim.gen` (also used by IAF_Estimation/SIMparam/code/sims.py) so the
-simulated power spectrum follows the same model FOOOF fits:
-
-    log10(power(f)) = aperiodic(f) + gaussian_peak(f) + noise(f)
-
-  - aperiodic(f)      : gen_aperiodic(f, [offset, exponent])   -> offset - exponent*log10(f)
-  - gaussian_peak(f)  : gen_periodic(f, [cen, height, bw])     -> Gaussian bump in log10-power
-  - noise(f)          : gen_noise(f, nlv)                      -> N(0, nlv) per bin, in log10-power
-
-`sims.gen_power_vals_fn` combines these into a single linear power spectrum
-`10**(aperiodic + peak + noise)`. A real time-domain signal is then
-synthesized by treating that spectrum as a target one-sided amplitude
-spectrum: each frequency bin gets amplitude sqrt(power) and an independent
-uniform random phase, followed by `irfft`.
-
-Ground-truth instantaneous phase
----------------------------------
-The oscillation is embedded in `x` as a Gaussian *bump on top of* the
-aperiodic background (not as an independent additive component), so there is
-no analytic signal for "the peak alone" embedded in `x` directly. Instead,
-the peak's own spectral content (gen_periodic alone, no aperiodic/noise) is
-reconstructed using the same per-bin random phases used to build `x`, and
-its exact analytic signal is taken directly (no Hilbert call): keep DC
-as-is, double the other positive-frequency bins, zero out negative
-frequencies. A pure-sinusoid-at-center_freq alternative (ignoring the
-Gaussian spread of power around center_freq entirely) is kept commented out
-in `generate_signal_with_ground_truth_phase` for comparison.
+Signal model
+------------
+`x = pink_noise + tone`, where `pink_noise` has PSD(f) = 10**offset * f**-exponent
+(each frequency bin gets amplitude sqrt(PSD) and an independent uniform
+random phase, then `irfft`) and `tone` is a single sinusoid at `tone_freq`
+with a random start phase. The ground-truth instantaneous phase is just the
+tone's own analytic phase, known exactly in closed form.
 
 Four pipelines are compared (all zero-phase / offline, for a fair comparison
 with FFT-whitening, which is inherently zero-phase):
 
   1. bandpass          : hilbert(bandpass(x))
-  2. whiten             : hilbert(whiten(x))                    (no bandpass!)
-  3. whiten+bandpass    : hilbert(bandpass(whiten(x)))
-  4. bandpass+JADE      : JADE(bandpass(x))                     (see jade.py)
+  2. whiten+bandpass    : hilbert(bandpass(whiten(x)))
+  3. extendedHT         : phase_reconst(bandpass(x))              (see extended_HT.py)
+  4. bandpass+JADE      : JADE(bandpass(x))                       (see jade.py)
 
-Whitening uses the *exact* known aperiodic parameters (no fitting, via
-`gen_aperiodic`), so any phase error it introduces is attributable to the
-whitening operation itself (noise amplification at high frequencies,
-spectral leakage / edge effects), not to fitting inaccuracy.
+Whitening uses the *exact* known aperiodic (1/f) parameters, so any phase
+error it introduces is attributable to the whitening operation itself (noise
+amplification at high frequencies, spectral leakage / edge effects), not to
+fitting inaccuracy.
 """
 
 import sys
@@ -64,9 +41,6 @@ mpl.rcParams.update({
     'pgf.rcfonts': False,
 })
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "IAF_Estimation" / "SIMparam" / "code"))
-from fooof.sim.gen import gen_aperiodic, gen_periodic, gen_noise
-from sims import gen_power_vals_fn
 import extended_HT as ht
 from jade import jade_v3
 
@@ -82,16 +56,12 @@ config = {
     "fs": 10000,
     "signal_length_sec": 10.0,
 
-    # Aperiodic background: gen_aperiodic([offset, exponent]) -> log10 power
-    "aperiodic_params": [1.0, 2.0],
+    # Pink-noise background: PSD(f) = 10**offset * f**-exponent
+    "aperiodic_params": [1.0, 2.0],   # [offset, exponent]
 
-    # Periodic peak: gen_periodic([center_freq, height, bw]) -> log10 power
-    # `height` is how many log10-power units (dB/10) the peak sits above the
-    # aperiodic component AT its own center frequency.
-    "peak_params": [14.0, 1.5, 0.2],
-
-    # Noise added in log10-power space, per frequency bin (gen_noise).
-    "noise_lv": 0.1,
+    # Single-tone oscillation
+    "tone_freq": 11.0,   # Hz
+    "tone_amp": 1.0,     # signal amplitude (not PSD)
 
     # Processing
     "band": (6.0, 15.0),                # bandpass range
@@ -106,95 +76,50 @@ t = np.arange(n) / fs
 # Signal generation
 # ---------------------------------------------------------------------------
 
-def generate_signal_with_ground_truth_phase(n_samples, fs, aperiodic_params, peak_params, nlv, rng):
-    """
-    Synthesize a real signal whose power spectrum follows the FOOOF
-    generative model (log10 power = aperiodic + gaussian peak + noise, via
-    fooof.sim.gen / sims.gen_power_vals_fn), by assigning each frequency bin
-    amplitude sqrt(power) and an independent random phase, then `irfft`.
+def aperiodic_psd(freqs, aperiodic_params):
+    """PSD(f) = 10**offset * f**-exponent. Undefined at f=0; caller must mask."""
+    offset, exponent = aperiodic_params
+    return 10 ** offset * freqs ** -exponent
 
-    Also returns the ground-truth instantaneous phase of the embedded
-    oscillation, taken from the exact analytic signal of the isolated
-    Gaussian peak content (gen_periodic alone, same per-bin random phases as
-    the full signal). A pure-sinusoid-at-center_freq alternative is kept
-    commented out below it for comparison.
-    """
+
+def generate_pink_noise(n_samples, fs, aperiodic_params, rng):
+    """Synthesize real pink noise with PSD(f) = aperiodic_psd(f), by assigning
+    each frequency bin amplitude sqrt(power) and an independent random phase,
+    then `irfft`."""
     freqs = np.fft.rfftfreq(n_samples, d=1 / fs)
-    center_freq = peak_params[0]
-
-    # gen_aperiodic/gen_periodic are undefined at f=0 (log10(0)); model the
-    # spectrum over the non-DC bins only and leave the DC bin at zero.
-    freqs_nz = freqs[1:]
-    powers_nz = gen_power_vals_fn(
-        freqs_nz,
-        ap_kwargs={"aperiodic_params": aperiodic_params},
-        pe_kwargs={"periodic_params": peak_params},
-        noise_kwargs={"nlv": nlv},
-        ap_func=gen_aperiodic, pe_func=gen_periodic, noise_func=gen_noise,
-    )
-
     amp = np.zeros_like(freqs)
     # /2 compensates for the one-sided-PSD doubling applied to AC bins when
     # measuring PSD back from a signal (e.g. psd_raw[1:-1] *= 2 below), so
-    # the realized PSD of `sig` matches `powers_nz` exactly, not 2x it.
-    amp[1:] = np.sqrt(powers_nz * fs * n_samples / 2)
-
+    # the realized PSD of the output matches aperiodic_psd exactly, not 2x it.
+    amp[1:] = np.sqrt(aperiodic_psd(freqs[1:], aperiodic_params) * fs * n_samples / 2)
     phases = rng.uniform(0, 2 * np.pi, len(freqs))
     X = amp * np.exp(1j * phases)
-    sig = np.fft.irfft(X, n=n_samples)
+    return np.fft.irfft(X, n=n_samples)
 
-    # --- Ground truth as pure sinusoid at center_freq (ignores the Gaussian
-    # spread of power around center_freq) ---
-    # center_bin = np.argmin(np.abs(freqs - center_freq))
-    # phase0 = phases[center_bin]
-    # t = np.arange(n_samples) / fs
-    # true_phase = np.angle(np.exp(1j * (2 * np.pi * center_freq * t + phase0)))
 
-    # --- Ground truth from the whole Gaussian peak ---
-    # Isolate the peak's own spectral content, reusing the SAME per-bin
-    # random phases assigned above, and build its exact analytic signal
-    # directly (no Hilbert call): keep DC as-is, double the other
-    # positive-frequency bins, zero out negative frequencies.
-    # gen_periodic is an additive log10-power term that -> 0 (not -inf) far
-    # from the peak (it means "no change to the aperiodic level" there), so
-    # 10**gen_periodic -> 1, not 0. Subtract that floor off so the isolated
-    # peak power genuinely -> 0 away from center_freq, then rescale by the
-    # aperiodic level so peak_power_nz matches the peak's actual (additive,
-    # linear-power) contribution to `x` at each frequency -- the model is
-    # multiplicative in linear space (log-additive), i.e.
-    # 10**(ap+peak) = 10**ap * 10**peak, so the peak's own excess power is
-    # 10**ap * (10**peak - 1), not 10**peak - 1 alone.
-    peak_power_nz = 10 ** gen_aperiodic(freqs_nz, aperiodic_params) * (10 ** gen_periodic(freqs_nz, peak_params) - 1)
-    peak_amp = np.zeros_like(freqs)
-    peak_amp[1:] = np.sqrt(peak_power_nz * fs * n_samples/2)
-    X_peak = peak_amp * np.exp(1j * phases)
+def generate_signal_with_ground_truth_phase(n_samples, fs, aperiodic_params, tone_freq, tone_amp, rng):
+    """x = pink_noise + tone. The ground-truth instantaneous phase is just
+    the tone's own analytic phase, known exactly in closed form."""
+    pink = generate_pink_noise(n_samples, fs, aperiodic_params, rng)
 
-    n_bins = len(X_peak)  # == n_samples // 2 + 1
-    X_full = np.zeros(n_samples, dtype=complex)
-    X_full[0] = X_peak[0]
-    if n_samples % 2 == 0:
-        X_full[1:n_bins - 1] = 2 * X_peak[1:n_bins - 1]
-        X_full[n_bins - 1] = X_peak[n_bins - 1]  # Nyquist (n_samples even)
-    else:
-        X_full[1:n_bins] = 2 * X_peak[1:n_bins]
+    t = np.arange(n_samples) / fs
+    tone_phase0 = rng.uniform(0, 2 * np.pi)
+    true_phase = np.angle(np.exp(1j * (2 * np.pi * tone_freq * t + tone_phase0)))
+    tone = tone_amp * np.cos(true_phase)
 
-    analytic = np.fft.ifft(X_full)
-    true_phase = np.angle(analytic)
-
-    return sig, true_phase, freqs, powers_nz
+    return pink + tone, true_phase
 
 
 ap_params = config["aperiodic_params"]
-peak_params = config["peak_params"]
-center_freq = peak_params[0]
+center_freq = config["tone_freq"]
+tone_amp = config["tone_amp"]
 
-ap_log_at_cf = gen_aperiodic(np.array([center_freq]), ap_params)[0]
-print(f"Aperiodic PSD @ {center_freq} Hz: {10 * ap_log_at_cf:.2f} dB")
-print(f"Peak height @ {center_freq} Hz: {10 * peak_params[1]:+.1f} dB above aperiodic "
-      f"-> target peak PSD: {10 * (ap_log_at_cf + peak_params[1]):.2f} dB")
+ap_psd_at_cf = aperiodic_psd(np.array([center_freq]), ap_params)[0]
+print(f"Aperiodic PSD @ {center_freq} Hz: {10 * np.log10(ap_psd_at_cf):.2f} dB")
+print(f"Tone amplitude @ {center_freq} Hz: {tone_amp}")
 
-x, true_phase, freqs_rfft, powers_nz = generate_signal_with_ground_truth_phase(
-    n, fs, ap_params, peak_params, config["noise_lv"], rng
+x, true_phase = generate_signal_with_ground_truth_phase(
+    n, fs, ap_params, center_freq, tone_amp, rng
 )
 
 # ---------------------------------------------------------------------------
@@ -208,15 +133,15 @@ def bandpass_filter(sig, fs, band, order=4):
 
 def whiten(sig, fs, aperiodic_params):
     """Zero-phase whitening using the EXACT known aperiodic model
-    (gen_aperiodic, same parametrization used for signal generation)."""
+    (aperiodic_psd, same parametrization used for signal generation)."""
     n_samples = len(sig)
+    sig = sig * tukey(n_samples, alpha=0.05)  # taper edges to reduce spectral leakage
     freqs = np.fft.rfftfreq(n_samples, d=1 / fs)
     X = np.fft.rfft(sig)
 
-    L_log = np.empty_like(freqs)
-    L_log[1:] = gen_aperiodic(freqs[1:], aperiodic_params)
-    L_log[0] = L_log[1]
-    L = 10 ** L_log
+    L = np.empty_like(freqs)
+    L[1:] = aperiodic_psd(freqs[1:], aperiodic_params)
+    L[0] = L[1]
 
     X_white = X / np.sqrt(L)  # magnitude scaled, phase untouched (L real & positive)
     return np.fft.irfft(X_white, n=n_samples)
@@ -257,62 +182,62 @@ for name, sig in pipelines.items():
         "mae_deg": np.degrees(np.mean(np.abs(err[valid]))),
         "max_abs_deg": np.degrees(np.max(np.abs(err[valid]))),
     }
-# phase_reconst assumes the input wraps around smoothly (it takes a single
-# whole-signal FFT internally); sig_bp's raw start/end values don't match
-# (~0.5x the signal's own std), so taper the edges toward zero first. Keep
-# the tapered region inside edge_margin_sec, which is already excluded from
-# the error stats, so it doesn't affect the scored samples.
-taper_alpha = min(1.0, 2 * config["edge_margin_sec"] / config["signal_length_sec"])
-sig_bp_tapered = sig_bp * tukey(len(sig_bp), alpha=taper_alpha)
-phase_extHT_cut, _, extHT_initindx = ht.phase_reconst(sig_bp_tapered.reshape(1, -1), 1/fs)
-phase_extHT = np.full(n, np.nan)
-phase_extHT[extHT_initindx:extHT_initindx + phase_extHT_cut.shape[1]] = phase_extHT_cut[0]
-err = circular_error(phase_extHT, true_phase)
-mu, sd, _, _ = _circ_stats(circular_error(phase_extHT, true_phase)[valid])
-results["3. extendedHT"] = {
-    "phase": phase_extHT,
-    "error": err,
-    "circ_mean_deg": np.degrees(mu),
-    "circ_std_deg": np.degrees(sd),
-    "mae_deg": np.degrees(np.mean(np.abs(err[valid]))),
-    "max_abs_deg": np.degrees(np.max(np.abs(err[valid]))),
-}
+# # phase_reconst assumes the input wraps around smoothly (it takes a single
+# # whole-signal FFT internally); sig_bp's raw start/end values don't match
+# # (~0.5x the signal's own std), so taper the edges toward zero first. Keep
+# # the tapered region inside edge_margin_sec, which is already excluded from
+# # the error stats, so it doesn't affect the scored samples.
+# taper_alpha = min(1.0, 2 * config["edge_margin_sec"] / config["signal_length_sec"])
+# sig_bp_tapered = sig_bp * tukey(len(sig_bp), alpha=taper_alpha)
+# phase_extHT_cut, _, extHT_initindx = ht.phase_reconst(sig_bp_tapered.reshape(1, -1), 1/fs)
+# phase_extHT = np.full(n, np.nan)
+# phase_extHT[extHT_initindx:extHT_initindx + phase_extHT_cut.shape[1]] = phase_extHT_cut[0]
+# err = circular_error(phase_extHT, true_phase)
+# mu, sd, _, _ = _circ_stats(circular_error(phase_extHT, true_phase)[valid])
+# results["3. extendedHT"] = {
+#     "phase": phase_extHT,
+#     "error": err,
+#     "circ_mean_deg": np.degrees(mu),
+#     "circ_std_deg": np.degrees(sd),
+#     "mae_deg": np.degrees(np.mean(np.abs(err[valid]))),
+#     "max_abs_deg": np.degrees(np.max(np.abs(err[valid]))),
+# }
 
-# JADE (DTW-based phase/frequency estimation, see jade.py) applied directly
-# to the bandpassed signal. JADE only produces phase samples from its first
-# to its last detected zero crossing (near the very start/end of sig_bp), so
-# fill the rest with NaN the same way phase_extHT does above.
-#
-# `phasevals` is a continuous phase in *cycles*, anchored to JADE's own
-# zero-crossing convention: x(t) ~ sign * amplitude(t) * sin(2*pi*phasevals),
-# phase 0 at a zero crossing, where `sign` (+-1, constant) depends on whether
-# the very first detected zero crossing is rising or falling. `true_phase`
-# (and the Hilbert-based pipelines) instead use the analytic-signal
-# convention x(t) ~ amplitude(t) * cos(Phi(t)), phase 0 at a peak. Since
-# sin(a) = cos(a - pi/2), converting with plain 2*pi*phasevals leaves a
-# constant +-90 deg quadrature offset relative to the other pipelines.
-# Convert properly (Phi = 2*pi*phasevals - sign*pi/2), determining `sign`
-# straight from JADE's own output (correlate its zero-crossing-convention
-# reconstruction against the actual bandpassed signal) rather than assuming
-# a fixed sign, since it flips depending on the data.
-jade_IFvals, jade_phasevals, jade_zc, jade_amplitudegram = jade_v3(
-    sig_bp, t, 1 / fs, smooth=0, normalize=0)
-jade_start = int(jade_zc[0]) - 1
-jade_recon = jade_amplitudegram * np.sin(2 * np.pi * jade_phasevals)
-jade_sign = 1.0 if np.dot(jade_recon, sig_bp[jade_start:jade_start + jade_recon.size]) >= 0 else -1.0
-phase_jade = np.full(n, np.nan)
-phase_jade[jade_start:jade_start + jade_phasevals.size] = (
-    2 * np.pi * jade_phasevals - jade_sign * np.pi / 2)
-err = circular_error(phase_jade, true_phase)
-mu, sd, _, _ = _circ_stats(err[valid])
-results["4. bandpass+JADE"] = {
-    "phase": phase_jade,
-    "error": err,
-    "circ_mean_deg": np.degrees(mu),
-    "circ_std_deg": np.degrees(sd),
-    "mae_deg": np.degrees(np.mean(np.abs(err[valid]))),
-    "max_abs_deg": np.degrees(np.max(np.abs(err[valid]))),
-}
+# # JADE (DTW-based phase/frequency estimation, see jade.py) applied directly
+# # to the bandpassed signal. JADE only produces phase samples from its first
+# # to its last detected zero crossing (near the very start/end of sig_bp), so
+# # fill the rest with NaN the same way phase_extHT does above.
+# #
+# # `phasevals` is a continuous phase in *cycles*, anchored to JADE's own
+# # zero-crossing convention: x(t) ~ sign * amplitude(t) * sin(2*pi*phasevals),
+# # phase 0 at a zero crossing, where `sign` (+-1, constant) depends on whether
+# # the very first detected zero crossing is rising or falling. `true_phase`
+# # (and the Hilbert-based pipelines) instead use the analytic-signal
+# # convention x(t) ~ amplitude(t) * cos(Phi(t)), phase 0 at a peak. Since
+# # sin(a) = cos(a - pi/2), converting with plain 2*pi*phasevals leaves a
+# # constant +-90 deg quadrature offset relative to the other pipelines.
+# # Convert properly (Phi = 2*pi*phasevals - sign*pi/2), determining `sign`
+# # straight from JADE's own output (correlate its zero-crossing-convention
+# # reconstruction against the actual bandpassed signal) rather than assuming
+# # a fixed sign, since it flips depending on the data.
+# jade_IFvals, jade_phasevals, jade_zc, jade_amplitudegram = jade_v3(
+#     sig_bp, t, 1 / fs, smooth=0, normalize=0)
+# jade_start = int(jade_zc[0]) - 1
+# jade_recon = jade_amplitudegram * np.sin(2 * np.pi * jade_phasevals)
+# jade_sign = 1.0 if np.dot(jade_recon, sig_bp[jade_start:jade_start + jade_recon.size]) >= 0 else -1.0
+# phase_jade = np.full(n, np.nan)
+# phase_jade[jade_start:jade_start + jade_phasevals.size] = (
+#     2 * np.pi * jade_phasevals - jade_sign * np.pi / 2)
+# err = circular_error(phase_jade, true_phase)
+# mu, sd, _, _ = _circ_stats(err[valid])
+# results["4. bandpass+JADE"] = {
+#     "phase": phase_jade,
+#     "error": err,
+#     "circ_mean_deg": np.degrees(mu),
+#     "circ_std_deg": np.degrees(sd),
+#     "mae_deg": np.degrees(np.mean(np.abs(err[valid]))),
+#     "max_abs_deg": np.degrees(np.max(np.abs(err[valid]))),
+# }
 
 print(f"\n{'Pipeline':<22} {'circ. mean (deg)':>18} {'circ. std (deg)':>18} {'MAE (deg)':>12} {'max |err| (deg)':>18}")
 print("-" * 90)
@@ -328,17 +253,16 @@ plt.xlabel("Time (s)")
 plt.show()
 
 n_results = len(results)
-fig = plt.figure(figsize=(12, 14))
-gs = fig.add_gridspec(3, n_results)
+fig = plt.figure(figsize=(12, 10))
+gs = fig.add_gridspec(2, n_results)
 axes = [
     fig.add_subplot(gs[0, :]),
-    fig.add_subplot(gs[1, :]),
-    None,
 ]
-ax_polars = [fig.add_subplot(gs[2, i], projection="polar") for i in range(n_results)]
+ax_polars = [fig.add_subplot(gs[1, i], projection="polar") for i in range(n_results)]
 
 # --- PSD sanity check ---
 ax = axes[0]
+freqs_rfft = np.fft.rfftfreq(n, d=1 / fs)
 psd_raw = (np.abs(np.fft.rfft(x)) ** 2) / (fs * n)
 psd_raw[1:-1] *= 2
 psd_white = (np.abs(np.fft.rfft(sig_white)) ** 2) / (fs * n)
@@ -349,8 +273,7 @@ psd_white_bp = (np.abs(np.fft.rfft(sig_white_bp)) ** 2) / (fs * n)
 psd_white_bp[1:-1] *= 2
 
 freqs_nz = freqs_rfft[1:]
-ap_only = 10 ** gen_aperiodic(freqs_nz, ap_params)
-ap_plus_peak = 10 ** (gen_aperiodic(freqs_nz, ap_params) + gen_periodic(freqs_nz, peak_params))
+ap_only = aperiodic_psd(freqs_nz, ap_params)
 
 mask = (freqs_rfft <= 40) & (freqs_rfft > 0)
 mask_nz = freqs_nz <= 40
@@ -362,17 +285,6 @@ ax.semilogy(freqs_rfft[mask], psd_white_bp[mask], label="whitened+bandpass PSD",
 ax.axvline(center_freq, color="g", alpha=0.4, label=f"f0={center_freq} Hz")
 ax.set_xlabel("Frequency (Hz)")
 ax.set_ylabel("PSD")
-ax.legend(fontsize=8)
-
-# --- Circular phase error over time ---
-ax = axes[1]
-for name, r in results.items():
-    ax.plot(t, np.degrees(r["error"]), lw=0.6, alpha=0.7, label=name)
-ax.axvline(config["edge_margin_sec"], color="gray", ls=":", lw=1)
-ax.axvline(config["signal_length_sec"] - config["edge_margin_sec"], color="gray", ls=":", lw=1)
-ax.set_xlabel("Time (s)")
-ax.set_ylabel("Phase error (deg)")
-ax.set_title("Circular phase error over time")
 ax.legend(fontsize=8)
 
 # --- Circular phase error distributions, one polar plot per method ---
@@ -413,7 +325,7 @@ for i, name in enumerate(names):
 
 fig.suptitle(
     f"fs={fs} Hz, offset={ap_params[0]}, exponent={ap_params[1]}, f0={center_freq} Hz, "
-    f"bw={peak_params[2]} Hz, band={band}, peak={10 * peak_params[1]:+.0f} dB above aperiodic @ f0",
+    f"tone_amp={tone_amp}, band={band}",
     fontsize=11,
 )
 fig.tight_layout(rect=[0, 0, 1, 0.96])

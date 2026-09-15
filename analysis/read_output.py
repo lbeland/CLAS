@@ -158,7 +158,10 @@ def get_signal_data(path, channel=0, timestamps=False):
 
     samples = signal_flat.reshape((n_records, *signal_meta["dims"]))
     if len(signal_meta["dims"]) == 2:
-        samples = samples[:, channel, :]
+        # channel=-1 keeps every channel; the channel count is taken from the
+        # header's declared dimensions rather than being passed in.
+        if channel != -1:
+            samples = samples[:, channel, :]
     print(os.path.basename(path), "samples shape:", samples.shape, "dtype:", samples.dtype)
 
     if timestamps:

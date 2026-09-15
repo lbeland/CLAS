@@ -76,6 +76,7 @@ class StimControl : public IProcessor {
     options::Double min_stim_dist_sec_{0};
     options::Double max_stim_dist_sec_{-1};
     options::Bool   use_background_sound_{false};
+    options::String background_sound_file_{"background.wav"};
     options::Int    background_dB_{18};        // stimulus level above background sound (dB)
 
     // Runtime state — phase / burst logic

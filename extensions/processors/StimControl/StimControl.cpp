@@ -124,6 +124,7 @@ StimControl::StimControl() : IProcessor(PRIORITY_HIGH)
     add_option("max_stim_dist_sec", max_stim_dist_sec_, "Maximum distance between stimuli in seconds.");
 
     add_option("use_background_sound", use_background_sound_, "Whether to play a continuous background sound (default: false).");
+    add_option("background_sound_file", background_sound_file_, "Background sound file name (default: background.wav).");
     add_option("background_dB", background_dB_, "Sound level of signal over background in dB (default: 18).");
 
     f0_state_ = create_follower_state<double>(
@@ -234,7 +235,7 @@ void StimControl::Prepare(GlobalContext &context)
     // Load background sound if enabled
     if (use_background_sound_())
     {
-        std::string file = context.resolve_path("background.wav","sounds");
+        std::string file = context.resolve_path(background_sound_file_(),"sounds");
         const char *sound_path = file.c_str();
         LOG(INFO) << name() << " Loading background sound from " << sound_path;
 

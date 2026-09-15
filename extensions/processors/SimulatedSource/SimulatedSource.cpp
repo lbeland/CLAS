@@ -167,6 +167,9 @@ SimulatedSource::SimulatedSource() : IProcessor(PRIORITY_HIGH)
                "scaled analytically; pink noise uses an ideal 1/f model for the in-band fraction.");
     add_option("noise_band_hz", noise_band_hz_,
                "Width (Hz) of the band around carrier_frequency in which snr_db is defined.");
+    add_option("noise_seed", noise_seed_,
+               "Seed for the additive-noise RNG. -1 (default) seeds from std::random_device "
+               "(non-deterministic); any value >= 0 gives a reproducible noise realisation.");
     add_option("burst_on_s", burst_on_s_,
                "Bursty signal: duration (s) of each ON segment.");
     add_option("burst_off_s", burst_off_s_,
@@ -231,7 +234,10 @@ void SimulatedSource::Process(ProcessingContext &context)
     // ---- Additive noise, scaled for a target in-band SNR relative to the carrier ----
     // snr_db := 10*log10( P_carrier / P_noise_in_band ), where P_noise_in_band is the noise
     // power within [carrier_frequency +/- noise_band_hz/2].
-    std::mt19937 noise_rng{std::random_device{}()};
+    std::mt19937 noise_rng{
+        noise_seed_() >= 0
+            ? static_cast<std::mt19937::result_type>(noise_seed_())
+            : static_cast<std::mt19937::result_type>(std::random_device{}())};
     std::normal_distribution<double> white_dist(0.0, 1.0);
 
     const bool pink_noise = (noise_color_() == "pink");

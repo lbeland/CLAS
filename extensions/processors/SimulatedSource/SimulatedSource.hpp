@@ -59,6 +59,7 @@ protected:
     options::Double snr_db_{20.0};               // in-band SNR (dB): carrier power vs noise
                                                  // power within noise_band_hz around the carrier
     options::Double noise_band_hz_{4.0};         // width of the SNR reference band around carrier_frequency (Hz)
+    options::Int noise_seed_{-1};                // additive-noise RNG seed; -1 = seed from std::random_device (non-deterministic)
     options::Double burst_on_s_{1.0};            // bursty signal: ON duration (s)
     options::Double burst_off_s_{0.0};           // bursty signal: OFF duration (s); 0 = always on
 

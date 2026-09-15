@@ -322,6 +322,7 @@ FrequencyEstimation::FrequencyEstimation() : IProcessor(PRIORITY_HIGH)
     add_option("max_invalid_sec", max_invalid_sec_, "Maximum duration of invalid data in seconds before reset of estimation.");
     add_option("kalman_f0_std", kalman_f0_std_, "Std of the f0 drift [Hz/s]. Sets Kalman Q.");
     add_option("kalman_full", kalman_full_, "If true, use full Kalman filter with adaptive gain and cold-start. If false, use EMA-equivalent fixed gain.");
+    add_option("debug_output", debug_output_, "If true, also publish the raw peak f0 (pre-Kalman) on data-out slot 1 for debugging. Connect a sink to '<name>.out.1' after the slot-0 connection.");
 
     f0_state_ = create_broadcaster_state<double>(
         "f0", current_f0_, Permission::NONE,
@@ -361,6 +362,21 @@ void FrequencyEstimation::Prepare(GlobalContext &context)
     LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
     f0_state_->set(current_f0_);
+
+    const int n_out_slots = data_out_port_->number_of_slots();
+    debug_out_active_ = debug_output_() && n_out_slots > 1;
+    if (debug_output_() && n_out_slots <= 1)
+    {
+        LOG(WARNING) << name() << " debug_output is enabled but nothing is connected to 'out.1'; debug channel will be inactive.";
+    }
+    if (!debug_output_() && n_out_slots > 1)
+    {
+        LOG(WARNING) << name() << " 'out.1' is connected but debug_output is disabled; that slot will not be published and may stall its consumer.";
+    }
+    if (debug_out_active_)
+    {
+        LOG(INFO) << name() << " debug output active: raw peak f0 published on 'out.1'.";
+    }
 
     const double update_interval_s = static_cast<double>(calc_interval_()) / p.sample_rate;
 
@@ -448,6 +464,7 @@ void FrequencyEstimation::Process(ProcessingContext &context)
 {
     MultiChannelType<double>::Data *data_in;
     ScalarType<double>::Data *data_out;
+    ScalarType<double>::Data *data_debug_out = nullptr;
 
     auto kalman_predict = [&]() {
         kf_P_ = kf_P_ + kf_Q_;
@@ -477,6 +494,11 @@ void FrequencyEstimation::Process(ProcessingContext &context)
         TimePoint start_time = Clock::now();
 
         data_out = data_out_port_->slot(0)->ClaimData(false);
+        if (debug_out_active_)
+        {
+            data_debug_out = data_out_port_->slot(1)->ClaimData(false);
+            data_debug_out->set_hardware_timestamp(data_in->hardware_timestamp());
+        }
 
         sample_window.push_back(data_in->data_sample(0, 0));
         data_out->set_hardware_timestamp(data_in->hardware_timestamp());
@@ -595,6 +617,13 @@ void FrequencyEstimation::Process(ProcessingContext &context)
         data_out->set_data(kf_x_);
         data_out->set_source_timestamp(Clock::now());
         data_out_port_->slot(0)->PublishData();
+
+        if (debug_out_active_)
+        {
+            data_debug_out->set_data(current_f0_); // raw peak f0 (NaN when the current estimate was rejected)
+            data_debug_out->set_source_timestamp(Clock::now());
+            data_out_port_->slot(1)->PublishData();
+        }
 
         packet_count_++;
     }

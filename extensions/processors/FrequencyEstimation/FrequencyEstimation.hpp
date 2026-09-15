@@ -55,6 +55,8 @@ class FrequencyEstimation : public IProcessor {
     options::Double kalman_f0_std_{0.397857};  // f0 drift std [Hz/s], sets Kalman Q
     options::Bool   kalman_full_{true};          // true = full KF (adaptive gain), false = EMA-equivalent (fixed gain)
     options::Double max_gauss_width_hz_{2.0};    // reject peaks broader than this (Hz)
+    options::Bool   debug_output_{false};        // if true, also publish raw peak f0 (current_f0_) on data-out slot 1
+                                                 // (connect a sink to "<name>.out.1" in the graph, after the slot-0 connection)
 
     // Runtime state — shared f0 broadcaster
     BroadcasterState<double> *f0_state_ = nullptr;
@@ -80,6 +82,7 @@ class FrequencyEstimation : public IProcessor {
     int f_max_bin_ = 0;
     int invalid_count_ = 0;
     int invalid_threshold_ = 0;
+    bool debug_out_active_ = false; // resolved in Prepare: debug_output_ && data-out port has a slot 1
 
     boost::circular_buffer<double> sample_window{1}; // resized in Prepare
     std::vector<double> savgol_weights_; // Savitzky-Golay smoothing weights, evaluated at t=0 (see Prepare)

@@ -74,20 +74,22 @@ def main():
     height = width * aspect_ratio
     fig, (ax_wave, ax_spec) = plt.subplots(1, 2, figsize=(width, height))
 
-    ax_wave.plot(t[0:int(0.02*fs_audio)]*1000, samples[0:int(0.02*fs_audio)], linewidth=0.5)
+    ax_wave.plot(t[0:int(0.2*fs_audio)]*1000, samples[0:int(0.2*fs_audio)], linewidth=0.5)
     # ax_wave.plot(t*1000, samples, linewidth=0.5)
 
-    ax_wave.set_xlabel("Time (ms)")
+    ax_wave.set_xlabel("Time [ms]")
     ax_wave.set_ylabel("Amplitude")
+    ax_wave.set_ylim(-1.05, 1.05)
+    ax_wave.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
     ax_spec.loglog(freqs[1:], psd[1:], linewidth=0.7)
-    ax_spec.set_xlabel("Frequency (Hz)")
-    ax_spec.set_ylabel("PSD")
-    ax_spec.grid(True, which="both", linewidth=0.2)
+    ax_spec.set_xlabel("Frequency [Hz]")
+    ax_spec.set_ylabel("Power")
+    ax_spec.grid(True, linestyle="--", linewidth=0.5, alpha=0.9)
 
     fig.tight_layout()
-    plt.savefig("/home/linda/Documents/MA/plots/pink_noise.pgf")
-    plt.savefig("/home/linda/Documents/MA/plots/pink_noise.pdf")
+    plt.savefig("/home/linda/Documents/MA/plots/pink_noise.pgf", bbox_inches="tight")
+    plt.savefig("/home/linda/Documents/MA/plots/pink_noise.pdf", bbox_inches="tight")
     plt.show()
 
 if __name__ == "__main__":

@@ -31,11 +31,12 @@ def plot_signal_debug(config, n_seconds=2):
     fs = config["fs"]
     n_plot = int(n_seconds * fs)
 
-    fig, axes = plt.subplots(2, 1, figsize=(FIG_WIDTH, FIG_WIDTH * 6 / 12))
+    fig, axes = plt.subplots(2, 1, figsize=(FIG_WIDTH, FIG_WIDTH * 9 / 16))
 
     axes[0].plot(np.arange(n_plot) / fs, signal[:n_plot])
-    axes[0].set_xlabel("Time (s)")
+    axes[0].set_xlabel("Time [s]")
     axes[0].set_ylabel("Amplitude")
+    axes[0].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
     beta = config["aperiodic_exponent"]
     axes[0].set_title(
         f"peak_freq={config['peak_freq']} Hz | "
@@ -63,9 +64,10 @@ def plot_signal_debug(config, n_seconds=2):
     axes[1].axhline(10 ** (peak_power_db / 10), color="g", linestyle=":",
                     label=f"peak target ({config['peak_snr_db']} dB vs local aperiodic)")
     axes[1].axvline(peak_freq, color="g", alpha=0.4, label=f"peak ({peak_freq} Hz)")
-    axes[1].set_xlabel("Frequency (Hz)")
+    axes[1].set_xlabel("Frequency [Hz]")
     axes[1].set_ylabel("PSD")
     axes[1].legend()
+    axes[1].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
     axes[1].set_ylim(ap[-1], max(psd[mask]) * 1.5)
 
@@ -152,9 +154,11 @@ def plot_alpha_fast_procedure(config=None, seed=1, save_name="alpha_fast_procedu
     ax.legend(loc="upper right")
 
     for ax in axes:
-        ax.grid(alpha=0.3)
+        ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
     fig.tight_layout()
+    fig.align_labels()
+    
 
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUTPUTS_DIR / f"{save_name}.pdf", bbox_inches="tight")

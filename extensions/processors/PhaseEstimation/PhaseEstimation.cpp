@@ -339,10 +339,9 @@ void PhaseEstimation::Process(ProcessingContext &context)
 
         data_phase_out = phase_out_port_->slot(0)->ClaimData(false);
         data_phase_out->set_hardware_timestamp(data_in->hardware_timestamp());
-        data_phase_out->set_source_timestamp(Clock::now());
+
         data_real_out = real_out_port_->slot(0)->ClaimData(false);
         data_real_out->set_hardware_timestamp(data_in->hardware_timestamp());
-        data_real_out->set_source_timestamp(Clock::now());
 
         sample_window.push_back(sample);
 
@@ -475,16 +474,20 @@ void PhaseEstimation::Process(ProcessingContext &context)
             real_part = out[window_size_ - 1][0];
 
             data_phase_out->set_data_sample(0, 0, phase);
+            data_phase_out->set_source_timestamp(Clock::now());
             data_phase_out->set_sample_timestamps(data_in->sample_timestamps());
             data_real_out->set_data_sample(0, 0, real_part);
+            data_real_out->set_source_timestamp(Clock::now());
             data_real_out->set_sample_timestamps(data_in->sample_timestamps());
         }
         else
         {
             // Output NaN while f0 is invalid or window is not yet full
             data_phase_out->set_data_sample(0, 0, std::numeric_limits<double>::quiet_NaN());
+            data_phase_out->set_source_timestamp(Clock::now());
             data_phase_out->set_sample_timestamps(data_in->sample_timestamps());
             data_real_out->set_data_sample(0, 0, std::numeric_limits<double>::quiet_NaN());
+            data_real_out->set_source_timestamp(Clock::now());
             data_real_out->set_sample_timestamps(data_in->sample_timestamps());
         }
 

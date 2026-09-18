@@ -262,7 +262,7 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
                            "markersize": "7"})
 
     ax_box.minorticks_on()
-    ax_box.grid(axis="y", alpha=0.9)
+    ax_box.grid(True, axis="y", which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
     if ax_box.get_legend() is not None:
         handles, labels = ax_box.get_legend_handles_labels()
@@ -329,7 +329,7 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
                 #     )
 
         fig.legend(handles, labels, loc="lower center", ncol=len(hue_order),
-                   bbox_to_anchor=(0.5, 0.0), frameon=True, title=hue.replace("_", " "))
+                   bbox_to_anchor=(0.5, 0.0), title=hue.replace("_", " "))
 
     else:
         per_condition = df.drop_duplicates(subset=[x, "condition_id"])
@@ -363,8 +363,8 @@ def plot_box(df, hdf_path, x="algorithm", y="mae", hue=None,
         fig.subplots_adjust(left=0.06, right=0.98)
 
     stem = save_name or hue
-    # plt.savefig(FIGURE_DIR / f"{stem}.pgf", dpi=300, bbox_inches="tight")
-    plt.savefig(FIGURE_DIR / f"{stem}.pdf", dpi=300, bbox_inches="tight")
+    # plt.savefig(FIGURE_DIR / f"{stem}.pgf", bbox_inches="tight")
+    plt.savefig(FIGURE_DIR / f"{stem}.pdf", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -402,13 +402,12 @@ def plot_condition_spectra(df_metrics, hdf_path, base_filter, sweeps, param_name
         for (hue_val, (freq_bins, psd)), color in zip(sorted(spectra.items()), palette):
             mask = freq_bins <= freq_max
             ax.semilogy(freq_bins[mask][1:], psd[mask][1:], color=color,
-                        linewidth=1.2, alpha=0.6, label=_fmt_value(hue_val))
+                        linewidth=1.2, label=_fmt_value(hue_val))
 
         ax.set_title(param_names.get(param, param), fontsize=9)
-        ax.grid(alpha=0.3)
+        ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.9)
         if spectra:
-            ax.legend(fontsize=8, loc="upper right", frameon=True,
-                    labelspacing=0.3, framealpha=0.8)
+            ax.legend(fontsize=8, loc="upper right", labelspacing=0.3)
 
     for ax in axes[len(params):]:      # blank any unused cell (none at 6 params)
         ax.set_visible(False)
@@ -418,8 +417,8 @@ def plot_condition_spectra(df_metrics, hdf_path, base_filter, sweeps, param_name
         ax.set_ylabel(r"$\log_{10}$(Power)")
 
     fig.tight_layout()
-    fig.savefig(FIGURE_DIR / f"{save_name}.pdf", dpi=300, bbox_inches="tight")
-    fig.savefig(FIGURE_DIR / f"{save_name}.pgf", dpi=300, bbox_inches="tight")
+    fig.savefig(FIGURE_DIR / f"{save_name}.pdf", bbox_inches="tight")
+    fig.savefig(FIGURE_DIR / f"{save_name}.pgf", bbox_inches="tight")
     plt.close(fig)
 
 

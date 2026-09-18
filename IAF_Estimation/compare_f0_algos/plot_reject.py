@@ -212,7 +212,7 @@ def plot_strategy_roc(summary_df, output_path=ROC_PDF,
     frontier = pareto_frontier(df, x_col, y_col)
     on_frontier = df[label_col].isin(frontier[label_col])
 
-    fig, ax = plt.subplots(figsize=(FIG_WIDTH, FIG_WIDTH * 7 / 9))
+    fig, ax = plt.subplots(figsize=(FIG_WIDTH, FIG_WIDTH * 9 / 16))
 
     # Dominated points: muted, small
     ax.scatter(df.loc[~on_frontier, x_col], df.loc[~on_frontier, y_col],
@@ -256,8 +256,8 @@ def plot_strategy_roc(summary_df, output_path=ROC_PDF,
     ax.set_ylabel("False negative rate (with-peak conditions)")
     ax.set_xlim(-0.03, 1.03)
     ax.set_ylim(-0.03, 1.03)
-    ax.grid(alpha=0.3)
-    ax.legend(loc="upper right", fontsize=9, frameon=True)
+    ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
+    ax.legend(loc="upper right", fontsize=9)
 
     plt.tight_layout()
     stem = output_path.with_suffix("")

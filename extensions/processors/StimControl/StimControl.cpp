@@ -415,7 +415,7 @@ void StimControl::build_audio_buffers_()
         {
             dbg << "# fs_audio=" << fs_audio_ << " num_octaves=" << num_octaves << "\n";
             for (double v : mono)
-                dbg << v << "\n";
+                dbg << v * (-1.0) << "\n";
         }
         else
         {

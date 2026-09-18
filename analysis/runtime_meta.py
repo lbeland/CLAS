@@ -17,6 +17,8 @@ dict-key lookups downstream.
 import h5py
 import numpy as np
 
+from .loader import first_udp_channel_key
+
 ONLINE_FIELDS = {
     "StimControl":  "stimulus",
     "FrequencyEstimation":        "f0",
@@ -51,6 +53,14 @@ def write_runtime_metadata(filepath: str, fs: float, samples: dict, ground_truth
         # EEG/AUX/Trigger arrays and the (exact) online-estimate arrays below
         # end up different lengths after a cached reload.
         f.attrs["n_samples"] = len(ground_truth["time"])
+        # The true (jittered) reconstructed ADC sampling times, needed only
+        # by analyse_latencies()'s UDPSource hardware->source latency calc --
+        # everything else uses the idealized uniform-rate "x"/"time" (see
+        # load_processor_signals()/load_runtime()), so this is the only
+        # per-sample timestamp array worth the storage.
+        udp = samples.get(first_udp_channel_key(samples), {})
+        if udp.get("hw_ts") is not None:
+            f.create_dataset("hardware_ts", data=np.asarray(udp["hw_ts"]))
 
         src_grp = f.create_group("source_ts")
         for key, entry in samples.items():
@@ -73,14 +83,18 @@ def write_runtime_metadata(filepath: str, fs: float, samples: dict, ground_truth
 
 
 def load_runtime_metadata(filepath: str) -> dict:
-    """Returns {"fs", "start_ts", "source_ts": {key: array}, "online": {field: array},
-    "simulation": {field: array}} -- the latter three dicts only contain keys that
-    were actually present at write time."""
+    """Returns {"fs", "start_ts", "n_samples", "hardware_ts": array | absent,
+    "source_ts": {key: array}, "online": {field: array}, "simulation": {field: array}}
+    -- "hardware_ts" is absent for caches written before it started being saved;
+    the latter three dicts only contain keys that were actually present at
+    write time."""
     meta = {"source_ts": {}, "online": {}, "simulation": {}}
     with h5py.File(filepath, "r") as f:
         meta["fs"] = float(f.attrs["fs"])
         meta["start_ts"] = int(f.attrs["start_ts"])
         meta["n_samples"] = int(f.attrs["n_samples"])
+        if "hardware_ts" in f:
+            meta["hardware_ts"] = f["hardware_ts"][()]
         for key in f.get("source_ts", {}):
             meta["source_ts"][key] = f["source_ts"][key][()]
         for key in f.get("online", {}):

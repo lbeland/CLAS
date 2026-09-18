@@ -171,9 +171,19 @@ def load_runtime(raw_edf_path: str, meta_h5_path: str) -> tuple[dict, dict, "mne
     def source_ts(key):
         return meta["source_ts"].get(key)
 
+    # Only the lowest-indexed recorded channel carries the true jittered
+    # hardware_ts (see write_runtime_metadata) -- it's the only one
+    # analyse_latencies() reads. Not necessarily index 0: e.g. only channel 3
+    # may have been selected for recording.
+    hw_ts = meta.get("hardware_ts")
+    hw_ts = hw_ts[:n] if hw_ts is not None else None
+    first_idx = min(recording["eeg"], default=None)
+
     samples = {}
     for idx, y in recording["eeg"].items():
         samples[f"UDPSource_{idx}"] = {"x": time, "y": y[:n], "source_ts": source_ts(f"UDPSource_{idx}")}
+        if idx == first_idx and hw_ts is not None:
+            samples[f"UDPSource_{idx}"]["hw_ts"] = hw_ts
     if recording["trigger"] is not None:
         samples["UDPSource_TRIGGER"] = {"x": time, "y": recording["trigger"][:n], "source_ts": source_ts("UDPSource_TRIGGER")}
 

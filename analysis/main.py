@@ -201,45 +201,46 @@ def load_and_analyse(f0: float, results_dir: str, f0_is_truth: bool = False,
 
 
 def analyse_results(results_dir: str, f0: float=10.0, show: bool = True,
-                    f0_is_truth: bool = False, whiten: bool = False) -> None:
-    analysis = load_and_analyse(f0, results_dir, f0_is_truth=f0_is_truth, whiten=whiten)
+                    f0_is_truth: bool = False, whiten: bool = False, full_analysis: bool = True) -> None:
+    analysis = load_and_analyse(f0, results_dir, f0_is_truth=f0_is_truth, whiten=whiten, full_analysis=full_analysis)
     if analysis is None:
         return
 
-    # Pipeline latency analysis. Reproducible from cache too, since
-    # runtime_metadata.h5 preserves source_ts exactly (unlike an EDF round-trip).
-    analyse_latencies(analysis.samples, analysis.ground_truth, analysis.graph_config)
-
-    # ERPCLAS-specific: ERP average plot
-    if os.path.basename(analysis.graph_file) == "ERPCLAS.yaml":
-        windows = get_erp_windows(analysis.fs, analysis.samples, channel=[4,3,27,26])
-        plot_erp_latency(windows, analysis.fs)
-
-    # Export analysis outputs to EDF (cheap; rebuilt every run from the cached runtime signals)
-    analysis_path = os.path.join(results_dir, "analysis.edf")
-    write_analysis_edf(analysis_path, analysis.fs, analysis.ground_truth, analysis.samples,
-                        analysis.filtered, analysis.hilbert_phase, analysis.f0_continuous,
-                        analysis.stim_ref, annotations=analysis.annotations)
+    if full_analysis:
+        # Pipeline latency analysis. Reproducible from cache too, since
+        # runtime_metadata.h5 preserves source_ts exactly (unlike an EDF round-trip).
+        analyse_latencies(analysis.samples, analysis.ground_truth, analysis.graph_config)
 
 
-    # Polar error distributions
-    plot_errors(analysis.errors)
+        # ERPCLAS-specific: ERP average plot
+        if os.path.basename(analysis.graph_file) == "ERPCLAS.yaml":
+            windows = get_erp_windows(analysis.fs, analysis.samples, channel=[4,3,27,26])
+            plot_erp_latency(windows, analysis.fs)
 
-    # Plot spectrum
-    plot_spectrum(analysis.raw, analysis.samples, analysis.filtered, analysis.fs,
-                  analysis.aperiodic_params, analysis.X_white)
+        # Export analysis outputs to EDF (cheap; rebuilt every run from the cached runtime signals)
+        analysis_path = os.path.join(results_dir, "analysis.edf")
+        write_analysis_edf(analysis_path, analysis.fs, analysis.ground_truth, analysis.samples,
+                            analysis.filtered, analysis.hilbert_phase, analysis.f0_continuous,
+                            analysis.stim_ref, annotations=analysis.annotations)
 
-    # Time-domain panels. Stack any subset of "f0" / "phase" / "phase_error" /
-    # "signals" sharing a common time axis; pass a different panel list here
-    # for other use cases, e.g.
-    #   plot_stack(analysis, ["signals", "phase_error"], save_as="sig_vs_err")
-    #   plot_stack(analysis, ["signals", "f0", "phase", "phase_error"],
-    #              time_range=time_range, save_as="everything")
-    time_range = None # (20.5, 23.5)  # e.g. (17, 18) to zoom in on a few seconds
-    # plot_stack(analysis, ["signals", "f0", "phase", "phase_error"], time_range=time_range,
-    #            save_as="time_series")
-    plot_stack(analysis, ["f0"], time_range=time_range,
-            save_as="time_series")
+        # Polar error distributions
+        plot_errors(analysis.errors)
+
+        # Plot spectrum
+        plot_spectrum(analysis.raw, analysis.samples, analysis.filtered, analysis.fs,
+                      analysis.aperiodic_params, analysis.X_white)
+
+        # Time-domain panels. Stack any subset of "f0" / "phase" / "phase_error" /
+        # "signals" sharing a common time axis; pass a different panel list here
+        # for other use cases, e.g.
+        #   plot_stack(analysis, ["signals", "phase_error"], save_as="sig_vs_err")
+        #   plot_stack(analysis, ["signals", "f0", "phase", "phase_error"],
+        #              time_range=time_range, save_as="everything")
+        time_range = None # (20.5, 23.5)  # e.g. (17, 18) to zoom in on a few seconds
+        # plot_stack(analysis, ["signals", "f0", "phase", "phase_error"], time_range=time_range,
+        #            save_as="time_series")
+        plot_stack(analysis, ["f0"], time_range=time_range,
+                save_as="time_series")
 
     if show:
         plt.show()
@@ -256,7 +257,7 @@ def find_result_dirs(base_dir: str = "results") -> list[str]:
     })
 
 
-def analyse_all_results(f0: float = 10, base_dir: str = "results") -> None:
+def analyse_all_results(f0: float = 10, base_dir: str = "results", full_analysis: bool = True) -> None:
     """Batch smoke-test: run analyse_results() non-interactively (no
     plt.show()) over every results subfolder under base_dir, keeping going
     past per-folder errors so one bad run doesn't block the rest. Prints a
@@ -268,7 +269,7 @@ def analyse_all_results(f0: float = 10, base_dir: str = "results") -> None:
     for i, results_dir in enumerate(run_dirs, 1):
         print(f"\n{'=' * 80}\n[{i}/{len(run_dirs)}] {results_dir}\n{'=' * 80}")
         try:
-            analyse_results(results_dir, f0, show=False)
+            analyse_results(results_dir, f0, show=False, full_analysis=full_analysis)
         except Exception:
             print(f"FAILED: {results_dir}")
             traceback.print_exc()
@@ -367,10 +368,11 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
     (ground-truth f0 error, stim duration error, total latency, an online
     estimate scored against true_phase) is pooled in full.
 
-    Also produces two per-recording scatter plots (plot_pooled_scatter): the
-    circular mean +/- SD of each recording's online-vs-Hilbert phase error on
-    the x-axis, against that recording's online (Kalman) f0-estimate variance
-    and its offline alpha-peak SNR (dB) on the y-axis.
+    Also produces per-recording scatter plots (plot_pooled_scatter): for the
+    online-vs-Hilbert phase error and the stim-onset (online-estimate and
+    offline-Hilbert) errors, the circular mean +/- SD of each recording's
+    error on the y-axis, against that recording's online (Kalman)
+    f0-estimate variance and its offline alpha-peak SNR (dB) on the x-axis.
 
     Also writes (and prints) a table with one row per stimulus-onset
     condition (StimControl.options.stim_onset_deg in each recording's graph
@@ -469,21 +471,31 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
                     global_metrics.setdefault(err["label"], []).append(trimmed)
             entry["values"].append(vals)
 
-        # One scatter bullet per recording: online-vs-Hilbert phase error (x)
-        # vs online f0-estimate variance and offline SNR (y).
+        # One scatter bullet per recording, for each metric in
+        # plot.py's _SCATTER_METRICS: the per-recording circular mean of that
+        # metric's error series (y) vs offline SNR (x). "phase_vals" is the
+        # continuous online-vs-Hilbert phase error; the "Stim onset (...)"
+        # labels are the phase error scored only at stimulus-onset edges,
+        # against the online estimate and the offline Hilbert/true-phase
+        # reference respectively.
         oh = next((e for e in errors
                    if e["label"].replace(" ", "") == online_vs_hilbert), None)
         if oh is not None:
-            freq_est = analysis.samples.get("FrequencyEstimation")
-            f0_var = (float(np.nanvar(np.asarray(freq_est["y"], dtype=float)))
-                      if freq_est is not None and len(freq_est["y"]) else np.nan)
             snr_db = (10.0 * np.log10(analysis.snr)
                       if analysis.snr is not None and np.isfinite(analysis.snr) and analysis.snr > 0
                       else np.nan)
+            stim_onset_hat_label = r"Stim onset ($\hat\theta$)"
+            stim_onset_ht_label  = r"Stim onset ($\theta_{\mathrm{HT}}$)"
+            stim_onset_hat = next((e for e in errors if e["label"] == stim_onset_hat_label), None)
+            stim_onset_ht  = next((e for e in errors if e["label"] == stim_onset_ht_label), None)
             scatter_records.append({
                 "name": os.path.basename(results_dir),
                 "phase_vals": np.asarray(oh["values"], dtype=float),
-                "f0_var": f0_var, "snr_db": snr_db,
+                stim_onset_hat_label: np.asarray(stim_onset_hat["values"], dtype=float)
+                                      if stim_onset_hat is not None else np.array([]),
+                stim_onset_ht_label: np.asarray(stim_onset_ht["values"], dtype=float)
+                                     if stim_onset_ht is not None else np.array([]),
+                "snr_db": snr_db,
             })
 
     if not pooled:
@@ -525,13 +537,13 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
 
 
 if __name__ == "__main__":
-    # analyse_all_results()
+    # analyse_all_results(full_analysis=False) 
 
     # analyse_results(results_dir="_last_run") #, f0_is_truth=True)
-    # analyse_results(results_dir="results/CLAS_steffen/steffen_60_20260819_155602") #, f0_is_truth=True)
+    analyse_results(results_dir="results/CLAS_felix/felix_erp_meas_20260903_141640")#, f0_is_truth=True)
     
-    # analyse_results(results_dir="results/snr_sweep/ecHTtests/snr-10_pink_20260909_100011", f0_is_truth=True)
+    # analyse_pooled_errors() #names=["victor"])
 
-    analyse_pooled_errors() #names=["victor"])
+
     # analyse_erp_by_subject()
 

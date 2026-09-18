@@ -9,6 +9,7 @@ import numpy as np
 from pathlib import Path
 from collections import deque
 import matplotlib.pyplot as plt
+from scipy.stats import linregress
 
 from .read_output import get_signal_data
 from .stimulus import get_edges
@@ -27,6 +28,19 @@ def find_session_run_dirs(base_dir: str = "results", session_glob: str = "CLAS_*
         for session_dir in session_dirs
         for p in glob.glob(os.path.join(session_dir, "*", graph_name))
     })
+
+
+def first_udp_channel_key(keys) -> str | None:
+    """The lowest-indexed "UDPSource_{idx}" raw channel key among `keys`, or
+    None if there isn't one. Not all channels are necessarily recorded (e.g.
+    only channel 3 selected), so callers that need "the" UDPSource channel
+    (the hardware->source latency calc, and the one true hw_ts array kept in
+    runtime_metadata.h5) can't just assume index 0 exists."""
+    indices = sorted(
+        int(k.split("_")[1]) for k in keys
+        if k.startswith("UDPSource_") and k.split("_")[1].isdigit()
+    )
+    return f"UDPSource_{indices[0]}" if indices else None
 
 
 def _iter_channels(signal: np.ndarray):
@@ -174,8 +188,17 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
         return {}
     
     min_lengths = min(len(samples[key]["x"]) for key in samples)
+    start_ts = first_timestamps[0]
+    nominal_x = start_ts + np.round(np.arange(min_lengths) / fs * 1e6).astype(np.int64)
     for key in samples:
-        samples[key]["x"] = samples[key]["x"][:min_lengths]
+        # "x" is the idealized, uniformly-spaced grid every consumer except
+        # UDPSource's hardware->source latency calc below should use (matches
+        # load_runtime()'s cached reconstruction). The true reconstructed ADC
+        # sampling times -- with real per-sample jitter -- are only kept for
+        # UDPSource, under "hw_ts", since that's the only consumer of them.
+        if key.startswith("UDPSource"):
+            samples[key]["hw_ts"] = samples[key]["x"][:min_lengths]
+        samples[key]["x"] = nominal_x
         samples[key]["y"] = samples[key]["y"][:min_lengths]
         if samples[key].get("source_ts") is not None:
             samples[key]["source_ts"] = samples[key]["source_ts"][:min_lengths]
@@ -507,7 +530,7 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
 
             plt.plot(latency_ms)
             plt.axhline(np.median(latency_ms), color="red", linestyle="--", label=f"Median: {np.median(latency_ms):.2f} ms")
-            plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
+            plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
             plt.xlabel("Stimulus index")
             plt.ylabel("Latency [ms]")
             plt.legend(loc="upper right")
@@ -528,6 +551,56 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
 
     if pipeline_rows or audio_rows:
         _write_latency_table(pipeline_rows, audio_rows)
+
+    # UDPSource-specific: hardware vs source timestamp gap. hardware_ts is the
+    # reconstructed true ADC sampling time; source_ts is when Falcon actually
+    # received the UDP packet. Their difference is UDPSource's own
+    # acquisition-to-ingestion latency (see UDPSource::Process in
+    # extensions/processors/UDPSource/UDPSource.cpp).
+    udp = samples.get(first_udp_channel_key(samples))
+    if udp is not None and udp.get("source_ts") is not None:
+        source_ts = udp["source_ts"]
+        hw_ts = udp.get("hw_ts")
+        n = min(len(hw_ts), len(source_ts)) if hw_ts is not None else len(source_ts)
+
+        if hw_ts is None:
+            print("  No true hardware_ts available (pre-fix cache); "
+                  "skipping UDPSource hardware→source latency plot.")
+        else:
+            source_rel = source_ts[:n] - np.min(source_ts[:n])
+            hw_rel = hw_ts[:n] - np.min(hw_ts[:n])
+
+            fig = plt.figure(figsize=FIGSIZE)
+            plt.plot(source_rel / 1e6, hw_rel - source_rel, linestyle="none", marker=".")
+
+            plt.xlabel("Source timestamp [s]")
+            plt.ylabel("Hardware - Source [us]")
+
+            print(f"  UDPSource hardware→source latency (us): "
+                  f"std={np.std(hw_rel - source_rel):.2f}, max_dev={np.max(np.abs(hw_rel - source_rel)):.2f} "
+                  f"(idx={np.argmax(np.abs(hw_rel - source_rel))})")
+
+        # Independent, offline check of the true sample rate: fit source_ts
+        # (Falcon's own receipt clock, unaffected by UDPSource's internal
+        # fs_eff_ tracking/rejection) against the sample index. This
+        # cross-checks the fs_eff_ value UDPSource logs at runtime without
+        # relying on its RLS model or reject threshold.
+        sample_idx = np.arange(n, dtype=np.float64)
+        slope_us_per_sample, _ = np.polyfit(sample_idx, source_ts[:n].astype(np.float64), 1)
+        true_fs = 1e6 / slope_us_per_sample
+
+        nominal_fs = (
+            (graph_config or {})
+            .get("graph", {}).get("processors", {})
+            .get("UDPSource", {}).get("options", {})
+            .get("fs")
+        )
+        if nominal_fs:
+            drift_ppm = (true_fs - nominal_fs) / nominal_fs * 1e6
+            print(f"  UDPSource true sample rate (from source_ts): {true_fs:.4f} Hz "
+                  f"(nominal {nominal_fs} Hz, drift={drift_ppm:+.2f} ppm)")
+        else:
+            print(f"  UDPSource true sample rate (from source_ts): {true_fs:.4f} Hz")
 
 
 

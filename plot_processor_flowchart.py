@@ -70,6 +70,11 @@ def parse_args() -> argparse.Namespace:
         default="dot",
         help="Graphviz layout engine",
     )
+    parser.add_argument(
+        "--simple",
+        action="store_true",
+        help="Draw only processor name boxes, without class/options details",
+    )
     return parser.parse_args()
 
 
@@ -123,10 +128,10 @@ def parse_state_reference(reference: str) -> Tuple[str, str]:
 
 
 def extract_state_refs(state_name: str, state_spec: Any) -> List[str]:
-    # New simplified format: {StateName: ["Proc.state", ...]}
+    # Simplified format: {StateName: ["Proc.state", ...]}
     if isinstance(state_spec, list):
         refs = state_spec
-    # Backward-compatible format: {StateName: {states: ["Proc.state", ...], ...}}
+    # Nested format: {StateName: {states: ["Proc.state", ...], ...}}
     elif isinstance(state_spec, dict):
         refs = state_spec.get("states", [])
     else:
@@ -138,6 +143,46 @@ def extract_state_refs(state_name: str, state_spec: Any) -> List[str]:
         raise SystemExit(f"State '{state_name}' references must be a list.")
 
     return refs
+
+
+# Metadata keys that can appear alongside the state name in the flat format,
+# e.g. `- F0:\n  permission: none\n  states: [...]`, where YAML parses the
+# state name, "permission" and "states" as sibling keys of one mapping
+# rather than "permission"/"states" nested under the state name.
+STATE_ITEM_RESERVED_KEYS = {"states", "permission"}
+
+
+def parse_state_item(state_item: Any) -> Tuple[str, List[str]]:
+    """
+    Parse one element of 'graph.states', supporting both:
+        - F0: [Proc.f0, Proc2.f0]                      # single-key format
+        - F0: {states: [Proc.f0, Proc2.f0]}             # nested format
+        - F0:                                            # flat format
+          permission: none
+          states: [Proc.f0, Proc2.f0]
+    """
+    if not isinstance(state_item, dict) or not state_item:
+        raise SystemExit(
+            "Each element in 'graph.states' must be a non-empty mapping/object."
+        )
+
+    if len(state_item) == 1:
+        state_name, state_spec = next(iter(state_item.items()))
+        return str(state_name), extract_state_refs(str(state_name), state_spec)
+
+    # Flat format: the state name is the one key that isn't reserved metadata.
+    name_keys = [key for key in state_item if key not in STATE_ITEM_RESERVED_KEYS]
+    if len(name_keys) != 1:
+        raise SystemExit(
+            "Could not determine state name from 'graph.states' entry: "
+            f"{state_item!r}"
+        )
+    state_name = str(name_keys[0])
+
+    if "states" not in state_item:
+        raise SystemExit(f"State '{state_name}' is missing a 'states' list.")
+
+    return state_name, extract_state_refs(state_name, state_item["states"])
 
 
 def expand_processors(processors: Dict[str, Any]) -> Dict[str, Any]:
@@ -170,51 +215,56 @@ def expand_processors(processors: Dict[str, Any]) -> Dict[str, Any]:
     return expanded
 
 
-def make_processor_label(name: str, spec: Dict[str, Any]) -> str:
+def make_processor_label(name: str, spec: Dict[str, Any], simple: bool = False) -> str:
     """
     Build an HTML-like Graphviz label with:
     - processor name
-    - class
-    - selected options
+    - class (unless simple)
+    - selected options (unless simple)
     """
-    proc_class = spec.get("class", "Unknown")
-    options = spec.get("options", {}) or {}
+    proc_is_serializer = is_serializer(name)
 
-    option_lines = []
-    for key, value in options.items():
-        if isinstance(value, dict):
-            for subkey, subvalue in value.items():
-                option_lines.append(f"{key}.{subkey}: {subvalue}")
-        else:
-            option_lines.append(f"{key}: {value}")
-
-
-    is_serializer = "Serializer" in name
-
-    if is_serializer:
+    if proc_is_serializer:
         color = "lightpink"
     else:
         color = "lightsteelblue"
 
     rows = [f'<TR><TD BGCOLOR="{color}"><B>{escape_html(name)}</B></TD></TR>']
-    if not is_serializer:
-        rows.append(
-            f'<TR><TD ALIGN="LEFT"><B>class:</B> {escape_html(str(proc_class))}</TD></TR>'
-        )
 
-    if option_lines:
-        rows.append(
-            f'<TR><TD ALIGN="LEFT"><B>options</B><BR ALIGN="LEFT"/>'
-            + "<BR ALIGN=\"LEFT\"/>".join(escape_html(line) for line in option_lines) + '<BR ALIGN="LEFT"/>'
-            + "</TD></TR>"
-        )
+    if not simple:
+        proc_class = spec.get("class", "Unknown")
+        options = spec.get("options", {}) or {}
 
-    cellpadding = 4 if is_serializer else 8
+        option_lines = []
+        for key, value in options.items():
+            if isinstance(value, dict):
+                for subkey, subvalue in value.items():
+                    option_lines.append(f"{key}.{subkey}: {subvalue}")
+            else:
+                option_lines.append(f"{key}: {value}")
+
+        if not proc_is_serializer:
+            rows.append(
+                f'<TR><TD ALIGN="LEFT"><B>class:</B> {escape_html(str(proc_class))}</TD></TR>'
+            )
+
+        if option_lines:
+            rows.append(
+                f'<TR><TD ALIGN="LEFT"><B>options</B><BR ALIGN="LEFT"/>'
+                + "<BR ALIGN=\"LEFT\"/>".join(escape_html(line) for line in option_lines) + '<BR ALIGN="LEFT"/>'
+                + "</TD></TR>"
+            )
+
+    cellpadding = 4 if (proc_is_serializer or simple) else 8
     return f"""<
 <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="{cellpadding}">
 {''.join(rows)}
 </TABLE>
 >"""
+
+
+def is_serializer(name: str) -> bool:
+    return "Serializer" in name
 
 
 def escape_html(text: str) -> str:
@@ -267,7 +317,7 @@ def compute_flow_order(processors: Dict[str, Any], edges: List[Tuple[str, str]])
     return {name: idx for idx, name in enumerate(ordered)}
 
 
-def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
+def build_graph(data: Dict[str, Any], engine: str = "dot", simple: bool = False) -> Digraph:
     graph = data["graph"]
     graph_name = graph.get("name", "Flowchart")
     processors = graph.get("processors", {})
@@ -285,7 +335,7 @@ def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
         raise SystemExit("'graph.states' must be a list.")
 
     dot = Digraph(name=graph_name, format="svg", engine=engine)
-    dot.attr(rankdir="LR", splines="spline", nodesep="0.6", ranksep="0.9")
+    dot.attr(rankdir="LR", splines="polyline", nodesep="0.8", ranksep="0.6")
     dot.attr(
         "node",
         shape="plaintext",
@@ -294,20 +344,18 @@ def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
     dot.attr(
         "edge",
         fontname="Helvetica",
-        fontsize="10",
+        fontsize="12",
         arrowsize="0.8",
     )
-    dot.attr(label=graph_name, labelloc="t", fontsize="20", fontname="Helvetica-Bold")
-
     # Add processor nodes
     for proc_name, proc_spec in processors.items():
         if not isinstance(proc_spec, dict):
             raise SystemExit(f"Processor '{proc_name}' must be a mapping/object.")
-        label = make_processor_label(proc_name, proc_spec)
+        label = make_processor_label(proc_name, proc_spec, simple=simple)
         dot.node(proc_name, label=label)
 
-    # Add edges from connections
-    flow_edges: List[Tuple[str, str]] = []
+    # Parse edges from connections
+    parsed_connections = []
     for raw in connections:
         if not isinstance(raw, str):
             raise SystemExit(f"Each connection must be a string, got: {raw!r}")
@@ -319,22 +367,15 @@ def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
         if dst_proc not in processors:
             raise SystemExit(f"Connection references unknown destination processor: {dst_proc}")
 
-        edge_label = f"{src_port}" # → {dst_port}"
-        dot.edge(src_proc, dst_proc, label=edge_label)
-        flow_edges.append((src_proc, dst_proc))
+        parsed_connections.append((src_proc, src_port, src_idx, dst_proc, dst_port, dst_idx))
 
+    flow_edges = [(src, dst) for src, _, _, dst, _, _ in parsed_connections]
     flow_order = compute_flow_order(processors, flow_edges)
 
     # Add dashed undirected links between processors that share one or more states.
     shared_state_pairs: Dict[Tuple[str, str], List[str]] = {}
     for state_item in states:
-        if not isinstance(state_item, dict) or len(state_item) != 1:
-            raise SystemExit(
-                "Each element in 'graph.states' must be a mapping with a single state name key."
-            )
-
-        state_name, state_spec = next(iter(state_item.items()))
-        refs = extract_state_refs(str(state_name), state_spec)
+        state_name, refs = parse_state_item(state_item)
 
         processors_for_state = set()
         for ref in refs:
@@ -358,21 +399,42 @@ def build_graph(data: Dict[str, Any], engine: str = "dot") -> Digraph:
             pair = (left, right)
             shared_state_pairs.setdefault(pair, []).append(str(state_name))
 
+    # Combine flow edges and shared-state edges into a single emission list,
+    # each tagged with its destination processor, then do one stable sort
+    # (by whether the destination is a serializer) over the combined list.
+    # Doing this in one pass -- rather than emitting all flow edges and only
+    # then all state edges -- keeps a state edge next to the flow edge(s)
+    # between the same two processors, and Graphviz's crossing-minimization
+    # uses this emission order as a tie-breaking hint, nudging serializers
+    # towards the outer side of the layout without hard-forcing edge order
+    # (which caused worse crossings when serializer/state edges competed).
+    combined_edges: List[Tuple[str, str, Dict[str, Any]]] = []
+    for src_proc, src_port, src_idx, dst_proc, dst_port, dst_idx in parsed_connections:
+        combined_edges.append((src_proc, dst_proc, {"label": f"{src_port}"}))
+
     for (left, right), state_names in shared_state_pairs.items():
-        label = "state: " + ", ".join(sorted(set(state_names)))
-        dot.edge(
+        label = ", ".join(sorted(set(state_names)))
+        combined_edges.append((
             left,
             right,
-            label=label,
-            style="dotted",
-            color="red3",
-            fontcolor="red4",
-            dir="both",
-            arrowhead="dot",
-            arrowtail="dot",
-            arrowsize="0.8",
-            constraint="false",
-        )
+            {
+                "label": label,
+                "style": "dotted",
+                "color": "red3",
+                "fontcolor": "red4",
+                "dir": "both",
+                "arrowhead": "dot",
+                "arrowtail": "dot",
+                "arrowsize": "0.9",
+                "penwidth": "3",
+                "constraint": "false",
+            },
+        ))
+
+    combined_edges.sort(key=lambda e: is_serializer(e[1]))
+
+    for src_proc, dst_proc, attrs in combined_edges:
+        dot.edge(src_proc, dst_proc, **attrs)
 
     return dot
 
@@ -391,7 +453,7 @@ def infer_output_path(input_path: Path, output: Path | None, fmt: str) -> Tuple[
 def main() -> None:
     args = parse_args()
     data = load_yaml(args.input)
-    dot = build_graph(data, engine=args.engine)
+    dot = build_graph(data, engine=args.engine, simple=args.simple)
 
     output_base, output_format = infer_output_path(args.input, args.output, args.format)
     dot.format = output_format

@@ -341,18 +341,28 @@ def plot_errors(errors: list[dict]) -> None:
     _write_error_table(table_rows)
 
 
+# (records key, y-axis label, filename stub) for each per-recording scatter
+# metric plot_pooled_scatter() draws -- the general online-vs-Hilbert phase
+# error, plus the phase error scored at stimulus-onset edges specifically
+# against each of the two references (offline Hilbert / online estimate).
+_SCATTER_METRICS = [
+    ("phase_vals",                              r"$\hat\theta - \theta_{\mathrm{HT}}$ [$^\circ$]", "phaseerr"),
+    (r"Stim onset ($\hat\theta$)",              r"Stim onset ($\hat\theta$) [$^\circ$]",            "stimonset_hat"),
+    (r"Stim onset ($\theta_{\mathrm{HT}}$)",    r"Stim onset ($\theta_{\mathrm{HT}}$) [$^\circ$]",  "stimonset_ht"),
+]
+
+
 def plot_pooled_scatter(records: list[dict]) -> None:
-    """Per-recording scatter for pooled-error analysis: one bullet per
-    recording at the circular mean of its online-vs-Hilbert phase error
-    (y, with the circular SD as a vertical error bar), against a scalar
-    x for that recording --
+    """Per-recording scatter for pooled-error analysis: for each metric in
+    _SCATTER_METRICS, one bullet per recording at the circular mean of that
+    metric's error series (y, with the circular SD as a vertical error bar),
+    against that recording's offline alpha-peak SNR [dB] (x).
 
-      1. the variance of its online (Kalman) f0 estimate  [Hz^2]
-      2. its offline alpha-peak SNR                        [dB]
-
-    Each record dict carries the raw online-vs-Hilbert series ("phase_vals"),
-    plus "f0_var" and "snr_db". The y statistics drop non-finite samples
-    below (_circ_stats() itself assumes a NaN-free series); the series' edge
+    Each record dict carries the raw error-value arrays keyed in
+    _SCATTER_METRICS (e.g. "phase_vals" for the online-vs-Hilbert phase
+    error, or the "Stim onset (...)" error labels from compute_errors()),
+    plus "snr_db". The y statistics drop non-finite samples below
+    (_circ_stats() itself assumes a NaN-free series); the series' edge
     transients are already NaN by then since it's Hilbert-derived (see
     analysis.main.load_and_analyse).
     """
@@ -360,44 +370,46 @@ def plot_pooled_scatter(records: list[dict]) -> None:
         print("No per-recording scatter data to plot.")
         return
 
-    stats = []
-    for r in records:
-        vals = np.asarray(r["phase_vals"], dtype=float)
-        vals = vals[np.isfinite(vals)]
-        mu_u, sd_u, _, _ = _circ_stats(np.radians(vals))
-        stats.append((np.degrees(mu_u), np.degrees(sd_u)))
-    stats   = np.array(stats, dtype=float)
-    mu, sd  = stats[:, 0], stats[:, 1]
-    f0_var  = np.array([r.get("f0_var", np.nan) for r in records], dtype=float)
-    snr_db  = np.array([r.get("snr_db", np.nan) for r in records], dtype=float)
+    snr_db = np.array([r.get("snr_db", np.nan) for r in records], dtype=float)
 
-    ylabel = r"$\hat\theta - \theta_{\mathrm{HT}}$ [$^\circ$]"
-    for x, xlabel, name in (
-        (f0_var, r"$\hat f_0$ variance [Hz$^2$]", "pooled_phaseerr_vs_f0var"),
-        (snr_db, "SNR [dB]",                     "pooled_phaseerr_vs_snr"),
-    ):
-        ok = np.isfinite(mu) & np.isfinite(x)
+    for values_key, ylabel, name_stub in _SCATTER_METRICS:
+        stats = []
+        for r in records:
+            vals = np.asarray(r.get(values_key, []), dtype=float)
+            vals = vals[np.isfinite(vals)]
+            stats.append(tuple(np.degrees(s) for s in _circ_stats(np.radians(vals))[:2])
+                         if vals.size else (np.nan, np.nan))
+        stats  = np.array(stats, dtype=float)
+        mu, sd = stats[:, 0], stats[:, 1]
+
+        if values_key == r"Stim onset ($\hat\theta$)" and np.isfinite(mu).any():
+            worst = int(np.nanargmax(np.abs(mu)))
+            print(f"Largest |mean Stim onset ($\\hat\\theta$) error|: "
+                  f"{records[worst].get('name', '?')} ({mu[worst]:.1f} deg)")
+
+        ok = np.isfinite(mu) & np.isfinite(snr_db)
         if not ok.any():
-            print(f"plot_pooled_scatter: no finite points for {xlabel!r}; skipping.")
+            print(f"plot_pooled_scatter: no finite points for {ylabel!r} vs SNR; skipping.")
             continue
         fig, ax = plt.subplots(figsize=FIGSIZE)
-        ax.errorbar(x[ok], mu[ok], yerr=sd[ok], fmt="o", markersize=4,
+        ax.errorbar(snr_db[ok], mu[ok], yerr=sd[ok], fmt="o", markersize=4,
                     capsize=2, elinewidth=0.8, color="tab:blue", ecolor="0.6")
         ax.axhline(0, color="0.5", linewidth=0.8, linestyle="--")
 
         # Ordinary least-squares fit of the per-recording mean error on x,
         # annotated with the coefficient of determination R^2 (= r**2).
         if np.count_nonzero(ok) >= 2:
-            fit = linregress(x[ok], mu[ok])
-            xr  = np.array([x[ok].min(), x[ok].max()])
+            fit = linregress(snr_db[ok], mu[ok])
+            xr  = np.array([snr_db[ok].min(), snr_db[ok].max()])
             ax.plot(xr, fit.intercept + fit.slope * xr, color="tab:red", linewidth=1.2,
                     label=rf"OLS fit, $R^2 = {fit.rvalue ** 2:.2f}$")
             ax.legend(loc="upper right")
 
-        ax.set_xlabel(xlabel)
+        ax.set_xlabel("SNR [dB]")
         ax.set_ylabel(ylabel)
         ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
         fig.tight_layout()
+        name = f"pooled_{name_stub}_vs_snr"
         save_pdf(fig, name)
         save_pgf(fig, name)
 
@@ -443,17 +455,17 @@ def _panel_f0(ax, a, start_ts: float, time_range: tuple = None) -> None:
     if samples.get("FrequencyEstimation_raw") is not None:
         x_raw = (samples["FrequencyEstimation_raw"]["x"] - start_ts) / 1e6
         ax.plot(x_raw, samples["FrequencyEstimation_raw"]["y"], "o", markersize=1.5,
-                color="tab:red", alpha=0.5, label=r"Raw $\hat f_0$", rasterized=True)
+                color="tab:red", alpha=0.5, label=r"$\tilde f_0$", rasterized=True)
 
     if samples.get("FrequencyEstimation") is not None:
         x_est = (samples["FrequencyEstimation"]["x"] - start_ts) / 1e6
         ax.plot(x_est, samples["FrequencyEstimation"]["y"], linewidth=1.3,
-                label=r"Kalman $\hat f_0$", rasterized=True)
+                label=r"$\hat f_0$", rasterized=True)
 
     ax.set_ylabel("Frequency [Hz]")
     ax.yaxis.get_major_formatter().set_useOffset(False)
     ax.minorticks_on()
-    ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
+    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.9)
     ax.set_ylim(2, 20)
     ax.legend(loc="lower right")
 
@@ -480,7 +492,7 @@ def _panel_phase_error(ax, a, start_ts: float, time_range: tuple = None) -> None
                 linewidth=1, color=colors[i % len(colors)],
                 label=err["label"], alpha=0.85, rasterized=True)
 
-    ax.legend(frameon=True, loc="upper right")
+    ax.legend(loc="upper right")
     ax.set_ylabel("Error [°]")
     ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
@@ -514,7 +526,7 @@ def _panel_signals(ax, a, start_ts: float, time_range: tuple = None) -> None:
                         transform=ax.get_xaxis_transform(), label="Stimulus")
 
     ax.set_ylabel("Amplitude")
-    ax.legend(facecolor="white", frameon=True, loc="upper right")
+    ax.legend(loc="upper right")
     ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
 
@@ -538,8 +550,8 @@ def _panel_phase(ax, a, start_ts: float, time_range: tuple = None) -> None:
         ax.plot(time_s[:len(true_phase)], true_phase[:n], color="tab:brown",
                 linewidth=1.0, label="True phase", rasterized=True)
 
-    ax.set_ylabel("Phase (rad)")
-    ax.legend(facecolor="white", frameon=True, loc="upper right")
+    ax.set_ylabel("Phase [rad]")
+    ax.legend(loc="upper right")
     ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
 
@@ -657,7 +669,7 @@ def plot_spectrum(raw: np.ndarray, samples: dict, filtered: np.ndarray, fs: floa
     ax.set_ylim(0, np.max(X[(freqs >= 5) & (freqs <= 10)]) * 5)
     ax.set_ylabel("Magnitude")
     ax.set_title("Spectrum")
-    (ax2 if X_white is not None else ax).set_xlabel("Frequency (Hz)")
+    (ax2 if X_white is not None else ax).set_xlabel("Frequency [Hz]")
     # get legend handler from both axis and combine them
     ax.legend(loc="upper right")
 
@@ -896,10 +908,11 @@ def plot_erp_latency(windows: list[dict], fs: float) -> float | None:
     plt.axvline(p1_latency, color="tab:red", linestyle="--",
                label=f"Mean P1 latency ({p1_latency * 1000:.1f} ms)")
 
-    plt.xlabel("Peri-stimulus time (s)")
-    plt.ylabel("Channel" if len(channels) > 1 else "EEG amplitude (µV)")
+    plt.xlabel("Peri-stimulus time [s]")
+    plt.ylabel("Channel" if len(channels) > 1 else "EEG amplitude [µV]")
     if len(channels) > 1:
         plt.yticks(yticks, yticklabels)
+    plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
     plt.legend(loc="upper right")
 
     save_pgf(fig, "erp_latency")
@@ -923,9 +936,10 @@ def plot_erp_latency(windows: list[dict], fs: float) -> float | None:
     plt.axvline(0, color="0.0", linestyle="--", label="Trigger onset")
     plt.axvline(p1_latency_pooled, color="tab:red", linestyle="--",
                label=f"P1 latency ({p1_latency_pooled * 1000:.1f} ms)")
-    plt.xlabel("Peri-stimulus time (s)")
-    plt.ylabel("EEG amplitude (µV)")
+    plt.xlabel("Peri-stimulus time [s]")
+    plt.ylabel("EEG amplitude [µV]")
     plt.title("Grand average ERP (all channels pooled)")
+    plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
     plt.legend(loc="upper right")
     save_pgf(fig_pooled, "erp_latency_pooled")
 
@@ -971,6 +985,7 @@ def plot_erp_by_subject(subject_curves: list[dict]) -> None:
     plt.axvline(0, color="0.0", linestyle="--", label="Stimulus onset")
     plt.xlabel("Time [s]")
     plt.ylabel(r"Amplitude [$\mu$V]")
+    plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
     plt.legend(loc="upper right")
 
     plt.tight_layout()

@@ -9,7 +9,7 @@ hardcoding new absolute sizes.
 """
 
 TEXTWIDTH    = 6.30045   # inches -- LaTeX \textwidth
-ASPECT_RATIO = 3/4
+ASPECT_RATIO = 9/16
 SCALE        = 1.0
 FIG_WIDTH    = TEXTWIDTH * SCALE
 FIG_HEIGHT   = FIG_WIDTH * ASPECT_RATIO

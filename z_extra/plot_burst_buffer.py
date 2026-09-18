@@ -74,8 +74,19 @@ def main():
     height = width * aspect_ratio
     fig, (ax_wave, ax_spec) = plt.subplots(1, 2, figsize=(width, height))
 
-    ax_wave.plot(t[0:int(0.2*fs_audio)]*1000, samples[0:int(0.2*fs_audio)], linewidth=0.5)
-    # ax_wave.plot(t*1000, samples, linewidth=0.5)
+    # ax_wave.plot(t[0:int(0.2*fs_audio)]*1000, samples[0:int(0.2*fs_audio)], linewidth=0.5)
+    ax_wave.plot(t*1000, samples, linewidth=0.5)
+
+    axins = ax_wave.inset_axes([0.6, 0.6, 0.37, 0.37])
+    axins.plot(t*1000, samples,linewidth=0.5)
+    # setting of a zoomed graph
+    x1, x2, y1, y2 = 0, 20, -1, 1
+    axins.set_xlim(x1, x2)
+    axins.set_ylim(y1, y2)
+    axins.set_xticks([])
+    axins.set_yticks([])
+    axins.patch.set_alpha(0.7)
+    # ax_wave.indicate_inset_zoom(axins)
 
     ax_wave.set_xlabel("Time [ms]")
     ax_wave.set_ylabel("Amplitude")

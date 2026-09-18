@@ -78,15 +78,15 @@ def plot_pdv_over_time(nominal_fs, true_fs, sample_counter, pdv_us):
 
     t = (sample_counter - sample_counter[0]) / true_fs
     ax.plot(t, pdv_us, 'o',markersize=0.5,alpha=0.8)
-    ax.set_xlabel("Time (s)")
+    ax.set_xlabel("Time [s]")
     ax.set_ylabel(r"Packet delay variation [$\mu$s]")
-    ax.grid(True, linewidth=0.3)
+    ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
     ax.set_xlim(0,0.5)
     fig.tight_layout()
 
     stem = f"pdv_{int(nominal_fs)}"
-    fig.savefig(os.path.join(PLOTS_DIR, f"{stem}.pgf"))
-    fig.savefig(os.path.join(PLOTS_DIR, f"{stem}.pdf"))
+    fig.savefig(os.path.join(PLOTS_DIR, f"{stem}.pgf"), bbox_inches="tight")
+    fig.savefig(os.path.join(PLOTS_DIR, f"{stem}.pdf"), bbox_inches="tight")
     plt.close(fig)
 
 
@@ -97,7 +97,7 @@ def plot_pdv_histogram(pdv_by_fs, bins=100):
     x and y scale so the spreads are directly comparable across rates.
     """
     width = TEXTWIDTH
-    height = width * 3 / 4
+    height = width * ASPECT_RATIO
     fig, axes = plt.subplots(2, 2, figsize=(width, height),
                               sharex=True, sharey=True)
 
@@ -105,27 +105,28 @@ def plot_pdv_histogram(pdv_by_fs, bins=100):
     shared_bins = np.linspace(all_pdv.min(), all_pdv.max(), bins + 1)
 
     for i, (ax, (nominal_fs, pdv_us)) in enumerate(zip(axes.flat, pdv_by_fs)):
+        ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
         ax.hist(pdv_us, bins=shared_bins, density=True, color="C0")
         if nominal_fs >= 1000:
             rate_label = f"{nominal_fs / 1000:g} kHz"
         else:
             rate_label = f"{int(nominal_fs)} Hz"
-        ax.set_title(f"({chr(ord('a') + i)}) {rate_label}")
-        ax.grid(True, linewidth=0.3)
+        ax.set_title(f"{rate_label}")
+        ax.set_axisbelow(True)
 
     for ax in axes.flat[len(pdv_by_fs):]:
         ax.set_visible(False)
 
     for ax in axes[-1, :]:
-        ax.set_xlabel(r"Packet delay variation ($\mu$s)")
+        ax.set_xlabel(r"Packet delay variation [$\mu$s]")
     for ax in axes[:, 0]:
         ax.set_ylabel("Density")
 
     fig.tight_layout()
 
     stem = "pdv_hist_all"
-    fig.savefig(os.path.join(PLOTS_DIR, f"{stem}.pgf"))
-    fig.savefig(os.path.join(PLOTS_DIR, f"{stem}.pdf"))
+    fig.savefig(os.path.join(PLOTS_DIR, f"{stem}.pgf"), bbox_inches="tight")
+    fig.savefig(os.path.join(PLOTS_DIR, f"{stem}.pdf"), bbox_inches="tight")
     plt.close(fig)
 
 
@@ -145,7 +146,7 @@ def save_latex_table(rows, out_path):
     lines = [
         r"\begin{table}[ht]",
         r"\centering",
-        r"\caption[Timing statistics from variation measurements]{}}",
+        r"\caption{Timing statistics from variation measurements}",
         r"\label{tab:timing_stats}",
         rf"\begin{{tabular}}{{{col_spec}}}",
         r"\toprule",

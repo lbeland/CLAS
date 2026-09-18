@@ -13,11 +13,11 @@ per-file csv, but the figures now use the plain SD.
 Usage
 -----
     # single method
-    python plot_results.py  RESULTS/ds004148_Fz_fooof
+    python plot_results.py  RESULTS/ds004148_Fz-FCz_fooof
 
-    # compare two methods (e.g. fooof vs simple)
-    python plot_results.py  RESULTS/ds004148_Fz_fooof  RESULTS/ds004148_Fz_simple
-    python plot_results.py  DIR_A DIR_B --labels fooof simple
+    # compare two methods (e.g. fooof vs alpha_fast)
+    python plot_results.py  RESULTS/ds004148_Fz-FCz_fooof  RESULTS/ds004148_Fz-FCz_alpha_fast
+    python plot_results.py  DIR_A DIR_B --labels fooof alpha_fast
 
 Writes ``iaf_stats_per_file.csv`` (+ ``iaf_change_rate_per_file.csv`` in single
 mode) into each run dir; figures go to ``MA/plots`` as ``.pgf`` + ``.pdf``
@@ -65,6 +65,17 @@ def _tex(s):
                  ("&", r"\&"), ("#", r"\#"), ("$", r"\$")):
         s = s.replace(a, b)
     return s
+
+
+# Method labels (from _label_for / --labels) as they should render in figures.
+_DISPLAY_LABEL = {
+    "alpha_fast": r"$\alpha$-FAST",
+}
+
+
+def _display(label):
+    """Pretty (LaTeX) name for a method label, for use in plotted text."""
+    return _DISPLAY_LABEL.get(label, _tex(label))
 
 
 def _save(fig, name):
@@ -175,12 +186,12 @@ def _describe_std(sd, label=""):
 
 
 def _label_for(run_dir):
-    """'ds004148_Fz-FCz_simple' -> 'simple'; fall back to the dir name."""
-    parts = pathlib.Path(run_dir).name.split("_")
-    for cand in ("fooof", "simple"):
-        if cand in parts:
+    """'ds004148_Fz-FCz_alpha_fast' -> 'alpha_fast'; fall back to the dir name."""
+    name = pathlib.Path(run_dir).name
+    for cand in ("fooof", "alpha_fast"):
+        if name == cand or name.endswith(f"_{cand}"):
             return cand
-    return pathlib.Path(run_dir).name
+    return name
 
 
 # --------------------------------------------------------------------------
@@ -233,16 +244,18 @@ def plot_single(run_dir, label):
 
     sdp_ok = sdp[np.isfinite(sdp)]
     ax[0].hist(sdp_ok, bins=20, edgecolor="black", alpha=0.85)
-    ax[0].axvline(sdp_ok.mean(), color="grey", lw=2, linestyle="--",
+    ax[0].axvline(sdp_ok.mean(), color="tab:red", linewidth=1.2, linestyle="--",
                   label=f"mean {sdp_ok.mean():.3f}" r"\,Hz")
-    ax[0].set_xlabel(f"{_F0} std [Hz]")
-    ax[0].set_ylabel("participants")
+    ax[0].set_xlabel(f"SD {_F0} [Hz]")
+    ax[0].set_ylabel("Participants")
+    ax[0].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
     ax[0].legend()
 
     if has_snr:
         ax[1].scatter(snr, sdp, s=20, alpha=0.7)
         ax[1].set_xlabel("mean SNR")
-        ax[1].set_ylabel(f"{_F0} std [Hz]")
+        ax[1].set_ylabel(f"SD {_F0} [Hz]")
+        ax[1].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
     else:
         ax[1].text(0.5, 0.5, "no SNR\n(fooof method)", ha="center", va="center",
                    transform=ax[1].transAxes)
@@ -252,31 +265,31 @@ def plot_single(run_dir, label):
     fig.tight_layout()
     _save(fig, f"iaf_stats_{label}")
 
-    # std vs mean IAF, one point per participant
-    fig2, ax2 = plt.subplots(figsize=FIGSIZE)
+    # (a) std vs mean IAF, one point per participant
+    # (b) per-participant distribution of the per-window IAF: one translucent
+    # KDE curve per participant over a common frequency axis (all recordings pooled)
+    fig2, ax2 = plt.subplots(1, 2, figsize=FIGSIZE)
+    ax2[0].set_title("(a)")
+    ax2[1].set_title("(b)")
 
     mx = st["mean_iaf_hz"].to_numpy()
     sy = st["std_iaf_hz"].to_numpy()
     ok2 = np.isfinite(mx) & np.isfinite(sy)
-    ax2.scatter(mx[ok2], sy[ok2], s=20, alpha=0.7)
+    ax2[0].scatter(mx[ok2], sy[ok2], s=20, alpha=0.7)
     lr = stats.linregress(mx[ok2], sy[ok2])
     xx = np.linspace(mx[ok2].min(), mx[ok2].max(), 100)
-    ax2.plot(xx, lr.intercept + lr.slope * xx, color="grey", lw=2, linestyle="--",
-             label=rf"$r = {lr.rvalue:+.3f}$, $p = {lr.pvalue:.3g}$")
-    ax2.set_xlabel(f"mean {_F0} [Hz]")
-    ax2.set_ylabel(f"{_F0} std [Hz]")
-    ax2.legend()
-    fig2.tight_layout()
-    _save(fig2, f"iaf_std_vs_mean_{label}")
+    ax2[0].plot(xx, lr.intercept + lr.slope * xx, color="tab:red", linewidth=1.2, linestyle="--",
+                label=rf"OLS fit, $R^2 = {lr.rvalue ** 2:.2f}$")
+    ax2[0].set_xlabel(f"mean {_F0} [Hz]")
+    ax2[0].set_ylabel(f"SD {_F0} [Hz]")
+    ax2[0].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
+    ax2[0].legend()
 
-    # per-participant distribution of the per-window IAF: one translucent KDE
-    # curve per participant over a common frequency axis (all recordings pooled)
     d = _valid(df)
     vals_all = d["paf_hz"].to_numpy()
     lo, hi = np.percentile(vals_all, [0.5, 99.5])
     xs = np.linspace(lo - 0.5, hi + 0.5, 400)
 
-    fig3, ax3 = plt.subplots(figsize=FIGSIZE)
     n_curves = n_skipped = 0
     for _, grp in d.groupby("participant"):
         v = grp["paf_hz"].to_numpy()
@@ -284,18 +297,20 @@ def plot_single(run_dir, label):
             n_skipped += 1
             continue
         kde = stats.gaussian_kde(v)
-        ax3.plot(xs, kde(xs), color="C0", lw=1, alpha=0.25)
+        ax2[1].plot(xs, kde(xs), color="C0", linewidth=1, alpha=0.25)
         # mu = float(np.mean(v))
-        # ax3.scatter(mu, kde(mu), s=12, color="C1", alpha=0.6, zorder=3)
+        # ax2[1].scatter(mu, kde(mu), s=12, color="C1", alpha=0.6, zorder=3)
         n_curves += 1
-    # ax3.plot(xs, stats.gaussian_kde(vals_all)(xs), color="black", lw=1.5,
-    #          label=f"all participants pooled (n={n_curves})")
-    ax3.set_xlabel(f"{_F0} [Hz]")
-    ax3.set_ylabel("density")
-    ax3.set_xlim(xs[0], xs[-1])
-    # ax3.legend()
-    fig3.tight_layout()
-    _save(fig3, f"iaf_dist_{label}")
+    # ax2[1].plot(xs, stats.gaussian_kde(vals_all)(xs), color="black", linewidth=1.5,
+    #             label=f"all participants pooled (n={n_curves})")
+    ax2[1].set_xlabel(f"{_F0} [Hz]")
+    ax2[1].set_ylabel("Density")
+    ax2[1].set_xlim(xs[0], xs[-1])
+    ax2[1].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
+    # ax2[1].legend()
+
+    fig2.tight_layout()
+    _save(fig2, f"iaf_std_vs_mean_dist_{label}")
     if n_skipped:
         print(f"note: {n_skipped} participant(s) with < 3 pooled windows "
               f"omitted from the per-participant distribution plot")
@@ -341,19 +356,21 @@ def plot_compare(dir_a, dir_b, labels):
 
     # (1) per-window difference histogram
     ax[0].hist(diff, bins=60, edgecolor="black")
-    ax[0].axvline(md, color="grey", lw=2, linestyle="--", label=f"mean {md:+.3f} Hz")
-    ax[0].set_xlabel(f"per-window {_F0}: {_tex(la)} $-$ {_tex(lb)} (Hz)")
-    ax[0].set_ylabel("windows")
-    ax[0].legend(fontsize=8)
+    ax[0].axvline(md, color="tab:red", linewidth=1.2, linestyle="--", label=f"mean {md:+.3f} Hz")
+    ax[0].set_xlabel(f"Per-window {_F0}: {_display(la)} $-$ {_display(lb)} [Hz]")
+    ax[0].set_ylabel("Windows")
+    ax[0].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
+    ax[0].legend()
 
     # (2) per-participant IAF std, method vs method
     ca = stm[f"std_iaf_hz_{la}"].to_numpy()
     cb = stm[f"std_iaf_hz_{lb}"].to_numpy()
     ax[1].plot(ca, cb, "o", alpha=0.7)
     lim = [0, float(np.nanmax([ca, cb])) * 1.05]
-    ax[1].plot(lim, lim, "k--", lw=1)
-    ax[1].set_xlabel(rf"{_F0} std {_tex(la)} [Hz]")
-    ax[1].set_ylabel(rf"{_F0} std {_tex(lb)} [Hz]")
+    ax[1].plot(lim, lim, color="tab:red", linestyle="--", linewidth=1.2)
+    ax[1].set_xlabel(rf"{_display(la)} SD {_F0}[Hz]")
+    ax[1].set_ylabel(rf"{_display(lb)} SD {_F0} [Hz]")
+    ax[1].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
     fig.tight_layout()
     _save(fig, f"iaf_stats_compare_{la}_vs_{lb}")

@@ -46,7 +46,7 @@ with warnings.catch_warnings():
 from phase_track import ECHT as ECHT_track  # noqa: E402
 from utils import _circ_stats, run_echt_window_loop  # noqa: E402
 
-from simple_iaf import simple_paf  # noqa: E402  -> combine_simple from IAF_tests.py
+from alpha_fast_iaf import alpha_fast_paf  # noqa: E402  -> alpha_fast, ported from analysis/f0.py
 
 # Re-export upstream primitives that are reused unchanged.
 iaf = _h.iaf
@@ -67,19 +67,19 @@ def estimate_paf(data, info, fmin=7.5, fmax=14,
 
     Parameters
     ----------
-    method : {"fooof", "simple"}
-        ``"fooof"``  -> upstream :func:`helpers.iaf` (FOOOF aperiodic + BIC test).
-        ``"simple"`` -> :func:`simple_iaf.simple_paf` (log-log 1/f fit,
-        Savgol-smoothed residual, BIC peak approval) -- the ``combine_simple``
-        algorithm from ``IAF_Estimation/IAF_tests.py``.
+    method : {"fooof", "alpha_fast"}
+        ``"fooof"``      -> upstream :func:`helpers.iaf` (FOOOF aperiodic + BIC test).
+        ``"alpha_fast"`` -> :func:`alpha_fast_iaf.alpha_fast_paf` (log-log 1/f fit,
+        Savgol-smoothed residual, BIC peak approval) -- the ``alpha_fast``
+        algorithm from ``analysis/f0.py``.
 
     Returns
     -------
     (median_paf | None, pafs: list[float], times: list[float], snrs: list[float])
         ``times`` are window centres in seconds; ``snrs`` is per-window SNR for
-        ``method="simple"`` (``nan`` for ``method="fooof"``).
+        ``method="alpha_fast"`` (``nan`` for ``method="fooof"``).
     """
-    if method not in ("fooof", "simple"):
+    if method not in ("fooof", "alpha_fast"):
         raise ValueError(f"unknown IAF method: {method!r}")
 
     fs = float(info["sfreq"])
@@ -107,7 +107,7 @@ def estimate_paf(data, info, fmin=7.5, fmax=14,
                 r = iaf(seg, fmin=fmin, fmax=fmax, pink_max_r2=0.9, resolution=res_hz)
                 paf, snr = r.PeakAlphaFrequency, np.nan
             else:
-                paf, snr = simple_paf(seg.get_data()[0], fs, alpha_band=(fmin, fmax))
+                paf, snr = alpha_fast_paf(seg.get_data()[0], fs, alpha_band=(fmin, fmax))
         except Exception:  # noqa: BLE001 - a single bad window must not kill the segment
             continue
         if paf is not None and np.isfinite(paf) and paf > 0:
@@ -223,7 +223,7 @@ def load_ds004148(edf_dir, max_subjects=None, channel_name="Fz-FCz"):
 def process_segment(seg, iaf_window=10, bw_factor=0.5, filt_order=1, iaf_method="fooof"):
     """Per-window IAF estimates for one segment.
 
-    ``iaf_method`` ("fooof" | "simple") selects the per-window PAF estimator
+    ``iaf_method`` ("fooof" | "alpha_fast") selects the per-window PAF estimator
     (see :func:`estimate_paf`).
 
     NOTE: the ecHT phase-error analysis is currently disabled -- only the IAF

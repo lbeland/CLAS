@@ -2,8 +2,8 @@
 
 Based on upstream ``EEG/eeg_phase.py`` but:
 - adds the ``ds004148`` dataset,
-- ``--iaf-method {fooof,simple}`` selects the per-window PAF estimator
-  (``simple`` = ``combine_simple`` from ``IAF_Estimation/IAF_tests.py``),
+- ``--iaf-method {fooof,alpha_fast}`` selects the per-window PAF estimator
+  (``alpha_fast`` = the ``alpha_fast`` algorithm from ``analysis/f0.py``),
 - shows a progress bar and pins worker CPU affinity,
 - ``--subjects`` is honoured by every loader.
 
@@ -20,8 +20,8 @@ Then plot / compare with ``eeg/plot_results.py``.
 Example
 -------
     python <cecHT_ext>/eeg/run_pipeline.py --dataset ds004148 \
-        --edf-dir /path/to/ds004148 --channel Fz --iaf-method fooof
-    # -> writes cecHT_ext/results/ds004148_Fz_fooof/iaf_per_segment.csv
+        --edf-dir /path/to/ds004148 --channel Fz-FCz --iaf-method fooof
+    # -> writes cecHT_ext/results/ds004148_Fz-FCz_fooof/iaf_per_segment.csv
 """
 
 import os
@@ -150,9 +150,9 @@ if __name__ == "__main__":
                    default="rodrigues2017")
     p.add_argument("--iaf-window", type=float, default=10,
                    help="IAF estimation window (s). <=0 -> full segment. (default: 10)")
-    p.add_argument("--iaf-method", choices=["fooof", "simple"], default="simple",
-                   help="Per-window IAF estimator: 'fooof' (upstream) or 'simple' "
-                        "(combine_simple from IAF_tests.py). (default: simple)")
+    p.add_argument("--iaf-method", choices=["fooof", "alpha_fast"], default="alpha_fast",
+                   help="Per-window IAF estimator: 'fooof' (upstream) or 'alpha_fast' "
+                        "(the alpha_fast algorithm from analysis/f0.py). (default: alpha_fast)")
     p.add_argument("--subjects", type=int, default=None,
                    help="Max number of subjects, ds004148 only (default: all).")
     p.add_argument("--conditions", nargs="*", default="EC",

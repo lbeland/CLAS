@@ -14,9 +14,9 @@ via [`_bootstrap.py`](_bootstrap.py).
 | `echt_ext.py` | `ECHTExt(phase.ECHT)` — custom `b`/`a` band-pass (`filter_type="custom"`) + sliding-DFT forward transform (`transform_sdft`) |
 | `filtertestCecHT.py` | `ZeroPhaseButterECHT` — causal vs. zero-phase (`|H(f)|²`) band-pass comparison on a synthetic cosine |
 | `eeg/helpers_ext.py` | per-window IAF, `load_ds004148`, `time_s` in the IAF CSV (ecHT phase-error part currently commented out) |
-| `eeg/simple_iaf.py` | `combine_simple` (+ helpers) copied verbatim from `IAF_Estimation/IAF_tests.py`; `simple_paf` adapter |
-| `eeg/run_pipeline.py` | driver: `ds004148`, `--iaf-method {fooof,simple}`, writes `iaf_per_segment.csv` |
-| `eeg/plot_results.py` | IAF variability plots: one run dir (SD hist, std-vs-mean, SD-vs-mean-SNR) or two (fooof-vs-simple comparison) |
+| `eeg/alpha_fast_iaf.py` | `alpha_fast` (+ helpers) copied verbatim from `analysis/f0.py`; `alpha_fast_paf` adapter |
+| `eeg/run_pipeline.py` | driver: `ds004148`, `--iaf-method {fooof,alpha_fast}`, writes `iaf_per_segment.csv` |
+| `eeg/plot_results.py` | IAF variability plots: one run dir (SD hist, std-vs-mean, SD-vs-mean-SNR) or two (fooof-vs-alpha_fast comparison) |
 | `simulations/harmonic_experiments_sdft.py` | c-ecHT batch-FFT vs sliding-DFT sweep figure |
 | `figures/` | generated figures (tracked) |
 | `results/` | pipeline outputs — **git-ignored** (see `../../.gitignore`), kept on disk |
@@ -38,15 +38,15 @@ submodule path from `__file__`.
 # Output -> cecHT_ext/results/<dataset>_<channel>_<method>/iaf_per_segment.csv
 #           (here: results/ds004148_Fz_fooof/)
 python IAF_Estimation/cecHT_ext/eeg/run_pipeline.py --dataset ds004148 --edf-dir /path/to/ds004148 --channel Fz --iaf-method fooof
-#   --iaf-method {fooof,simple}   'simple' = combine_simple from IAF_tests.py
-#   --out-dir DIR                 override the destination
+#   --iaf-method {fooof,alpha_fast}   'alpha_fast' = the alpha_fast algorithm from analysis/f0.py
+#   --out-dir DIR                     override the destination
 
 # IAF variability (per-participant SD, Hz) — one run dir:
 python IAF_Estimation/cecHT_ext/eeg/plot_results.py IAF_Estimation/cecHT_ext/results/ds004148_Fz_fooof
 # ...or compare two methods (writes a Bland–Altman + SD comparison):
 python IAF_Estimation/cecHT_ext/eeg/plot_results.py \
     IAF_Estimation/cecHT_ext/results/ds004148_Fz_fooof \
-    IAF_Estimation/cecHT_ext/results/ds004148_Fz_simple
+    IAF_Estimation/cecHT_ext/results/ds004148_Fz_alpha_fast
 #   ^ iaf_stats_per_file.csv into the run dir(s); figures (.pgf + .pdf) into MA/plots/
 
 # ECHT filter comparison

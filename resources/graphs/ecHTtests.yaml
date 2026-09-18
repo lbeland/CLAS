@@ -75,4 +75,6 @@ graph:
   - ecHTFilter.out.0 = Serializer3.in
 
   states:
-  - F0: [SimulatedSource.f0, PhaseEstimation.f0]
+  - F0: 
+    permission: none
+    states: [SimulatedSource.f0, PhaseEstimation.f0]

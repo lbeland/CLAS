@@ -144,7 +144,11 @@ graph:
   - StimControl.out.0 = Serializer5.in
 
   states:
-  - F0: [FrequencyEstimation.f0, PhaseEstimation.f0, StimControl.f0]
-  - CH_IDX: [ChannelSelection.ch_idx, ChannelReduction.ch_idx]
+  - F0:
+      permission: none
+      states: [FrequencyEstimation.f0, PhaseEstimation.f0, StimControl.f0]
+  - CH_IDX:
+      permission: none
+      states: [ChannelSelection.ch_idx, ChannelReduction.ch_idx]
 
 

@@ -43,11 +43,40 @@ void ChannelReduction::CreatePorts()
         "out",
         MultiChannelType<double>::Parameters(1, 1, 1), // Placeholder, set in CompleteStreamInfo
         PortOutPolicy(SlotRange(0, MAX_NCHANNELS), 200, WaitStrategy::kBlockingStrategy));
+
+    expose_method("set_channel", &ChannelReduction::SetChannel);
+}
+
+YAML::Node ChannelReduction::SetChannel(const YAML::Node &node)
+{
+    int channel = node["channel"].as<int>(); // 1-based; -1 releases the override
+
+    if (channel < 0)
+    {
+        channel_override_.store(-1);
+        LOG(INFO) << name() << " channel override released externally; reverting to automatic selection.";
+    }
+    else if (channel == 0 || (n_channels_ != 0 && static_cast<unsigned int>(channel) > n_channels_))
+    {
+        LOG(WARNING) << name() << " received out-of-range channel " << channel
+                   << " (valid range: 1-" << n_channels_ << "); override not applied.";
+        channel = channel_override_.load() + 1; // report the currently active override instead
+    }
+    else
+    {
+        channel_override_.store(channel);
+        LOG(INFO) << name() << " channel overridden externally to " << channel << ".";
+    }
+
+    YAML::Node reply;
+    reply["channel"] = channel;
+    return reply;
 }
 
 void ChannelReduction::CompleteStreamInfo()
 {
     const auto &input_params = data_in_port_->slot(0)->streaminfo().parameters<MultiChannelType<double>::Parameters>();
+    n_channels_ = input_params.nchannels;
 
     // Pass through only the selected channel; keep nsamples and sample_rate from input
     data_out_port_->streaminfo(0).set_parameters(MultiChannelType<double>::Parameters(1, input_params.nsamples, input_params.sample_rate));
@@ -84,7 +113,8 @@ void ChannelReduction::Process(ProcessingContext &context)
             break;
         }
 
-        ch_idx_ = channel_state_->get();
+        int override_ch = channel_override_.load();
+        ch_idx_ = (override_ch >= 0) ? static_cast<unsigned int>(override_ch - 1) : channel_state_->get();
 
         data_out = data_out_port_->slot(0)->ClaimData(false);
         data_out->set_data_sample(0, 0, data_in->data_sample(0, ch_idx_));

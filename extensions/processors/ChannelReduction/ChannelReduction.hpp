@@ -20,6 +20,7 @@
 
 #include "iprocessor.hpp"
 #include "multichanneldata/multichanneldata.hpp"
+#include <atomic>
 #include <chrono>
 #include "utilities/time.hpp"
 
@@ -47,6 +48,12 @@ class ChannelReduction : public IProcessor {
     FollowerState<unsigned int> *channel_state_ = nullptr;
     unsigned int ch_idx_ = 0;              // 0-based active channel index
     unsigned int packet_count_ = 0;
+    unsigned int n_channels_ = 0;          // number of input channels, set in CompleteStreamInfo
+
+    // Externally gated via "set_channel" apply command: 1-based channel index,
+    // or -1 to release the override and fall back to channel_state_ (automatic selection).
+    std::atomic<int> channel_override_{-1};
+    YAML::Node SetChannel(const YAML::Node &node);
 
     const uint32_t MAX_NCHANNELS = 384;
 };

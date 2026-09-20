@@ -18,7 +18,7 @@ PLOTS_DIR = "/home/linda/Documents/MA/plots"
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
 TEXTWIDTH    = 6.30045
-ASPECT_RATIO = 3/4
+ASPECT_RATIO = 9/16
 FIG_WIDTH    = TEXTWIDTH
 FIG_HEIGHT   = FIG_WIDTH * ASPECT_RATIO
 FIGSIZE      = (FIG_WIDTH, FIG_HEIGHT)
@@ -223,9 +223,9 @@ def plot_filter_response(sos_by_label, fs):
         zoom_mask = (f >= zoom_lo) & (f <= zoom_hi)
 
         ax1.plot(f, magnitude_db, linewidth=1.5, label=label)
-        ax2.plot(f, phase_deg, label=label)
+        ax2.plot(f, phase_deg, linewidth=1.5, label=label)
         ax1z.plot(f, magnitude_db, linewidth=1.5, label=label)
-        ax2z.plot(f, phase_deg, label=label)
+        ax2z.plot(f, phase_deg, linewidth=1.5, label=label)
 
         mag_zoom_min = min(mag_zoom_min, magnitude_db[zoom_mask].min())
         mag_zoom_max = max(mag_zoom_max, magnitude_db[zoom_mask].max())
@@ -234,27 +234,27 @@ def plot_filter_response(sos_by_label, fs):
 
     ax1.set_ylabel("Amplitude [dB]")
     ax1.set_title("(a)")
-    ax1.grid(True, linewidth=0.2)
+    ax1.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
     ax2.set_xlabel("Frequency [Hz]")
     ax2.set_title("(b)")
-    ax2.set_ylabel("Phase [deg]")
-    ax2.grid(True, linewidth=0.3)
+    ax2.set_ylabel("Phase [°]")
+    ax2.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
     ax2.set_xlim(0, 100)
 
     ax1z.set_title("(c)")
     ax1z.set_xlim(zoom_lo, zoom_hi)
     ax1z.set_ylim(mag_zoom_min - pad_db, mag_zoom_max + pad_db)
-    ax1z.grid(True, linewidth=0.3)
+    ax1z.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
     ax2z.set_title("(d)")
     ax2z.set_xlabel("Frequency [Hz]")
     ax2z.set_xlim(zoom_lo, zoom_hi)
     ax2z.set_ylim(phase_zoom_min - pad_deg, phase_zoom_max + pad_deg)
-    ax2z.grid(True, linewidth=0.3)
+    ax2z.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
     handles, labels = ax1.get_legend_handles_labels()
-    fig.legend(handles, labels, title="Fitler order", loc="outside lower center", ncol=3, frameon=True)
+    fig.legend(handles, labels, title="Filter order", loc="outside lower center", ncol=3)
 
     save_pgf(fig, "filter_response")
     save_png(fig, "filter_response")
@@ -281,6 +281,6 @@ if __name__ == "__main__":
             output="sos",
         )
 
-        sos_by_label[f"{N}"] = np.vstack([sos_bandpass, sos_bandstop])
+        sos_by_label[f"{4*N}"] = np.vstack([sos_bandpass, sos_bandstop])
 
     plot_filter_response(sos_by_label, fs)

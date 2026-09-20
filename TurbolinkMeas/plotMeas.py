@@ -77,11 +77,11 @@ def plot_pdv_over_time(nominal_fs, true_fs, sample_counter, pdv_us):
     fig, ax = plt.subplots(figsize=(width, height))
 
     t = (sample_counter - sample_counter[0]) / true_fs
-    ax.plot(t, pdv_us, 'o',markersize=0.5,alpha=0.8)
+    ax.plot(t, pdv_us, 'o',markersize=0.5,alpha=0.8, rasterized=True)
     ax.set_xlabel("Time [s]")
     ax.set_ylabel(r"Packet delay variation [$\mu$s]")
     ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
-    ax.set_xlim(0,0.5)
+    ax.set_xlim(0,2)
     fig.tight_layout()
 
     stem = f"pdv_{int(nominal_fs)}"

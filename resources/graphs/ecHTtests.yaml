@@ -1,7 +1,7 @@
 graph:
   name: CLAS
   defaults:
-    n_messages: &n_messages 50000
+    n_messages: &n_messages 6000000
     fs: &fs 10000
   processors:
     SimulatedSource:
@@ -17,7 +17,7 @@ graph:
         carrier_frequency: 10.0
         # Signal mode (mutually exclusive):
         #   none | amplitude | phase | phase_jump | freq_step | chirp
-        modulation_type: "amplitude"
+        modulation_type: "none"
         modulation_amplitude: 1      # amplitude/phase: modulation depth
         modulation_frequency: 0.2    # amplitude/phase: modulation rate (Hz)
         mod_period_s: 3.13            # phase_jump/freq_step: unperturbed segment length (s)
@@ -75,6 +75,6 @@ graph:
   - ecHTFilter.out.0 = Serializer3.in
 
   states:
-  - F0: 
-    permission: none
-    states: [SimulatedSource.f0, PhaseEstimation.f0]
+  - F0:
+      permission: none
+      states: [SimulatedSource.f0, PhaseEstimation.f0]

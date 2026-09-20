@@ -120,7 +120,7 @@ graph:
   - StimControl.out.0 = Serializer5.in
 
   states:
-  - F0: 
-    permission: none
-    states: [FrequencyEstimation.f0, PhaseEstimation.f0, StimControl.f0]
+  - F0:
+      permission: none
+      states: [FrequencyEstimation.f0, PhaseEstimation.f0, StimControl.f0]
   

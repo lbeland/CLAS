@@ -26,8 +26,8 @@ graph:
       options:
         filter:
           N: [4]
-          low_cutoff: [7]
-          high_cutoff: [18]
+          low_cutoff: [6]
+          high_cutoff: [15]
           btype: [bandpass]
           name: selection
         # n_messages: *n_messages  # default
@@ -40,7 +40,7 @@ graph:
       options:
         # n_messages: *n_messages  # default
         channel_indices: [3]   # 1-based indices of channels to select
-        rms_threshold_uv: 20
+        rms_threshold_uv: 2
       advanced:
         buffer_sizes:
           out: 2048

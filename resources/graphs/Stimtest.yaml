@@ -1,7 +1,7 @@
 graph:
   name: CLAS
   defaults:
-    n_messages: &n_messages 900000
+    n_messages: &n_messages 1800000
     # window_size: &window_size 50000
     fs: &fs 10000
     use_stim_protocol: false
@@ -10,7 +10,7 @@ graph:
       class: UDPSource
       options:
         fs: *fs
-        nchannels: 3          # default
+        nchannels: 1         # default
         # nsamples: 1
         n_messages: *n_messages  # default
         # store_aux: true        # default
@@ -39,7 +39,7 @@ graph:
       class: ChannelSelection
       options:
         # n_messages: *n_messages  # default
-        channel_indices: [1,2,3]   # 1-based indices of channels to select
+        channel_indices: [1] #,2,3]   # 1-based indices of channels to select
         rms_threshold_uv: 4000
         rms_window_seconds: 2.5
       advanced:

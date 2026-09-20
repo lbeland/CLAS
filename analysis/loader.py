@@ -191,11 +191,8 @@ def load_processor_signals(fs, results_dir, processors: list[str], timestamps: b
     start_ts = first_timestamps[0]
     nominal_x = start_ts + np.round(np.arange(min_lengths) / fs * 1e6).astype(np.int64)
     for key in samples:
-        # "x" is the idealized, uniformly-spaced grid every consumer except
-        # UDPSource's hardware->source latency calc below should use (matches
-        # load_runtime()'s cached reconstruction). The true reconstructed ADC
-        # sampling times -- with real per-sample jitter -- are only kept for
-        # UDPSource, under "hw_ts", since that's the only consumer of them.
+        # "x" becomes the idealized uniform grid; only UDPSource keeps its
+        # reconstructed ADC times, under "hw_ts", for its own latency calc
         if key.startswith("UDPSource"):
             samples[key]["hw_ts"] = samples[key]["x"][:min_lengths]
         samples[key]["x"] = nominal_x
@@ -224,15 +221,8 @@ def extract_ground_truth(samples: dict, graph_config: dict | None = None) -> dic
 
         if os.path.exists("simulated_signal.npy"):
             loaded = np.load("simulated_signal.npy")
-            # UDPSource discards the first `calib_packets` packets for start-time
-            # calibration before it publishes anything (see UDPSource::Process's
-            # calibration phase), so Falcon's first recorded sample is
-            # simulate_client.py's sample `calib_packets`, not sample 0. Drop
-            # the same number of rows here so `loaded` lines back up with
-            # `raw`/`time`. This assumes simulate_client.py was only started
-            # once UDPSource was already bound and listening (see README) --
-            # otherwise packets sent before that are lost on the wire and this
-            # count would be off by however many were dropped.
+            # UDPSource discards the first calib_packets for start-time calibration,
+            # so drop the same rows here to line `loaded` back up with raw/time
             calib_packets = (
                 (graph_config or {})
                 .get("graph", {}).get("processors", {})
@@ -243,11 +233,8 @@ def extract_ground_truth(samples: dict, graph_config: dict | None = None) -> dic
             assert raw[0, 0] == loaded["value"][0], \
                 "Loaded simulated signal does not match UDPSource signal " \
                 "(check calib_packets and that simulate_client.py was started after Falcon)"
-            # simulated_signal.npy is generated independently of the recorded
-            # run and isn't covered by load_processor_signals' min_lengths
-            # trim, so it can be longer/shorter than raw/time -- trim
-            # everything here to a common length so downstream code can rely
-            # on ground_truth's arrays always matching in length.
+            # simulated_signal.npy isn't covered by load_processor_signals' trim,
+            # so ensure ground_truth's arrays all end up the same length here
             n = min(len(raw), len(time), len(loaded["phase"]), len(loaded["inst_freq"]),
                     len(loaded["amplitude"]), len(loaded["source_ts"]))
             return {
@@ -277,12 +264,13 @@ def extract_ground_truth(samples: dict, graph_config: dict | None = None) -> dic
             time        = samples["SimulatedSource_0"]["x"]
             source_time = samples["SimulatedSource_0"]["source_ts"]
 
+        meta_phase = samples.get("SimulatedSource_meta_1", {}).get("y")
         return {
             "raw":            raw,
             "time":           time,
             "source_ts":      source_time,
             "true_amplitude": samples.get("SimulatedSource_meta_0", {}).get("y"),
-            "true_phase":     np.angle(np.exp(1j * samples["SimulatedSource_meta_1"]["y"])),
+            "true_phase":     np.angle(np.exp(1j * meta_phase)) if meta_phase is not None else None,
             "true_inst_freq": samples.get("SimulatedSource_meta_2", {}).get("y"),
         }
 
@@ -294,7 +282,7 @@ def extract_ground_truth(samples: dict, graph_config: dict | None = None) -> dic
 # ---------------------------------------------------------------------------
 
 def _parse_graph_structure(graph_config: dict) -> tuple[dict, list]:
-    """Parse graph connections → (predecessors dict, topological order).
+    """Parse graph connections into (predecessors dict, topological order).
     Serializers and BenchSinks are excluded."""
     processors  = graph_config.get("graph", {}).get("processors", {})
     connections = graph_config.get("graph", {}).get("connections", [])
@@ -348,20 +336,19 @@ def _get_source_ts(proc_name: str, samples: dict, ground_truth: dict):
 
 
 def _write_latency_table(pipeline_rows: "list[dict]", audio_rows: "list[dict]",
-                         name: str = "latency_table",
+                         name: str = "graph_latency_table",
                          caption: str = "Pipeline-stage latency [$\\mu$s] and audio onset "
                                         "latency [ms], mean/median/std across samples plus "
                                         "the single worst case (its index in brackets).",
-                         label: str = "tab:latency_table") -> None:
+                         label: str = "tab:graph_latency_table") -> None:
     """Write pipeline-stage + audio-onset latency to one combined LaTeX table
     at PLOTS_DIR/<name>.tex, matching the plot.py/sweep.py table convention.
 
-    Each row dict is {"from", "to", "mean", "median", "std", "max", "idx"};
-    "from"/"to" are merged into one "From $\\to$ To" cell. A row with
-    "total"=True (the pipeline's source->last_proc row) is set off with a
-    \\midrule and that whole merged cell bolded. The two row groups are
-    separated by one empty row (mixed units -- see caption -- so this is a
-    visual gap, not a \\midrule)."""
+    Each row dict is {"from", "to", "mean", "median", "std", "max", "idx"}; a
+    "total"=True row (source->last_proc) is set off with a \\midrule and
+    bolded. The two row groups are separated by an empty row, not a
+    \\midrule, since they're in different units (see caption).
+    """
     def _esc(text):
         return str(text).replace("_", r"\_")
 
@@ -395,14 +382,12 @@ def _write_latency_table(pipeline_rows: "list[dict]", audio_rows: "list[dict]",
 
 def compute_total_latency(samples: dict, ground_truth: dict, graph_config: dict) -> "np.ndarray | None":
     """End-to-end pipeline latency [us]: per-sample source_ts of the last
-    processor in topological order minus source_ts of the source processor
-    (UDPSource/SimulatedSource), matched by sample index.
+    processor in topological order minus the source processor's, matched by
+    sample index. Shared by analyse_latencies() and pooled analyses like
+    analyse_pooled_errors() that only want the end-to-end number.
 
-    Shared by analyse_latencies() (which additionally breaks this down
-    stage-by-stage, prints/plots it, and writes a LaTeX table) and pooled
-    analyses that only want the end-to-end number, e.g.
-    analyse_pooled_errors() in main.py. Returns None if the graph doesn't
-    have at least two processors with source_ts data.
+    Returns:
+        Latency array, or None if fewer than two processors have source_ts.
     """
     _, topo_order = _parse_graph_structure(graph_config)
     proc_ts = {p: _get_source_ts(p, samples, ground_truth) for p in topo_order}
@@ -450,11 +435,11 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
 
     col = 22
     W   = col * 2 + 52
-    print(f"\n{'─' * W}")
+    print(f"\n{'-' * W}")
     print(f"  Pipeline latency analysis (us)")
-    print(f"{'─' * W}")
+    print(f"{'-' * W}")
     print(f"  {'From':<{col}} {'To':<{col}} {'Mean':>8} {'Median':>8} {'Std':>8} {'Max':>8} {'Idx':>8}")
-    print(f"{'─' * W}")
+    print(f"{'-' * W}")
 
     source_proc = next((p for p in topo_order if p in proc_ts), None)
     for proc in topo_order[1:]:
@@ -467,7 +452,7 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
         ts_ancestor = proc_ts[ancestor]
         n   = min(len(ts_ancestor), len(ts_proc))
         lat = (ts_proc[:n] - ts_ancestor[:n])
-        plt.plot(lat, alpha=0.5, linewidth=0.5, label=f"{ancestor} → {proc}")
+        plt.plot(lat, alpha=0.5, linewidth=0.5, label=f"{ancestor} -> {proc}")
         print(f"  {ancestor:<{col}} {proc:<{col}} "
               f"{np.mean(lat):>8.2f} {np.median(lat):>8.2f} "
               f"{np.std(lat):>8.2f} {np.max(lat):>8.2f} {np.argmax(lat):>8}")
@@ -478,15 +463,15 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
     last_proc = next((p for p in reversed(topo_order) if p in proc_ts), None)
     total = compute_total_latency(samples, ground_truth, graph_config)
     if source_proc and last_proc and last_proc != source_proc and total is not None:
-        plt.plot(total, alpha=0.5, linewidth=0.5, label=f"{source_proc} → {last_proc}", color="black")
-        print(f"{'─' * W}")
+        plt.plot(total, alpha=0.5, linewidth=0.5, label=f"{source_proc} -> {last_proc}", color="black")
+        print(f"{'-' * W}")
         print(f"  {'TOTAL  ' + source_proc:<{col}} {last_proc:<{col}} "
               f"{np.mean(total):>8.2f} {np.median(total):>8.2f} "
               f"{np.std(total):>8.2f} {np.max(total):>8.2f} {np.argmax(total):>8}")
         pipeline_rows.append({"from": source_proc, "to": last_proc, "total": True,
                               "mean": np.mean(total), "median": np.median(total),
                               "std": np.std(total), "max": np.max(total), "idx": np.argmax(total)})
-    print(f"{'─' * W}\n")
+    print(f"{'-' * W}\n")
 
     plt.legend(loc="upper left", fontsize=9)
     plt.xlabel("Sample Index")
@@ -510,17 +495,16 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
             print("Missing source_ts for stimulus/trigger onset latency analysis.")
         else:
             if len(stim_edges) != len(trig_edges):
-                print(f"Warning: stimulus/trigger edge count mismatch — "
+                print(f"Warning: stimulus/trigger edge count mismatch - "
                       f"stim={len(stim_edges)}, trigger={len(trig_edges)}. Matching by nearest preceding index.")
 
-            # For each trigger edge, match the nearest stim edge at or before it
-            # (searchsorted assumes stim_edges is sorted ascending, as returned
-            # by get_edges).
+            # Match each trigger edge to the nearest preceding stim edge (stim_edges
+            # is sorted ascending, as returned by get_edges)
             match_pos = np.searchsorted(stim_edges, trig_edges, side="right") - 1
             unmatched = match_pos < 0
             if np.any(unmatched):
                 print(f"Warning: {np.sum(unmatched)} trigger edge(s) precede the first "
-                      f"stimulus edge and have no valid match — dropping them.")
+                      f"stimulus edge and have no valid match - dropping them.")
 
             stim_source_ts = stim["source_ts"]
             trig_source_ts = trig["source_ts"]
@@ -539,11 +523,11 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
             save_pgf(fig, "latency_analysis")
 
             print(f" Audio onset latency (ms)")
-            print(f"{'─' * W}")
+            print(f"{'-' * W}")
             print(f"  {'StimControl':<{col}} {'UDPSource_TRIGGER':<{col}} "
                   f"{np.mean(latency_ms):>8.2f} {np.median(latency_ms):>8.2f} "
                   f"{np.std(latency_ms):>8.2f} {np.max(latency_ms):>8.2f} {np.argmax(latency_ms):>8}")
-            print(f"{'─' * W}\n")
+            print(f"{'-' * W}\n")
             audio_rows.append({"from": "StimControl", "to": "UDPSource_TRIGGER",
                                "mean": np.mean(latency_ms), "median": np.median(latency_ms),
                                "std": np.std(latency_ms), "max": np.max(latency_ms),
@@ -552,11 +536,8 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
     if pipeline_rows or audio_rows:
         _write_latency_table(pipeline_rows, audio_rows)
 
-    # UDPSource-specific: hardware vs source timestamp gap. hardware_ts is the
-    # reconstructed true ADC sampling time; source_ts is when Falcon actually
-    # received the UDP packet. Their difference is UDPSource's own
-    # acquisition-to-ingestion latency (see UDPSource::Process in
-    # extensions/processors/UDPSource/UDPSource.cpp).
+    # hardware_ts (reconstructed ADC sampling time) vs source_ts (UDP receipt
+    # time) gap: UDPSource's own acquisition-to-ingestion latency
     udp = samples.get(first_udp_channel_key(samples))
     if udp is not None and udp.get("source_ts") is not None:
         source_ts = udp["source_ts"]
@@ -565,7 +546,7 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
 
         if hw_ts is None:
             print("  No true hardware_ts available (pre-fix cache); "
-                  "skipping UDPSource hardware→source latency plot.")
+                  "skipping UDPSource hardware->source latency plot.")
         else:
             source_rel = source_ts[:n] - np.min(source_ts[:n])
             hw_rel = hw_ts[:n] - np.min(hw_ts[:n])
@@ -576,15 +557,12 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
             plt.xlabel("Source timestamp [s]")
             plt.ylabel("Hardware - Source [us]")
 
-            print(f"  UDPSource hardware→source latency (us): "
+            print(f"  UDPSource hardware->source latency (us): "
                   f"std={np.std(hw_rel - source_rel):.2f}, max_dev={np.max(np.abs(hw_rel - source_rel)):.2f} "
                   f"(idx={np.argmax(np.abs(hw_rel - source_rel))})")
 
-        # Independent, offline check of the true sample rate: fit source_ts
-        # (Falcon's own receipt clock, unaffected by UDPSource's internal
-        # fs_eff_ tracking/rejection) against the sample index. This
-        # cross-checks the fs_eff_ value UDPSource logs at runtime without
-        # relying on its RLS model or reject threshold.
+        # Independent check of fs_eff_: fit source_ts (Falcon's own receipt
+        # clock) against sample index, without relying on UDPSource's own RLS
         sample_idx = np.arange(n, dtype=np.float64)
         slope_us_per_sample, _ = np.polyfit(sample_idx, source_ts[:n].astype(np.float64), 1)
         true_fs = 1e6 / slope_us_per_sample

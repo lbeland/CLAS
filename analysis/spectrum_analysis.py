@@ -62,21 +62,18 @@ CONDITION_COLORS = {
     330: "blue",
 }
 
-# The two P1 conditions (stim onset at the peak/trough itself, vs. the other
-# four which lead/lag the peak or trough) are drawn dashed so they stand out
-# as a pair from the four solid phase-offset conditions.
+# The two P1 conditions (peak/trough itself) are dashed to stand out from the
+# four solid phase-offset conditions
 CONDITION_LINESTYLES = {0: "--", 180: "--"}
 
-# Opposite-phase comparisons for the time-frequency t-maps (fig_2.m panel B):
+# Opposite-phase comparisons for the time-frequency t-maps:
 # Pre-Peak vs Pre-Trough, and Post-Peak vs Post-Trough.
 TF_COMPARISONS = ((330, 150), (60, 240))
 
 # Extended alpha band the per-condition significance test is restricted to.
 EXTENDED_ALPHA_RANGE = (6, 14)
 
-# Zero-padded Welch frequency resolution (Hz), shared by every spectral
-# computation so the frequency-only spectrum (plot 1) and the time-resolved
-# maps (plot 3) report the exact same frequency axis.
+# Zero-padded Welch frequency resolution (Hz), shared so plots 1 and 3 report the same frequency axis
 SPECTRAL_RESOLUTION_HZ = 0.1
 
 
@@ -118,22 +115,17 @@ def discover_condition_recordings(
 
 def apply_csd_reference(raw: "mne.io.BaseRaw") -> "mne.io.BaseRaw":
     """Replace the online (hardware) reference with a surface Laplacian /
-    current source density (CSD) reference, computed across all channels
-    with a known 10-20 position (see CHANNEL_NAMES) -- write_raw_signals_edf
-    already labels those channels with their real electrode name (e.g. "Fz").
+    current source density (CSD) reference, computed across the channels with
+    a known 10-20 position (see CHANNEL_NAMES).
 
-    CSD is reference-free by construction, so the recorded (hardware-
-    referenced) signal is used directly -- no need to first undo the old
-    online reference. Channels without a known position (AUX, Trigger, and
-    any EEG_N channel with no mapped 10-20 site) are dropped, since
-    compute_current_source_density requires every "eeg"-typed channel to
-    have one. E1/E2 are relabelled as EOG so they're excluded from the CSD
-    computation rather than dropped.
+    CSD is reference-free, so the recorded signal is used directly. Channels
+    without a known position are dropped (compute_current_source_density
+    requires a 10-20 site for every "eeg"-typed channel); E1/E2 are
+    relabelled "eog" instead, to exclude them from the CSD computation.
 
-    Channels are identified by name, not by raw.get_channel_types(): the EDF
-    round-trip (write_raw_signals_edf -> read_raw_edf) loses the original channel
-    types, so every channel comes back typed "eeg" regardless of what it was
-    exported as.
+    Channels are identified by name rather than raw.get_channel_types():
+    the EDF round-trip loses the original channel types, so every channel
+    comes back typed "eeg".
     """
     known = set(CHANNEL_NAMES.values())
     raw.drop_channels([ch for ch in raw.ch_names if ch not in known])
@@ -360,10 +352,10 @@ def plot_condition_log_power_change(
         log_ratio = log_ratio_by_condition[condition]
         color     = CONDITION_COLORS.get(condition, "0.3")
         linestyle = CONDITION_LINESTYLES.get(condition, "-")
-        label     = CONDITION_LABELS.get(condition, f"{condition}°")
+        label     = CONDITION_LABELS.get(condition, f"{condition} deg")
         mean = log_ratio.mean(axis=0)
         # std  = log_ratio.std(axis=0)
-        ax.plot(freqs, mean, color=color, linestyle=linestyle, label=f"{label} ({condition}°)", rasterized=True)
+        ax.plot(freqs, mean, color=color, linestyle=linestyle, label=f"{label} ({condition} deg)", rasterized=True)
         # ax.fill_between(freqs, mean - std, mean + std, color=color, alpha=0.2)
 
         freqs_band, _, significant = compute_condition_ttest(freqs, log_ratio, freq_range=alpha_range,alpha=0.05/len(conditions))
@@ -390,7 +382,7 @@ def plot_condition_log_power_change(
     ax_sig.set_xlim(xlim)
     ax_sig.set_ylim(0, (len(conditions) - 1) * row_spacing + bar_height)
     ax_sig.set_yticks([]) #row * row_spacing + bar_height / 2 for row in range(len(conditions))])
-    # ax_sig.set_yticklabels([CONDITION_LABELS.get(c, f"{c}°") for c in conditions], fontsize=7)
+    # ax_sig.set_yticklabels([CONDITION_LABELS.get(c, f"{c} deg") for c in conditions], fontsize=7)
     ax_sig.tick_params(axis="y", length=0)
     ax_sig.invert_yaxis()  # row 0 (first in CONDITION_LABELS / legend order) at the top, not the bottom
     ax_sig.axvline(alpha_range[0], color="0.5", linewidth=0.8, linestyle="--")
@@ -440,13 +432,9 @@ def compute_recording_tf_log_power_change(
     """Return (freqs, times_s, log power change) for one already-loaded recording:
     a single time-resolved map, shape (n_times, n_freqs).
 
-    Stim On windows are pooled across trials and averaged in linear PSD space
-    *before* the log ratio against the recording's mean Stim Off Welch PSD is
-    taken (and only then smoothed) -- matching compute_recording_log_ratio's
-    "ratio of means" ordering, instead of averaging already-log-ratio'd,
-    already-smoothed per-trial maps (mean(log(x)) != log(mean(x))). So a
-    recording's map is exactly compute_recording_log_ratio's spectrum, kept
-    time-resolved instead of also averaged over time.
+    Averages Stim On PSDs across trials, then takes the log ratio against the
+    mean Stim Off PSD, matching compute_recording_log_ratio's "ratio of means"
+    ordering (mean(log(x)) != log(mean(x))).
     """
     n_fft = int(recording.fs / SPECTRAL_RESOLUTION_HZ)
     _, off_psds = compute_welch_psd(recording.off_arrays, recording.fs, win_s=win_s, n_fft=n_fft)
@@ -538,18 +526,17 @@ def compute_pooled_tf_log_power_change(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
     """Pool per-recording time-frequency maps across loaded recordings.
 
-    By default (conditions=None) every loaded recording is pooled, regardless of
-    stim_onset_deg. Pass `conditions` (a subset of stim_onset_deg values)
-    together with `recordings_by_condition` (as returned by discover_condition_recordings)
-    to restrict pooling to just those conditions.
+    Pools every loaded recording by default; pass `conditions` (a subset of
+    stim_onset_deg values) with `recordings_by_condition` (from
+    discover_condition_recordings) to restrict to those conditions.
 
-    Each recording contributes one map -- its Stim On trials averaged within
-    that recording (see compute_recording_tf_log_power_change) -- rather than
-    one map per trial, so a recording with many trials doesn't dominate the
-    pooled mean.
+    Each recording contributes one map (see
+    compute_recording_tf_log_power_change), so a recording with many trials
+    doesn't dominate the pooled mean.
 
-    Returns (freqs, times_s, log_power_change), log_power_change of shape
-    (n_recordings, n_times, n_freqs).
+    Returns:
+        (freqs, times_s, log_power_change), the latter shape
+        (n_recordings, n_times, n_freqs).
     """
     if conditions is None:
         recordings = loaded_recordings
@@ -589,7 +576,7 @@ def plot_tf_ttest(
     ylim: tuple = (4, 17),
     clim: tuple = (-5, 5),
 ) -> None:
-    """Plot a time x frequency t-statistic map (fig_2.m panel B style)."""
+    """Plot a time x frequency t-statistic map."""
     fig  = plt.figure(figsize=FIGSIZE)
     mesh = plt.pcolormesh(times, freqs, t_stat.T, shading="nearest",
                            cmap="RdBu_r", vmin=clim[0], vmax=clim[1], rasterized=True)
@@ -613,20 +600,16 @@ def plot_tf_power_change_grid(
     clim: tuple | None = None,
     clim_percentile: float = 99.0,
 ) -> None:
-    """Grid of mean time x frequency log10(on/off) power change maps, averaged
-    across recordings (each recording contributes one map, see
-    compute_pooled_tf_log_power_change), one subplot per condition (or other
-    pooling), sharing x/y axes and a single colorbar.
+    """Grid of mean time x frequency log10(on/off) power change maps, one
+    subplot per condition, sharing x/y axes and a single colorbar.
 
-    `results` maps a subplot title (e.g. a condition label) to that
-    condition's (freqs, times, log_power_change) triple, as returned by
-    compute_pooled_tf_log_power_change.
-
-    `clim` fixes the (symmetric) colorbar range; pass None (default) to derive
-    it from `clim_percentile` of |mean power change| within `ylim`, pooled
-    across every condition being plotted -- since all subplots now share one
-    colorbar, this keeps its range matched to what's actually shown instead
-    of a guessed constant that could clip or wash out the maps.
+    Args:
+        results: Maps a subplot title to that condition's
+            (freqs, times, log_power_change) triple, as returned by
+            compute_pooled_tf_log_power_change.
+        clim: Fixes the symmetric colorbar range; None derives it from
+            `clim_percentile` of |mean power change| within `ylim`, pooled
+            across every condition being plotted.
     """
     n     = len(results)
     nrows = -(-n // ncols)  # ceil
@@ -688,26 +671,20 @@ def analyse_all(
     smooth_window_s: float = 10.0,
     use_csd: bool = True,
 ) -> None:
-    """Produce both fig_2.m-style plots without loading/preprocessing any recording twice.
+    """Load every recording once (EDF read, CSD reference, lowpass filter,
+    epoching) and produce all three plots from it:
 
-    1. Discover every recording once and load (EDF read, CSD reference, lowpass
-       filter, epoching) each of them exactly once.
-    2. Plot the log power change spectrum per stim_onset_deg condition (panel C).
-    3. Plot the opposite-phase time-frequency t-maps (panel B), reusing the same
-       loaded recordings.
-    4. Plot the pooled Stim On vs Stim Off power change, across the same
-       `stim_onset_degs` conditions used above -- pass a subset (e.g. (0, 180))
-       to restrict all four plots to just those conditions.
+    1. Log power change spectrum per stim_onset_deg condition.
+    2. Opposite-phase time-frequency t-maps.
+    3. Pooled Stim On vs Stim Off power change across `stim_onset_degs`
+       (pass a subset, e.g. (0, 180), to restrict all plots to it).
 
-    `win_s`/`step_s` are shared by every plot: plot 2's spectrum is now
-    exactly plots 3/4's time-resolved map, averaged over time and Stim On
-    segments before the ratio (see compute_recording_log_ratio), so all four
-    use the same Welch window/hop and (via SPECTRAL_RESOLUTION_HZ) the same
-    frequency axis -- there's no separate frequency-only resolution knob
-    anymore.
+    `win_s`/`step_s` set the shared Welch window/hop for every plot: the
+    spectrum is the time-resolved map averaged over time and Stim On segments
+    before the ratio (see compute_recording_log_ratio), so all plots share
+    one frequency axis via SPECTRAL_RESOLUTION_HZ.
 
-    `use_csd` toggles the surface Laplacian / CSD re-referencing step (see
-    load_recording/apply_csd_reference) for every recording.
+    `use_csd` toggles CSD re-referencing (see load_recording/apply_csd_reference).
     """
     recordings_by_condition = discover_condition_recordings(base_dir, stim_onset_degs)
 
@@ -722,7 +699,7 @@ def analyse_all(
         print(f"Invalid f0 in stim-on periods across {len(f0_invalid_pcts)} recording(s): "
               f"mean={np.mean(f0_invalid_pcts):.1f}%, std={np.std(f0_invalid_pcts):.1f}%")
 
-    # --- Plot 1: log power change spectrum per condition (fig_2.m panel C) ---
+    # --- Plot 1: log power change spectrum per condition ---
     freqs = None
     log_ratio_by_condition = {}
     for condition in stim_onset_degs:
@@ -752,7 +729,7 @@ def analyse_all(
     else:
         print("No usable recordings found for the spectrum plot.")
 
-    # --- Plot 2: opposite-phase time-frequency t-maps (fig_2.m panel B) ---
+    # --- Plot 2: opposite-phase time-frequency t-maps ---
     for deg_a, deg_b in comparisons:
         title  = f"{CONDITION_LABELS.get(deg_a, deg_a)} vs {CONDITION_LABELS.get(deg_b, deg_b)}"
         result = compute_condition_tf_maps(
@@ -776,7 +753,7 @@ def analyse_all(
         if result is None:
             print(f"Skipping pooled Stim On vs Stim Off plot for {CONDITION_LABELS.get(deg, deg)}: not enough data.")
         else:
-            pooled_by_condition[f"{CONDITION_LABELS.get(deg, deg)} ({deg}°)"] = result
+            pooled_by_condition[f"{CONDITION_LABELS.get(deg, deg)} ({deg} deg)"] = result
 
     if pooled_by_condition:
         plot_tf_power_change_grid(pooled_by_condition, ncols=3)

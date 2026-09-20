@@ -4,6 +4,7 @@ Main analysis entry point. Run with:
     python postprocess_results.py    (via the root launcher)
 """
 
+import argparse
 import glob
 import os
 import sys
@@ -20,12 +21,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from analysis.loader       import load_processor_signals, analyse_latencies, extract_ground_truth, \
                                   compute_total_latency, find_session_run_dirs
 from analysis.f0          import estimate_f0, estimate_f0_with_phase, estimate_f0_modal
-from analysis.core         import compute_hilbert_reference, compute_errors, compute_jade_errors
+from analysis.core         import compute_hilbert_reference, compute_errors, compute_jade_errors, \
+                                  _edge_trim_window
 from analysis.edf_io       import write_raw_signals_edf, load_runtime, write_analysis_edf
 from analysis.runtime_meta import write_runtime_metadata
 from analysis.plot         import plot_errors, plot_spectrum, plot_stack, \
                                   get_erp_windows, plot_erp_latency, plot_erp_by_subject, \
-                                  load_stim_annotations, plot_pooled_scatter, _edge_trim_window, \
+                                  load_stim_annotations, plot_pooled_scatter, \
                                   _circ_stats, write_condition_error_table
 from analysis.spectrum_analysis import STIM_ONSET_DEGS, CONDITION_LABELS
 
@@ -57,29 +59,28 @@ class RecordingAnalysis:
 
 def load_and_analyse(f0: float, results_dir: str, f0_is_truth: bool = False,
                      whiten: bool = False, full_analysis: bool = True) -> "RecordingAnalysis | None":
-    """Load one results folder (from cache if available, else the raw .bin
-    files) and run the offline analysis on it: f0 estimate, Hilbert
-    reference, phase/f0/stimulus-edge errors. Returns None if the folder
-    can't be loaded (no graph config / no source signal).
+    """Load one results folder and run the offline analysis on it.
 
-    f0 sets the centre frequency of the pre-Hilbert bandpass. By default it
-    is only a fallback: f0 is re-estimated offline from the recording and the
-    passed value is used only if that estimation yields nothing. With
-    f0_is_truth=True the passed f0 is used directly (the offline f0 estimate
-    is not adopted) -- for synthetic runs whose carrier frequency is known
-    exactly.
+    Loads from cache if available, else the raw .bin files, then computes
+    the f0 estimate, Hilbert reference, and phase/f0/stimulus-edge errors.
 
-    whiten (default False): still run the 1/f aperiodic fit and pass it to
-    compute_hilbert_reference() for spectral whitening before the bandpass,
-    regardless of f0_is_truth. Set whiten=False to skip that whitening; with
-    f0_is_truth=True as well, the offline aperiodic/f0 fit is skipped entirely.
+    Args:
+        f0: Centre frequency (Hz) for the pre-Hilbert bandpass; used as a
+            fallback unless f0_is_truth is set.
+        results_dir: Path to the results folder to load.
+        f0_is_truth: Use f0 directly instead of the offline estimate, for
+            synthetic runs with a known carrier frequency.
+        whiten: Fit the 1/f aperiodic component and use it for spectral
+            whitening in compute_hilbert_reference(). Skipped entirely when
+            f0_is_truth is also set.
+        full_analysis: Run f0 estimation, Hilbert reference and error
+            computation. If False, return right after loading (e.g. for ERP
+            epoching, which only needs .samples/.fs), leaving those fields
+            None.
 
-    full_analysis (default True): run the offline f0 estimation, Hilbert
-    reference and error computation below. Set to False to skip all of that
-    and return right after loading -- e.g. for ERP epoching, which only
-    needs .samples/.fs -- leaving f0/aperiodic_params/raw/filtered/
-    hilbert_phase/X_white/f0_continuous/errors/stim_ref as None (f0 keeps
-    the passed-in value)."""
+    Returns:
+        A RecordingAnalysis, or None if the folder can't be loaded.
+    """
     graph_files = glob.glob(os.path.join(results_dir, "*.yaml"))
     if not graph_files:
         print(f"Error: no graph config (.yaml) found in {results_dir}")
@@ -122,9 +123,8 @@ def load_and_analyse(f0: float, results_dir: str, f0_is_truth: bool = False,
             errors=None, stim_ref=None, f0_modal=None,
         )
 
-    # Centre frequency f0 for the pre-Hilbert bandpass + 1/f aperiodic fit for
-    # spectral whitening. estimate_f0() returns both; run it unless neither is
-    # wanted (known carrier and whitening disabled).
+    # estimate_f0() returns both f0 and the 1/f aperiodic fit; skip only if
+    # neither is wanted (known carrier and whitening disabled)
     snr = None
     if f0_is_truth and not whiten:
         aperiodic_params = None
@@ -146,20 +146,13 @@ def load_and_analyse(f0: float, results_dir: str, f0_is_truth: bool = False,
     # Offline Hilbert reference
     raw = ground_truth["raw"]
     filtered, hilbert_phase, X_white = compute_hilbert_reference(raw, fs, f0, aperiodic_params=aperiodic_params)
-    # estimate_f0_with_phase() needs the raw (unmasked) phase -- its internal
-    # np.unwrap()/cumsum would propagate NaN across the whole array if fed
-    # edges that are already NaN -- so it runs first, on the clean signal; it
-    # NaNs its own output's edges internally (see f0.py).
+    # Needs the raw (unmasked) phase first: NaN edges would propagate through
+    # np.unwrap()/cumsum. NaNs its own output's edges internally (see f0.py).
     f0_continuous = estimate_f0_with_phase(hilbert_phase, fs, f0)
     # f0_modal = estimate_f0_modal(raw, fs)
 
-    # NaN the same leading/trailing window on hilbert_phase itself now that
-    # f0_continuous no longer needs the unmasked version. Every error series
-    # derived from hilbert_phase (compute_errors(), the online-vs-Hilbert
-    # scatter, sweep.py's per-run stats, ...) then excludes exactly the
-    # Hilbert filter's edge transients via ordinary NaN-dropping, instead of
-    # every consumer re-applying its own blanket time-window trim regardless
-    # of whether that series actually involves the Hilbert phase at all.
+    # NaN hilbert_phase's own edges now, so every series derived from it
+    # excludes the filter's edge transients via plain NaN-dropping
     hilbert_phase = hilbert_phase.copy()
     hp_time_s = np.arange(len(hilbert_phase)) / fs
     hp_t_lo, hp_t_hi = _edge_trim_window([{"time_s": hp_time_s}])
@@ -221,7 +214,8 @@ def analyse_results(results_dir: str, f0: float=10.0, show: bool = True,
         analysis_path = os.path.join(results_dir, "analysis.edf")
         write_analysis_edf(analysis_path, analysis.fs, analysis.ground_truth, analysis.samples,
                             analysis.filtered, analysis.hilbert_phase, analysis.f0_continuous,
-                            analysis.stim_ref, annotations=analysis.annotations)
+                            analysis.stim_ref, annotations=analysis.annotations,
+                            whitened=analysis.X_white is not None)
 
         # Polar error distributions
         plot_errors(analysis.errors)
@@ -230,12 +224,8 @@ def analyse_results(results_dir: str, f0: float=10.0, show: bool = True,
         plot_spectrum(analysis.raw, analysis.samples, analysis.filtered, analysis.fs,
                       analysis.aperiodic_params, analysis.X_white)
 
-        # Time-domain panels. Stack any subset of "f0" / "phase" / "phase_error" /
-        # "signals" sharing a common time axis; pass a different panel list here
-        # for other use cases, e.g.
-        #   plot_stack(analysis, ["signals", "phase_error"], save_as="sig_vs_err")
-        #   plot_stack(analysis, ["signals", "f0", "phase", "phase_error"],
-        #              time_range=time_range, save_as="everything")
+        # Time-domain panels: stack any subset of "f0"/"phase"/"phase_error"/"signals"
+        # e.g. plot_stack(analysis, ["signals", "phase_error"], save_as="sig_vs_err")
         time_range = None # (20.5, 23.5)  # e.g. (17, 18) to zoom in on a few seconds
         # plot_stack(analysis, ["signals", "f0", "phase", "phase_error"], time_range=time_range,
         #            save_as="time_series")
@@ -247,11 +237,9 @@ def analyse_results(results_dir: str, f0: float=10.0, show: bool = True,
     else:
         plt.close("all")
 
-
 def find_result_dirs(base_dir: str = "results") -> list[str]:
     """Every directory under base_dir that directly contains a *.yaml graph
-    config -- i.e. every valid analyse_results() target, including ones
-    nested under a session folder like results/CLAS_*/*."""
+    config, i.e. every valid analyse_results() target."""
     return sorted({
         os.path.dirname(p) for p in glob.glob(os.path.join(base_dir, "**", "*.yaml"), recursive=True)
     })
@@ -334,13 +322,10 @@ def analyse_erp_by_subject(f0: float = 10, base_dir: str = "results", session_gl
     plt.show()
 
 
-# Column order for the per-condition error table below -- the degree-unit
-# error labels compute_errors() can produce, in a fixed, readable order
-# (phase error first, then onset/offset pairs) rather than whatever order
-# recordings happen to be discovered in.
+# Column order for the per-condition error table
 _CONDITION_TABLE_COLUMNS = [
-    r"$\hat \theta - \theta$", r"$\hat \theta - \theta_{\mathrm{HT}}$",
-    r"$\theta_{\mathrm{HT}} - \theta$", r"$\hat\theta - \theta_{\mathrm{HT}}$",
+    r"$\hat \theta - \theta$", r"$\hat\theta - \theta_{\mathrm{HT}}$",
+    r"$\theta_{\mathrm{HT}} - \theta$",
     r"Stim onset ($\theta_{\mathrm{HT}}$)", r"Stim offset ($\theta_{\mathrm{HT}}$)",
     r"Stim onset ($\hat\theta$)", r"Stim offset ($\hat\theta$)",
 ]
@@ -349,51 +334,44 @@ _CONDITION_TABLE_COLUMNS = [
 # conditions first, then a rule, then the two P1 (peak/trough) conditions.
 _CONDITION_ROW_GROUPS = [[60, 150, 240, 330], [0, 180]]
 
-# Non-circular metrics (unrelated to stim_onset_deg condition) just printed
-# as a single pooled mean +/- SD across every recording -- not part of the
-# per-condition table above.
+# Non-circular metrics printed as a single pooled mean +/- SD, not split by condition
 _GLOBAL_METRIC_LABELS = ("f0 error", "Stim duration error", "Online vs offline f0 error", "Total latency")
 
 
 def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str = "results", session_glob: str = "CLAS_*") -> None:
-    """Pool phase/f0/stimulus-edge errors across every recording nested
-    under every session folder matching session_glob (e.g. every
-    results/CLAS_*/<run>), and plot the polar error-distribution histograms
-    exactly like analyse_results() does for a single recording -- but
-    combined across all of them, one polar distribution per error label.
-    No blanket per-recording time-window trim is applied before pooling:
-    hilbert_phase/f0_continuous are already NaN-masked at their own edges
-    (see load_and_analyse()), so a series derived from them already excludes
-    those samples, while a series that doesn't touch the Hilbert reference
-    (ground-truth f0 error, stim duration error, total latency, an online
-    estimate scored against true_phase) is pooled in full.
+    """Pool phase/f0/stimulus-edge errors across every recording and plot/print results.
 
-    Also produces per-recording scatter plots (plot_pooled_scatter): for the
-    online-vs-Hilbert phase error and the stim-onset (online-estimate and
-    offline-Hilbert) errors, the circular mean +/- SD of each recording's
-    error on the y-axis, against that recording's online (Kalman)
-    f0-estimate variance and its offline alpha-peak SNR (dB) on the x-axis.
+    Combines every recording under every session folder matching
+    session_glob (e.g. results/CLAS_*/<run>) and:
+      - Plots pooled polar error-distribution histograms, as
+        analyse_results() does per-recording, but combined across all runs.
+        No time-window trim is applied: Hilbert-derived series are already
+        NaN-masked at their own edges (see load_and_analyse()).
+      - Plots per-recording scatter (plot_pooled_scatter) of each
+        recording's circular mean +/- SD phase error against its online
+        f0-estimate variance and offline alpha-peak SNR.
+      - Prints/writes a table of circular mean +/- SD per degree-unit error
+        label, one row per stim_onset_deg condition (see
+        spectrum_analysis.STIM_ONSET_DEGS/CONDITION_LABELS) and one column
+        per label.
+      - Prints a plain (non-circular) pooled mean +/- SD for the metrics in
+        _GLOBAL_METRIC_LABELS.
 
-    Also writes (and prints) a table with one row per stimulus-onset
-    condition (StimControl.options.stim_onset_deg in each recording's graph
-    yaml -- see spectrum_analysis.STIM_ONSET_DEGS/CONDITION_LABELS for the 6
-    conditions) and one column per degree-unit error label, each cell the
-    circular mean +/- SD of that metric pooled across every recording run
-    under that condition.
-
-    And prints a plain pooled mean +/- SD (ordinary, not circular; not split
-    by condition) for f0 error [Hz] and stim duration error [ms] across every
-    recording -- see _GLOBAL_METRIC_LABELS."""
+    Args:
+        f0: Fallback centre frequency (Hz) passed to load_and_analyse() for
+            each recording.
+        names: If given, only include recordings whose path contains one of
+            these strings (case-insensitive).
+        base_dir: Root directory to search for session folders.
+        session_glob: Glob pattern for session folder names under base_dir.
+    """
     run_dirs = find_session_run_dirs(base_dir, session_glob)
     if names is not None:
         run_dirs_selected = [d for d in run_dirs if any(name.lower() in d.lower() for name in names)]
         run_dirs = run_dirs_selected
     print(f"Found {len(run_dirs)} recording(s) under {base_dir}/{session_glob}/*.")
 
-    # The online-vs-Hilbert phase-error label, ignoring the "\hat \theta" vs
-    # "\hat\theta" spacing difference between compute_errors()'s primary series
-    # (no true_phase) and its dedicated synthetic-run series.
-    online_vs_hilbert = r"$\hat\theta-\theta_{\mathrm{HT}}$"
+    online_vs_hilbert = r"$\hat\theta - \theta_{\mathrm{HT}}$"  # matches sweep.ONLINE_VS_HILBERT
 
     pooled: dict[str, dict] = {}
     scatter_records: list[dict] = []
@@ -412,10 +390,8 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
             continue
         errors = analysis.errors
 
-        # Same metric as the single-run "Online vs offline f0 error" print in
-        # load_and_analyse(); appended here (not in compute_errors()) so it
-        # rides the same edge-trimmed _GLOBAL_METRIC_LABELS pooling as f0/stim
-        # duration error below instead of a separate accumulator.
+        # Same metric as load_and_analyse()'s single-run print; appended here so
+        # it rides the same _GLOBAL_METRIC_LABELS pooling as f0/stim duration error
         freq_est = analysis.samples.get("FrequencyEstimation")
         if freq_est is not None and analysis.f0_continuous is not None:
             errors = errors + [{
@@ -424,10 +400,7 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
                 "values": np.asarray(freq_est["y"], dtype=float) - analysis.f0_continuous,
             }]
 
-        # End-to-end pipeline latency (source -> last processor), same number
-        # analyse_latencies() prints as "TOTAL" for a single recording --
-        # computed once by compute_total_latency() and pooled here the same
-        # way as the other _GLOBAL_METRIC_LABELS series.
+        # Same total analyse_latencies() prints as "TOTAL" for a single recording
         total_lat = compute_total_latency(analysis.samples, analysis.ground_truth, analysis.graph_config)
         if total_lat is not None:
             n = len(total_lat)
@@ -445,14 +418,6 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
             .get("stim_onset_deg")
         )
 
-        # Edge transients are no longer trimmed by a blanket per-recording
-        # time window here: hilbert_phase and f0_continuous already carry NaN
-        # on their own leading/trailing edges (see load_and_analyse()), so
-        # every series actually derived from them already excludes those
-        # samples, while series that don't touch the Hilbert reference at all
-        # (ground-truth f0 error, stim duration error, total latency, an
-        # online estimate scored against true_phase) are left untouched
-        # instead of being needlessly cut at both ends.
         for err in errors:
             entry = pooled.setdefault(err["label"], {
                 "label": err["label"], "unit": err["unit"], "linestyle": err.get("linestyle", "-"),
@@ -471,15 +436,9 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
                     global_metrics.setdefault(err["label"], []).append(trimmed)
             entry["values"].append(vals)
 
-        # One scatter bullet per recording, for each metric in
-        # plot.py's _SCATTER_METRICS: the per-recording circular mean of that
-        # metric's error series (y) vs offline SNR (x). "phase_vals" is the
-        # continuous online-vs-Hilbert phase error; the "Stim onset (...)"
-        # labels are the phase error scored only at stimulus-onset edges,
-        # against the online estimate and the offline Hilbert/true-phase
-        # reference respectively.
-        oh = next((e for e in errors
-                   if e["label"].replace(" ", "") == online_vs_hilbert), None)
+        # One scatter bullet per recording per plot.py._SCATTER_METRICS metric:
+        # circular mean error (y) vs offline SNR (x)
+        oh = next((e for e in errors if e["label"] == online_vs_hilbert), None)
         if oh is not None:
             snr_db = (10.0 * np.log10(analysis.snr)
                       if analysis.snr is not None and np.isfinite(analysis.snr) and analysis.snr > 0
@@ -522,9 +481,7 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
     else:
         print("No recording matched a known stim_onset_deg condition; skipping condition table.")
 
-    # Simple pooled mean +/- SD across every recording (not per-condition,
-    # not circular) for f0/stim-duration/online-vs-offline-f0 error -- just a
-    # console print.
+    # Plain pooled mean +/- SD across every recording, printed to console
     for label, chunks in global_metrics.items():
         vals = np.concatenate(chunks)
         unit = pooled[label]["unit"]
@@ -532,18 +489,77 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
               f"(n={vals.size} samples, {len(chunks)} recording(s))")
         if label == "Online vs offline f0 error":
             print(f"Online vs offline MAE: {np.mean(np.abs(vals)):.3f} {unit}")
+        if label == "Stim duration error":
+            print(f"Stim duration MAE: {np.mean(np.abs(vals)):.3f} {unit}")
 
     plt.show()
 
 
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Offline CLAS analysis entry point -- pick which of the analyse_*() "
+                     "functions to run instead of (un)commenting them below.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    all_p = subparsers.add_parser(
+        "all", help="analyse_all_results(): analyze every results/ subfolder to generate .edf and .h5 files.")
+    all_p.add_argument("--base-dir", default="results",
+                        help="Base directory to search for results folders (default: results).")
+    all_p.add_argument("--f0", type=float, default=10.0,
+                        help="Fallback f0 (Hz) if offline estimation fails (default: 10.0).")
+    all_p.add_argument("--no-full-analysis", dest="full_analysis", action="store_false",
+                        help="Skip f0/Hilbert/error analysis; just load (and cache) each folder.")
+
+    single_p = subparsers.add_parser(
+        "single", help="analyse_results(): full analysis + plots for one results folder.")
+    single_p.add_argument("results_dir", nargs="?", default="_last_run",
+                           help="Results folder to analyse (default: _last_run).")
+    single_p.add_argument("--f0", type=float, default=10.0,
+                           help="Centre frequency (Hz) for the pre-Hilbert bandpass; fallback "
+                                "unless --f0-is-truth is set (default: 10.0).")
+    single_p.add_argument("--f0-is-truth", action="store_true",
+                           help="Use --f0 directly instead of re-estimating it offline.")
+    single_p.add_argument("--whiten", action="store_true",
+                           help="Apply 1/f spectral whitening before the offline bandpass.")
+    single_p.add_argument("--no-show", dest="show", action="store_false",
+                           help="Don't call plt.show() at the end (just close the figures).")
+    single_p.add_argument("--no-full-analysis", dest="full_analysis", action="store_false",
+                           help="Skip f0/Hilbert/error analysis and plotting; just load the folder.")
+
+    pooled_p = subparsers.add_parser(
+        "pooled", help="analyse_pooled_errors(): pool errors across every session's recordings.")
+    pooled_p.add_argument("--f0", type=float, default=10.0)
+    pooled_p.add_argument("--base-dir", default="results")
+    pooled_p.add_argument("--session-glob", default="CLAS_*",
+                           help="Glob (under --base-dir) matching session folders (default: CLAS_*).")
+    pooled_p.add_argument("--names", nargs="*", default=None,
+                           help="Only include recordings whose path contains one of these "
+                                "substrings (case-insensitive), e.g. --names victor.")
+
+    erp_p = subparsers.add_parser(
+        "erp", help="analyse_erp_by_subject(): plot one ERP curve per subject.")
+    erp_p.add_argument("--f0", type=float, default=10.0)
+    erp_p.add_argument("--base-dir", default="results")
+    erp_p.add_argument("--session-glob", default="CLAS_*")
+    erp_p.add_argument("--channel", type=int, default=3,
+                        help="Channel index to average for the ERP (default: 3 = Fz).")
+
+    return parser
+
+
 if __name__ == "__main__":
-    # analyse_all_results(full_analysis=False) 
+    args = build_arg_parser().parse_args()
 
-    # analyse_results(results_dir="_last_run") #, f0_is_truth=True)
-    analyse_results(results_dir="results/CLAS_felix/felix_erp_meas_20260903_141640")#, f0_is_truth=True)
-    
-    # analyse_pooled_errors() #names=["victor"])
-
-
-    # analyse_erp_by_subject()
+    if args.command == "all":
+        analyse_all_results(f0=args.f0, base_dir=args.base_dir, full_analysis=args.full_analysis)
+    elif args.command == "single":
+        analyse_results(results_dir=args.results_dir, f0=args.f0, show=args.show,
+                         f0_is_truth=args.f0_is_truth, whiten=args.whiten,
+                         full_analysis=args.full_analysis)
+    elif args.command == "pooled":
+        analyse_pooled_errors(f0=args.f0, names=args.names, base_dir=args.base_dir,
+                              session_glob=args.session_glob)
+    elif args.command == "erp":
+        analyse_erp_by_subject(f0=args.f0, base_dir=args.base_dir,
+                               session_glob=args.session_glob, channel=args.channel)
 

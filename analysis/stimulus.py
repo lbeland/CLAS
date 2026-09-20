@@ -1,7 +1,7 @@
 """
 Stimulus reconstruction and edge-error analysis.
 
-StimulusConfig is the single place to add new targeting rules — add fields here
+StimulusConfig is the single place to add new targeting rules - add fields here
 and update from_yaml() and compute_reference_stimulus() accordingly.
 """
 
@@ -46,15 +46,18 @@ def compute_reference_stimulus(
     fs: float,
     config: StimulusConfig,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Reconstruct the ideal stimulus signal from a reference phase time series,
-    mirroring StimControl::Process().
+    """Reconstruct the ideal stimulus signal from a reference phase time
+    series, mirroring StimControl::Process().
 
-    Returns
-    -------
-    stim_ref      : binary ndarray, 1 inside the stimulus window
-    onset_phases  : phase (rad) at each stimulus onset
-    offset_phases : phase (rad) at each stimulus offset
+    Args:
+        phase: Reference phase series (rad).
+        f0: Fundamental frequency series (Hz), same length as ``phase``.
+        fs: Sample rate (Hz).
+        config: Stimulus targeting parameters.
+
+    Returns:
+        (stim_ref, onset_phases, offset_phases): binary ndarray (1 inside the
+        stimulus window), and the phase (rad) at each onset/offset.
     """
     f0_safe  = np.where(np.isfinite(f0) & (f0 > 0))[0]
     onset_rad = np.deg2rad(config.stim_onset_deg)
@@ -105,21 +108,20 @@ def _edge_phase_errors(
     time_us: np.ndarray,
     start_ts: float,
 ) -> "dict | None":
-    """Wrapped phase error (degrees) at each sample in ``edge_idx``, offset by
-    ``latency_samples``: the reference ``phase`` there minus ``target_rad``.
-    Sign: actual - target.
+    """Wrapped phase error (degrees, actual - target) at each sample in
+    ``edge_idx``, offset by ``latency_samples``.
 
-    ``latency_samples`` (the ERP latency in samples) is applied by reading
-    ``phase`` that many samples *after* each edge, rather than analytically
-    advancing ``phase[edge_idx]`` by an assumed constant angular velocity
-    (``2*pi*f0*erp_latency_s``) -- this uses whatever the reference phase
-    series actually did over that window instead of a linear approximation
-    of it, so it stays accurate even when f0 is off or phase isn't advancing
-    linearly there (e.g. online-estimator noise).
+    Args:
+        phase: Reference phase series (rad).
+        edge_idx: Sample indices to evaluate.
+        target_rad: Target phase (rad).
+        latency_samples: Offset applied to each edge index before reading ``phase``.
+        time_us: Timestamps matching ``phase``, in microseconds.
+        start_ts: Recording start time, same units as ``time_us``.
 
-    Edges whose shifted index would run outside ``phase``, or whose result is
-    non-finite (e.g. a sparse ``phase`` that is NaN away from its evaluation
-    points), are dropped. Returns None if nothing survives.
+    Returns:
+        {"time_s", "values"} in degrees, or None if no edge survives (out of
+        range, or a non-finite ``phase`` value).
     """
     edge_idx = np.asarray(edge_idx, dtype=int)
     if edge_idx.size == 0:
@@ -145,27 +147,17 @@ def compute_stimulus_edge_errors(
     start_ts: float,
     fs: float,
 ) -> tuple[dict | None, dict | None]:
-    """Phase error at each stimulus trigger edge, measured directly against the
-    phase the controller targets.
+    """Phase error (degrees, actual - target) at each stimulus trigger edge,
+    measured against the phase the controller targets.
 
-    For every rising edge of ``trigger_binary`` the error is the wrapped
-    difference between ``phase``, read ``erp_latency_s`` seconds after the
-    edge, and ``stim_onset_deg`` (see ``_edge_phase_errors`` for why it's a
-    read-ahead rather than an analytic correction).
+    Onset error is the rising-edge phase vs. ``stim_onset_deg``. Offset error
+    is the falling-edge phase vs. ``stim_onset_deg + stim_dur_deg``, only
+    returned when ``config.stim_dur_unit == "deg"`` (use
+    ``compute_stimulus_duration_error`` for the "ms" case instead).
 
-    The offset error is only meaningful in degrees when the burst is itself
-    targeted by phase (``stim_dur_unit == "deg"``): there it's measured
-    against ``stim_onset_deg + stim_dur_deg``, mirroring
-    ``compute_reference_stimulus``, whose reconstructed edges sit at exactly
-    that target phase. When ``stim_dur_unit == "ms"`` the burst is timed to a
-    fixed duration instead, so a target *phase* for the falling edge doesn't
-    exist -- use ``compute_stimulus_duration_error`` for the actual-vs-target
-    error in ms there instead, and no offset error is returned here.
-
-    Sign: actual - target, positive == overshoot.
-
-    Returns (onset_error, offset_error) dicts with ``time_s`` / ``values``
-    (degrees), or None for an edge kind with nothing to score.
+    Returns:
+        (onset_error, offset_error): {"time_s", "values"} dicts, or None for
+        an edge kind with nothing to score.
     """
     trigger_binary = np.asarray(trigger_binary)
     time_us        = np.asarray(time_us)
@@ -193,20 +185,13 @@ def compute_stimulus_duration_error(
     config: StimulusConfig,
     start_ts: float,
 ) -> "dict | None":
-    """Actual stimulus burst duration (ms) vs the configured target, measured
-    directly off ``trigger_binary`` -- one value per delivered burst, pairing
-    each rising edge with the next falling edge after it.
+    """Actual stimulus burst duration (ms, actual - target) vs the configured
+    target, one value per delivered burst (paired rising/falling edges of
+    ``trigger_binary``). The ``stim_dur_unit == "ms"`` counterpart of
+    ``compute_stimulus_edge_errors``'s degree-based offset error.
 
-    This is the ``stim_dur_unit == "ms"`` counterpart of the degree-based
-    offset error in ``compute_stimulus_edge_errors``: bursts there are timed
-    to a fixed millisecond duration rather than a target phase, so the
-    natural error to score is actual-minus-target duration in ms rather than
-    a phase difference.
-
-    Sign: actual - target, positive == burst ran long.
-
-    Returns a dict with ``time_s`` / ``values`` (ms), or None if there are no
-    complete (rising, falling) edge pairs.
+    Returns:
+        {"time_s", "values"} in ms, or None if there are no complete edge pairs.
     """
     n = min(len(trigger_binary), len(time_us))
     trigger_binary = np.asarray(trigger_binary)[:n]
@@ -217,9 +202,8 @@ def compute_stimulus_duration_error(
     if rising.size == 0 or falling.size == 0:
         return None
 
-    # Pair each rising edge with the next falling edge after it; a trailing
-    # rising edge with no matching falling edge (burst cut off at the end of
-    # the recording) is dropped.
+    # Pair each rising edge with the next falling edge; drop a trailing rising
+    # edge with no match (burst cut off at the end of the recording)
     match_idx = np.searchsorted(falling, rising, side="right")
     keep      = match_idx < falling.size
     if not keep.any():

@@ -31,33 +31,21 @@ ONLINE_FIELDS = {
 SIMULATION_FIELDS = ("true_amplitude", "true_phase", "true_inst_freq")
 
 
-def _normalize_raw_channel_key(key: str) -> str:
-    """Raw per-channel keys come from either UDPSource_{idx} (real
-    hardware) or SimulatedSource_{idx} (simulated runs); edf_io.write_raw_signals_edf
-    writes both the same way and edf_io.load_runtime() always reconstructs
-    them as UDPSource_{idx} on reload, so source_ts must be stored under
-    that same normalized name or the reload lookup silently misses it."""
-    if key.startswith("SimulatedSource_") and key[len("SimulatedSource_"):].isdigit():
-        return f"UDPSource_{key[len('SimulatedSource_'):]}"
-    return key
-
-
 def write_runtime_metadata(filepath: str, fs: float, samples: dict, ground_truth: dict) -> None:
     with h5py.File(filepath, "w") as f:
         f.attrs["fs"] = fs
         f.attrs["start_ts"] = int(ground_truth["time"][0])
-        # mne's EDF writer pads the final data record up to a whole number of
-        # seconds, so raw_signals.edf's channels usually come back a few
-        # samples longer than they went in. Keep the true count here so
-        # load_runtime() can truncate back to it -- otherwise the (padded)
-        # EEG/AUX/Trigger arrays and the (exact) online-estimate arrays below
-        # end up different lengths after a cached reload.
+        # True count, so load_runtime() can truncate raw_signals.edf's
+        # record-padded channels back to match the exact arrays below
         f.attrs["n_samples"] = len(ground_truth["time"])
-        # The true (jittered) reconstructed ADC sampling times, needed only
-        # by analyse_latencies()'s UDPSource hardware->source latency calc --
-        # everything else uses the idealized uniform-rate "x"/"time" (see
-        # load_processor_signals()/load_runtime()), so this is the only
-        # per-sample timestamp array worth the storage.
+        # Raw per-channel key prefix actually used ("UDPSource" or
+        # "SimulatedSource"), so load_runtime() can reconstruct the same keys
+        f.attrs["raw_source_class"] = (
+            "SimulatedSource" if any(k.startswith("SimulatedSource_") for k in samples)
+            else "UDPSource"
+        )
+        # UDPSource's reconstructed ADC sampling times, needed only for its
+        # hardware->source latency calc in analyse_latencies()
         udp = samples.get(first_udp_channel_key(samples), {})
         if udp.get("hw_ts") is not None:
             f.create_dataset("hardware_ts", data=np.asarray(udp["hw_ts"]))
@@ -66,7 +54,7 @@ def write_runtime_metadata(filepath: str, fs: float, samples: dict, ground_truth
         for key, entry in samples.items():
             ts = entry.get("source_ts")
             if ts is not None:
-                src_grp.create_dataset(_normalize_raw_channel_key(key), data=np.asarray(ts))
+                src_grp.create_dataset(key, data=np.asarray(ts))
 
         online = f.create_group("online")
         for samples_key, field in ONLINE_FIELDS.items():
@@ -83,16 +71,21 @@ def write_runtime_metadata(filepath: str, fs: float, samples: dict, ground_truth
 
 
 def load_runtime_metadata(filepath: str) -> dict:
-    """Returns {"fs", "start_ts", "n_samples", "hardware_ts": array | absent,
-    "source_ts": {key: array}, "online": {field: array}, "simulation": {field: array}}
-    -- "hardware_ts" is absent for caches written before it started being saved;
-    the latter three dicts only contain keys that were actually present at
-    write time."""
+    """Returns {"fs", "start_ts", "n_samples", "raw_source_class",
+    "hardware_ts": array | absent, "source_ts": {key: array},
+    "online": {field: array}, "simulation": {field: array}}.
+
+    "hardware_ts" is absent for caches written before it started being saved;
+    "raw_source_class" defaults to "UDPSource" for caches written before it
+    was added. The last three dicts only contain keys actually present at
+    write time.
+    """
     meta = {"source_ts": {}, "online": {}, "simulation": {}}
     with h5py.File(filepath, "r") as f:
         meta["fs"] = float(f.attrs["fs"])
         meta["start_ts"] = int(f.attrs["start_ts"])
         meta["n_samples"] = int(f.attrs["n_samples"])
+        meta["raw_source_class"] = f.attrs.get("raw_source_class", "UDPSource")
         if "hardware_ts" in f:
             meta["hardware_ts"] = f["hardware_ts"][()]
         for key in f.get("source_ts", {}):

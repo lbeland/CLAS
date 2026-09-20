@@ -24,6 +24,7 @@ mpl.rcParams.update({
 })
 
 from .stimulus import get_edges
+from .core import _edge_trim_window
 
 PLOTS_DIR = "/home/linda/Documents/MA/plots"
 os.makedirs(PLOTS_DIR, exist_ok=True)
@@ -110,31 +111,6 @@ def _circ_stats(phi_rad):
     return mu, sd, plv, pli
 
 
-def _edge_trim_window(errors: list[dict], lo_frac: float = 0.1,
-                      hi_frac: float = 0.90) -> tuple[float, float]:
-    """The [t_lo, t_hi] wall-clock window that drops the leading/trailing
-    edge-transient slice of a recording.
-
-    Derived from the *timestamps* of the reference series (errors[0]) at
-    lo_frac / hi_frac of its length, so every series -- regardless of its own
-    sampling rate -- is trimmed by the same amount of *time*, and sparse
-    series (e.g. one value per stimulus) aren't sliced away to nothing.
-
-    Both plot_errors() (which trims before computing polar statistics) and the
-    "phase_error" stack panel (which draws t_lo/t_hi as dashed markers) call this,
-    so the trim shown always matches the trim applied. Returns (-inf, +inf)
-    when there is nothing to trim on.
-    """
-    if not errors:
-        return (-np.inf, np.inf)
-    ref_t = np.asarray(errors[0]["time_s"], dtype=float)
-    if ref_t.size == 0:
-        return (-np.inf, np.inf)
-    lo_idx = int(lo_frac * len(ref_t))
-    hi_idx = min(int(hi_frac * len(ref_t)), len(ref_t) - 1)
-    return float(ref_t[lo_idx]), float(ref_t[hi_idx])
-
-
 def _write_error_table(rows: "list[tuple[str, float, float, float]]", name: str = "error_distributions",
                        caption: str = "Circular mean $\\pm$ SD and PLV for different phase error series.",
                        label: str = "tab:error_distributions") -> None:
@@ -194,7 +170,7 @@ def write_condition_error_table(
         if stat is None or not np.isfinite(stat[0]):
             return "--"
         mu, sd, _ = stat
-        return rf"${mu:.1f}^\circ \pm {sd:.1f}^\circ$" if tex else f"{mu:.1f}° ± {sd:.1f}°"
+        return rf"${mu:.1f}^\circ \pm {sd:.1f}^\circ$" if tex else f"{mu:.1f} deg +/- {sd:.1f} deg"
 
     def plv_cell(condition: int, col: str) -> str:
         stat = condition_stats.get(condition, {}).get(col)
@@ -202,7 +178,7 @@ def write_condition_error_table(
         return f"{plv:.2f}" if np.isfinite(plv) else "--"
 
     def row_name(condition: int) -> str:
-        return f"{condition_labels.get(condition, str(condition))} ({condition}°)"
+        return f"{condition_labels.get(condition, str(condition))} ({condition} deg)"
 
     condition_order = [c for group in condition_groups for c in group]
     # Row index (into condition_order) right before which a rule is drawn --
@@ -213,12 +189,10 @@ def write_condition_error_table(
         n += len(group)
         rule_before.add(n)
 
-    # Console table, plain text with fixed-width columns. Each error label
-    # gets two adjacent columns (Mean +/- SD, PLV); the label itself is
-    # printed once, left-aligned over its Mean +/- SD subcolumn, with the PLV
-    # subcolumn left blank in that header row.
+    # Console table: each error label spans two columns (Mean +/- SD, PLV),
+    # label printed once over its Mean +/- SD subcolumn
     header_row1 = ["", *(v for col in columns for v in (col, ""))]
-    header_row2 = ["Condition", *(v for _ in columns for v in ("Mean ± SD", "PLV"))]
+    header_row2 = ["Condition", *(v for _ in columns for v in ("Mean +/- SD", "PLV"))]
     data_rows   = [[row_name(c), *(v for col in columns for v in (mean_sd_cell(c, col), plv_cell(c, col)))]
                    for c in condition_order]
     text_rows   = [header_row1, header_row2] + data_rows
@@ -265,14 +239,10 @@ def plot_errors(errors: list[dict]) -> None:
     """Polar error-distribution histograms -- one per 'degrees'-unit series,
     with the circular mean +/- SD annotated.
 
-    No time-window trim is applied here: hilbert_phase/f0_continuous already
-    carry NaN on their own leading/trailing edges (see
-    analysis.main.load_and_analyse), so any series derived from them already
-    excludes those samples by the time it reaches this function, while a
-    series that doesn't touch the Hilbert reference (e.g. an online estimate
-    scored against true_phase) is used in full. Dropping NaNs below is enough
-    either way -- single-recording and pooled (analyse_pooled_errors())
-    `errors` lists are handled identically.
+    Series derived from hilbert_phase/f0_continuous already exclude their
+    edge-transient samples (NaN-masked in analysis.main.load_and_analyse), so
+    plain NaN-dropping below is enough for both single-recording and pooled
+    (analyse_pooled_errors()) `errors` lists.
     """
     if not errors:
         print("No errors to plot.")
@@ -341,10 +311,7 @@ def plot_errors(errors: list[dict]) -> None:
     _write_error_table(table_rows)
 
 
-# (records key, y-axis label, filename stub) for each per-recording scatter
-# metric plot_pooled_scatter() draws -- the general online-vs-Hilbert phase
-# error, plus the phase error scored at stimulus-onset edges specifically
-# against each of the two references (offline Hilbert / online estimate).
+# (records key, y-axis label, filename stub) per plot_pooled_scatter() metric
 _SCATTER_METRICS = [
     ("phase_vals",                              r"$\hat\theta - \theta_{\mathrm{HT}}$ [$^\circ$]", "phaseerr"),
     (r"Stim onset ($\hat\theta$)",              r"Stim onset ($\hat\theta$) [$^\circ$]",            "stimonset_hat"),
@@ -355,16 +322,12 @@ _SCATTER_METRICS = [
 def plot_pooled_scatter(records: list[dict]) -> None:
     """Per-recording scatter for pooled-error analysis: for each metric in
     _SCATTER_METRICS, one bullet per recording at the circular mean of that
-    metric's error series (y, with the circular SD as a vertical error bar),
-    against that recording's offline alpha-peak SNR [dB] (x).
+    metric's error series (y, with the circular SD as an error bar), against
+    the recording's offline alpha-peak SNR [dB] (x).
 
     Each record dict carries the raw error-value arrays keyed in
-    _SCATTER_METRICS (e.g. "phase_vals" for the online-vs-Hilbert phase
-    error, or the "Stim onset (...)" error labels from compute_errors()),
-    plus "snr_db". The y statistics drop non-finite samples below
-    (_circ_stats() itself assumes a NaN-free series); the series' edge
-    transients are already NaN by then since it's Hilbert-derived (see
-    analysis.main.load_and_analyse).
+    _SCATTER_METRICS, plus "snr_db". Non-finite y samples are dropped before
+    _circ_stats(), which assumes a NaN-free series.
     """
     if not records:
         print("No per-recording scatter data to plot.")
@@ -417,13 +380,9 @@ def plot_pooled_scatter(records: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 # Stackable time-domain panels
 # ---------------------------------------------------------------------------
-#
-# Each _panel_* function draws one self-contained time-domain view onto a
-# supplied Axes, using data pulled from a RecordingAnalysis (see
-# analysis/main.py). They all put "seconds since start_ts" on the x-axis, so
-# any subset can be stacked on a shared time axis by plot_stack().
-#
-# Panel names (as passed to plot_stack):
+# Each _panel_* draws one view onto a supplied Axes from a RecordingAnalysis
+# (analysis/main.py), sharing a "seconds since start_ts" x-axis so any subset
+# can be stacked by plot_stack(). Panel names:
 #   "f0"          - f0 over time: true / offline-Hilbert / MODAL / raw / smoothed
 #   "phase"       - offline Hilbert / online / true phase estimates
 #   "phase_error" - angular (degree) error series: phase & stimulus-edge errors
@@ -493,7 +452,7 @@ def _panel_phase_error(ax, a, start_ts: float, time_range: tuple = None) -> None
                 label=err["label"], alpha=0.85, rasterized=True)
 
     ax.legend(loc="upper right")
-    ax.set_ylabel("Error [°]")
+    ax.set_ylabel("Error [deg]")
     ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
 
@@ -568,17 +527,19 @@ def plot_stack(analysis, panels: list[str], *, start_ts: float = None,
                time_range: tuple = None, save_as: str = None,
                height_ratios: list[float] = None):
     """Stack any subset of the per-recording time-domain panels in one figure,
-    sharing a common time axis. No titles are drawn.
+    sharing a common time axis.
 
-    analysis:      a RecordingAnalysis (see analysis/main.py).
-    panels:        ordered panel names, top to bottom. Valid names:
-                   "f0", "phase", "phase_error", "signals".
-    start_ts:      x-axis origin in ground_truth["time"] units; defaults to the
-                   recording start (ground_truth["time"][0]).
-    height_ratios: per-panel vertical weights; defaults to an even split.
-    save_as:       basename for PDF an under PLOTS_DIR (skipped when None).
+    Args:
+        analysis: A RecordingAnalysis (see analysis/main.py).
+        panels: Ordered panel names, top to bottom: "f0", "phase",
+            "phase_error", "signals".
+        start_ts: x-axis origin in ground_truth["time"] units; defaults to
+            the recording start.
+        height_ratios: Per-panel vertical weights; defaults to an even split.
+        save_as: Basename for the PDF under PLOTS_DIR; skipped when None.
 
-    Returns (fig, axes).
+    Returns:
+        (fig, axes)
     """
     unknown = [p for p in panels if p not in _PANEL_DRAWERS]
     if unknown:
@@ -620,11 +581,7 @@ def plot_spectrum(raw: np.ndarray, samples: dict, filtered: np.ndarray, fs: floa
     """Plot FFT magnitude spectrum of raw and filtered signals."""
     freqs = np.fft.rfftfreq(len(raw), d=1 / fs)
 
-    # aperiodic_params were fit to a density-scaled PSD (Welch), where
-    # Pxx(f) = 2*|X(f)|^2 / (fs*n). Rescale the intercept to raw FFT power
-    # units: L(f) ~ |X(f)|^2. Take sqrt(L) to compare against the amplitude
-    # spectrum plotted below (same convention as compute_hilbert_reference).
-    # aperiodic_params is None when f0 was taken as ground truth (no 1/f fit).
+    # Rescale from density-scaled PSD units to raw FFT power (see compute_hilbert_reference)
     L = None
     if aperiodic_params is not None:
         slope, intercept = aperiodic_params
@@ -770,7 +727,7 @@ def get_erp_windows(fs: float, samples: dict, channel: list[int] = [1],
     """Extract EEG epochs around each trigger onset (-250 ms to +500 ms) for each channel.
 
     The EEG is bandpass-filtered (default 2-30 Hz) before epoching, and any
-    epoch whose peak amplitude exceeds ``reject_uv`` (default ±100 µV) is
+    epoch whose peak amplitude exceeds ``reject_uv`` (default +/-100 uV) is
     discarded. Each returned window carries a 1-based "channel" key so
     callers can group windows by channel.
 
@@ -831,7 +788,7 @@ def get_erp_windows(fs: float, samples: dict, channel: list[int] = [1],
                                    "stim_dur_s":  stim_dur_s})
 
         if n_rejected:
-            print(f"Channel {ch}: rejected {n_rejected} epoch(s) with peak amplitude > ±{reject_uv:.0f} µV.")
+            print(f"Channel {ch}: rejected {n_rejected} epoch(s) with peak amplitude > +/-{reject_uv:.0f} uV.")
 
         if average and ch_windows:
             stim_durs = [w["stim_dur_s"] for w in ch_windows if w["stim_dur_s"] is not None]
@@ -883,7 +840,7 @@ def plot_erp_latency(windows: list[dict], fs: float) -> float | None:
     if stim_dur is not None:
         print(f"Estimated stimulus duration: {stim_dur * 1000:.1f} ms")
 
-    # Vertical spacing between channels, large enough that ±1 SD bands don't overlap.
+    # Vertical spacing between channels, large enough that +/-1 SD bands don't overlap.
     # span        = max(np.max(c["avg"] + c["std"]) - np.min(c["avg"] - c["std"]) for c in channels)
     span        = max(np.max(c["avg"]) - np.min(c["avg"]) for c in channels)
     offset_step = span * 1.2
@@ -900,7 +857,7 @@ def plot_erp_latency(windows: list[dict], fs: float) -> float | None:
         plt.plot(time, c["avg"] + offset, color="tab:blue", linewidth=2,
                  label="Average ERP" if i == 0 else None)
         plt.fill_between(time, c["avg"] - c["std"] + offset, c["avg"] + c["std"] + offset,
-                         color="tab:blue", alpha=0.2, label="±1 SD" if i == 0 else None)
+                         color="tab:blue", alpha=0.2, label="+/-1 SD" if i == 0 else None)
         yticks.append(offset)
         yticklabels.append(f"{CHANNEL_NAMES.get(c['channel'], c['channel'])}" if c["channel"] is not None else "")
 
@@ -909,7 +866,7 @@ def plot_erp_latency(windows: list[dict], fs: float) -> float | None:
                label=f"Mean P1 latency ({p1_latency * 1000:.1f} ms)")
 
     plt.xlabel("Peri-stimulus time [s]")
-    plt.ylabel("Channel" if len(channels) > 1 else "EEG amplitude [µV]")
+    plt.ylabel("Channel" if len(channels) > 1 else "EEG amplitude [uV]")
     if len(channels) > 1:
         plt.yticks(yticks, yticklabels)
     plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
@@ -932,12 +889,12 @@ def plot_erp_latency(windows: list[dict], fs: float) -> float | None:
         plt.plot(time, w["eeg_y"], color="0.8", linewidth=0.8, alpha=0.8)
     plt.plot(time, avg_pooled, color="tab:blue", linewidth=2, label="Average ERP")
     plt.fill_between(time, avg_pooled - std_pooled, avg_pooled + std_pooled,
-                     color="tab:blue", alpha=0.2, label="±1 SD")
+                     color="tab:blue", alpha=0.2, label="+/-1 SD")
     plt.axvline(0, color="0.0", linestyle="--", label="Trigger onset")
     plt.axvline(p1_latency_pooled, color="tab:red", linestyle="--",
                label=f"P1 latency ({p1_latency_pooled * 1000:.1f} ms)")
     plt.xlabel("Peri-stimulus time [s]")
-    plt.ylabel("EEG amplitude [µV]")
+    plt.ylabel("EEG amplitude [uV]")
     plt.title("Grand average ERP (all channels pooled)")
     plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
     plt.legend(loc="upper right")

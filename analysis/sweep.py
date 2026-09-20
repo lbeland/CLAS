@@ -10,13 +10,9 @@ find_result_dirs).
 
 Run from the repo root, either as a module or as a script:
 
-    python -m analysis.sweep          # runs the __main__ block below
+    python -m analysis.sweep
     python analysis/sweep.py
 
-or from your own code / a REPL:
-
-    from analysis.sweep import snr_sweep_table
-    snr_sweep_table("results/snr_sweep/ecHTtests", kind="echt")
 """
 
 import csv
@@ -46,20 +42,15 @@ ONLINE_VS_HILBERT = r"$\hat\theta - \theta_{\mathrm{HT}}$"  # online estimate - 
 
 
 def _phase_error_stats(values: np.ndarray) -> "tuple[float, float, int]":
-    """Circular mean and circular SD (both in degrees) of a wrapped phase-error
-    series, after dropping non-finite samples.
+    """Circular mean and circular SD (both in degrees) of a wrapped
+    phase-error series, after dropping non-finite samples.
 
-    Series derived from the offline Hilbert phase (HILBERT_VS_GT,
-    ONLINE_VS_HILBERT) already carry NaN on their own leading/trailing edges
-    (hilbert_phase is NaN-masked at its own edges in
-    analysis.main.load_and_analyse), so no separate time-window trim is
-    needed here -- and one that isn't Hilbert-derived (ONLINE_VS_GT, the
-    online estimate scored directly against true_phase) is used in full
-    instead of being needlessly cut at both ends. Circular statistics
-    (scipy.stats.circmean / circstd) are used because the error is an angle:
-    the mean stays a meaningful lead/lag bias even for a broad distribution,
-    and the SD isn't inflated by the (-180, 180] wrap. These numbers match
-    the polar-plot annotations in plot_errors()."""
+    Args:
+        values: Wrapped phase-error series (degrees).
+
+    Returns:
+        (mean, std, n): circular mean, circular SD, and number of samples used.
+    """
     vals = np.asarray(values, dtype=float)
     vals = vals[np.isfinite(vals)]
     if vals.size == 0:
@@ -72,23 +63,16 @@ def _phase_error_stats(values: np.ndarray) -> "tuple[float, float, int]":
 
 def _phase_correlation(a_vals: np.ndarray, b_vals: np.ndarray) -> "tuple[float, int]":
     """Jammalamadaka-Sarma circular correlation between two wrapped
-    phase-error series -- here the online estimate's error vs. ground truth
-    (theta_hat - theta) and the offline Hilbert error vs. ground truth
-    (theta_HT - theta).
+    phase-error series, e.g. the online estimate's error vs. ground truth
+    and the offline Hilbert error vs. ground truth.
 
-    Both series are first centred on their own circular mean and the sine of
-    each residual is taken; the correlation is the mean product of those
-    sines normalised by the two sine RMS values:
-    rho_JS = E[sin(a-mu_a) sin(b-mu_b)] / sqrt(E[sin^2(a-mu_a)] E[sin^2(b-mu_b)]).
-    Ground truth is common to both series, so this isolates shared *error*
-    structure: a positive value means the online and offline estimates tend
-    to lead / lag the true phase together in this run, near zero means their
-    departures from truth are unrelated.
+    Args:
+        a_vals: First wrapped phase-error series (degrees).
+        b_vals: Second wrapped phase-error series (degrees).
 
-    Only non-finite samples are dropped (see _phase_error_stats() for why no
-    time-window trim is needed): b_vals is the Hilbert-derived series here,
-    so its NaN edges alone already exclude those samples from both series via
-    the shared `keep` mask. Returns (corr, n)."""
+    Returns:
+        (corr, n): correlation coefficient and number of samples used.
+    """
     a = np.asarray(a_vals, dtype=float)
     b = np.asarray(b_vals, dtype=float)
     n = min(len(a), len(b))
@@ -114,8 +98,7 @@ def _run_carrier_f0(opts: dict, fallback: float) -> float:
         return fallback
 
 # Per-kind table layout: (spec, plain-text header, LaTeX header, per-value format).
-# `spec` is a row key, or a (mean_key, std_key) pair rendered as "mean +/- std"
-# ("$mean \\pm std$" in LaTeX).
+# `spec` is a row key, or a (mean_key, std_key) pair rendered as "mean +/- std".
 _SWEEP_TABLE_COLUMNS = {
     "echt": [
         ("noise",                                 "noise",               "Noise",                              "{}"),
@@ -153,35 +136,27 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
                     caption: str = None, label: str = None) -> "list[dict]":
     """Summarise an SNR / noise-colour sweep as a table instead of a plot.
 
-    One row per run folder under sweep_dir, keyed by that run's SimulatedSource
-    snr_db / noise_color: circular mean phase error +/- circular SD (deg) from
-    the online-vs-ground-truth phase-error series (online ecHT vs. true phase),
-    plus the same for the online-vs-Hilbert and Hilbert-vs-GT errors. Errors
-    carry the (estimate - reference) sign, i.e. theta_hat - theta, and match
-    plot_errors()'s polar annotations. One extra column gives the circular
-    correlation between the online and offline Hilbert errors vs. ground
-    truth, per noise type and level -- a measure of how much the two phase
-    estimators depart from the true phase together.
+    One row per run folder under sweep_dir: circular mean +/- SD (deg) of the
+    online-vs-ground-truth, online-vs-Hilbert, and Hilbert-vs-GT phase
+    errors, plus the circular correlation between the online and offline
+    Hilbert errors vs. ground truth. Prints the table and writes
+    snr_sweep_<kind>.csv/.tex into out_dir.
 
-    f0_is_truth (default True): take each run's known carrier_frequency as the
-    pre-Hilbert bandpass centre instead of re-estimating f0 offline (see
-    analysis.main.load_and_analyse). Pass False to fall back to offline
-    estimation with `f0` as the default. whiten (default False) leaves the 1/f
-    aperiodic whitening of the offline reference off; pass whiten=True to
-    compare against the whitened reference instead.
+    Args:
+        sweep_dir: Directory containing the run folders to summarise.
+        kind: Table layout, a key into _SWEEP_TABLE_COLUMNS.
+        f0: Default pre-Hilbert bandpass centre frequency (Hz) when
+            f0_is_truth is False.
+        out_dir: Output directory for the .csv/.tex files (default: PLOTS_DIR).
+        f0_is_truth: Use each run's known carrier_frequency as f0 instead of
+            re-estimating it offline.
+        whiten: Apply 1/f aperiodic whitening to the offline reference.
+        caption: Overrides the .tex table's default caption.
+        label: Overrides the .tex table's default \\ref label
+            (tab:snr_sweep_<kind>).
 
-    The offline-Hilbert-derived columns (vs_hilbert*, hilb_vs_gt*, and
-    corr_online_hilb) already exclude their own leading/trailing edge
-    transients -- hilbert_phase is NaN-masked at its own edges in
-    analysis.main.load_and_analyse, so those NaNs simply drop out of the
-    circular stats below. The online-vs-ground-truth column (err_mean/std)
-    doesn't touch the Hilbert phase at all and is computed over the full run.
-
-    Prints the table and writes snr_sweep_<kind>.csv / .tex into out_dir
-    (default: the shared plots directory). The .tex is a full centred table
-    float with caption and label (\\ref-able as tab:snr_sweep_<kind> unless
-    `label` overrides it; `caption` overrides the default wording). Returns
-    the row dicts.
+    Returns:
+        The row dicts.
     """
     if kind not in _SWEEP_TABLE_COLUMNS:
         raise ValueError(f"kind must be one of {list(_SWEEP_TABLE_COLUMNS)}, got {kind!r}")
@@ -218,9 +193,7 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
             hgt = next((e for e in errors if e["label"] == HILBERT_VS_GT), None)
             hgt_mean, hgt_std, _ = (_phase_error_stats(hgt["values"])
                                     if hgt is not None else (np.nan, np.nan, 0))
-            # Circular correlation between the online estimate's error vs.
-            # ground truth and the offline Hilbert error vs. ground truth
-            # (shared truth cancels, so this is shared *error* structure).
+            # Circular correlation of the online and offline errors vs. ground truth
             corr_oh, _ = (_phase_correlation(series["values"], hgt["values"])
                          if hgt is not None else (np.nan, 0))
             # compute_errors() already uses the (estimate - reference) sign,
@@ -266,7 +239,7 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
         spec, _text, _tex, fmt = col
         if isinstance(spec, tuple):  # (mean_key, std_key) -> "mean +/- std"
             m, s = _num(fmt, row.get(spec[0], np.nan)), _num(fmt, row.get(spec[1], np.nan))
-            return rf"${m} \pm {s}$" if latex else f"{m} ± {s}"
+            return rf"${m} \pm {s}$" if latex else f"{m} +/- {s}"
         return _num(fmt, row.get(spec, np.nan))
 
     text_cells = [[_cell(c, r) for c in cols] for r in rows]
@@ -291,9 +264,8 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
         writer.writerow([c[1] for c in cols])
         writer.writerows(text_cells)
 
-    # LaTeX: one \multirow noise label per group of same-noise rows (rows are
-    # pre-sorted by (noise, snr_db), so each group is contiguous), \midrule
-    # between groups.
+    # LaTeX: one \multirow noise label per contiguous group of same-noise rows
+    # (rows are pre-sorted by (noise, snr_db)), \midrule between groups
     latex_cells = [[_cell(c, r, latex=True) for c in cols] for r in rows]
     align = "l" + "r" * (len(cols) - 1)
     body  = [r"\begin{tabular}{" + align + "}", r"\toprule",

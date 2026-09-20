@@ -11,10 +11,32 @@ from tqdm import tqdm
 
 from .stimulus import StimulusConfig, compute_reference_stimulus, compute_stimulus_edge_errors, \
     compute_stimulus_duration_error, get_edges
-from .f0 import alpha_fast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PHASE_estimation.jade import jade_v3
+
+
+def _edge_trim_window(errors: list[dict], lo_frac: float = 0.1,
+                      hi_frac: float = 0.90) -> tuple[float, float]:
+    """The [t_lo, t_hi] wall-clock window that drops the leading/trailing
+    edge-transient slice of a recording.
+
+    Derived from errors[0]'s timestamps at lo_frac/hi_frac of its length, so
+    every series is trimmed by the same amount of time regardless of its own
+    sampling rate. Used by plot_errors(), the "phase_error" stack panel, and
+    estimate_f0_with_phase(), so the trim shown always matches the trim applied.
+
+    Returns:
+        (-inf, +inf) when there is nothing to trim on.
+    """
+    if not errors:
+        return (-np.inf, np.inf)
+    ref_t = np.asarray(errors[0]["time_s"], dtype=float)
+    if ref_t.size == 0:
+        return (-np.inf, np.inf)
+    lo_idx = int(lo_frac * len(ref_t))
+    hi_idx = min(int(hi_frac * len(ref_t)), len(ref_t) - 1)
+    return float(ref_t[lo_idx]), float(ref_t[hi_idx])
 
 
 def compute_hilbert_reference(
@@ -22,14 +44,18 @@ def compute_hilbert_reference(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """Bandpass + Hilbert transform to produce an offline phase reference.
 
-    When aperiodic_params is given, the spectrum is whitened (divided by the
-    fitted 1/f aperiodic PSD) before bandpassing, so the alpha peak is
-    isolated from the pink-noise floor rather than just band-limited to it --
-    this is deliberate: Hilbert phase is sensitive to off-peak spectral
-    content leaking into the passband, so suppressing the aperiodic floor
-    gives a cleaner phase estimate. The resulting amplitude is on a
-    "whitened" scale, not raw's physical units, but that doesn't matter here
-    since only the Hilbert phase (angle) is used downstream, not amplitude.
+    Args:
+        raw: Input signal.
+        fs: Sample rate (Hz).
+        f0: Bandpass centre frequency (Hz); passband is [0.7, 1.3] * f0.
+        aperiodic_params: (slope, intercept) of a fitted 1/f PSD. When given,
+            the spectrum is whitened before bandpassing so the alpha peak is
+            isolated from the pink-noise floor, giving a cleaner Hilbert
+            phase (amplitude ends up on a whitened scale, which is fine since
+            only the phase is used downstream).
+
+    Returns:
+        (filtered signal, Hilbert phase, whitened spectrum or None).
     """
     X_white = None
 
@@ -43,9 +69,7 @@ def compute_hilbert_reference(
 
         X = np.fft.rfft(raw)
 
-        # Aperiodic params were fit to a density-scaled PSD (Welch/periodogram),
-        # where Pxx(f) = 2*|X(f)|^2 / (fs*n). Rescale the intercept to match
-        # the raw FFT's power units before taking the sqrt to whiten.
+        # Rescale intercept from density-scaled PSD units (Pxx = 2*|X|^2/(fs*n)) to raw FFT power
         intercept_fft = intercept + np.log10(fs * n / 2)
         L = np.zeros_like(freqs)
         L[1:] = (freqs[1:] ** slope) * (10**intercept_fft)  # skip f=0
@@ -69,12 +93,13 @@ def _fif_isolate_component(
     """Decompose `raw` with Fast Iterative Filtering and return the IMC whose
     mean frequency is closest to `target_hz`.
 
-    This is the adaptive alternative to the linear bandpass used elsewhere for
-    JADE conditioning: FIF splits the signal into intrinsic mode components
-    whose instantaneous frequency is well behaved, so the component carrying
-    the oscillation of interest is mono-component by construction rather than
-    merely band-limited. Returns None if FIF is unavailable or fails so the
-    caller can fall back to the bandpassed signal.
+    Adaptive alternative to the linear bandpass used elsewhere for JADE
+    conditioning: FIF splits the signal into intrinsic mode components that
+    are mono-component by construction, rather than merely band-limited.
+
+    Returns:
+        The matching IMC, or None if FIF is unavailable or fails (caller
+        falls back to the bandpassed signal).
     """
     try:
         from PHASE_estimation.FIF import FIF as FIFClass
@@ -109,17 +134,11 @@ def compute_jade_errors(
     """JADE-based phase/IF estimate (see PHASE_estimation/jade.py) and its
     error against ground truth, in the same format as compute_errors().
 
-    JADE's zero-crossing detector is a bare sign-change test with no noise
-    rejection of its own; feeding it a wideband signal lets sample-to-sample
-    noise (comparable in size to the true per-sample step near a zero-crossing
-    when fs >> f0) inject spurious crossings and corrupt the DTW cycle fits. So
-    JADE is always run on a conditioned, mono-component signal:
-
-      * if `use_fif` and `raw` is given, `raw` is decomposed with Fast
-        Iterative Filtering and the IMC nearest the target frequency (`f0`, or
-        the mean of `true_inst_freq`) is used;
-      * otherwise `filtered` is used, which must already be bandpass-filtered
-        (e.g. compute_hilbert_reference's output).
+    JADE's zero-crossing detector has no noise rejection, so it always runs
+    on a conditioned, mono-component signal rather than a wideband one:
+    Fast Iterative Filtering picks the IMC nearest the target frequency when
+    `use_fif` and `raw` are given, else `filtered` is used directly (must
+    already be bandpass-filtered, e.g. compute_hilbert_reference's output).
     """
     jade_input = None
     if use_fif and raw is not None:
@@ -134,9 +153,8 @@ def compute_jade_errors(
     t = np.arange(len(jade_input)) / fs
     IF, phase, zc, amp = jade_v3(jade_input, t, 1 / fs, smooth=0, normalize=0)
 
-    # JADE's phase is zero-crossing-referenced (x ~ sign*amp*sin(2*pi*phase));
-    # true_phase is peak-referenced (x ~ amp*cos(phase)). Convert and resolve
-    # the sign from JADE's own reconstruction, same as in PHASE_estimation/phase_test.py.
+    # Convert JADE's zero-crossing-referenced phase to true_phase's peak-referenced
+    # convention, resolving the sign from JADE's own reconstruction
     start = int(zc[0]) - 1
     recon = amp * np.sin(2 * np.pi * phase)
     sign  = 1.0 if np.dot(recon, jade_input[start:start + recon.size]) >= 0 else -1.0
@@ -180,7 +198,7 @@ def compute_errors(
         phi = samples["PhaseEstimation_phase"]["y"]
         n   = len(phi)
         ref = true_phase[:n] if true_phase is not None else hilbert_phase[:n]
-        label = r"$\hat \theta - \theta$" if true_phase is not None else r"$\hat \theta - \theta_{\mathrm{HT}}$"
+        label = r"$\hat \theta - \theta$" if true_phase is not None else r"$\hat\theta - \theta_{\mathrm{HT}}$"
         err = np.angle(np.exp(1j * (phi - ref)), deg=True)
         errors.append({"label": label, "time_s": t, "values": err,
                         "unit": "degrees", "linestyle": "-"})
@@ -190,9 +208,7 @@ def compute_errors(
             errors.append({"label": r"$\theta_{\mathrm{HT}} - \theta$", "time_s": t, "values": h_err,
                            "unit": "degrees", "linestyle": "-"})
 
-            # Online estimate vs the offline Hilbert estimate, as if Hilbert
-            # were ground truth. When there's no true_phase this is identical
-            # to "Phase error", so it's only added here to avoid a duplicate.
+            # Online vs offline Hilbert estimate; equals "Phase error" without true_phase
             oh_err = np.angle(np.exp(1j * (phi - hilbert_phase[:n])), deg=True)
             errors.append({"label": r"$\hat\theta - \theta_{\mathrm{HT}}$", "time_s": t, "values": oh_err,
                            "unit": "degrees", "linestyle": "--"})
@@ -227,17 +243,15 @@ def compute_errors(
         trigger_binary = (trigger_y > 0.5).astype(float)
         time_us        = ground_truth["time"]
 
-        # Ideal stimulus train -- kept only for visualisation / EDF export;
-        # the edge errors below no longer match against it.
+        # Ideal stimulus train, for visualisation / EDF export
         stim_ref, _, _ = compute_reference_stimulus(ref_phase, f0_y, fs, stim_cfg)
         n_ideal  = len(get_edges(stim_ref, "rising"))
         n_actual = len(get_edges(trigger_binary, "rising"))
         if n_actual != n_ideal:
             print(f"Stimulus: {n_actual} onset(s) delivered vs {n_ideal} ideal.")
 
-        # Phase error at each trigger edge vs the phase the controller targets,
-        # scored against the offline reference phase (true_phase if available,
-        # else the offline Hilbert phase).
+        # Phase error at each trigger edge vs the controller's target phase,
+        # scored against true_phase if available, else the offline Hilbert phase
         onset_err, offset_err = compute_stimulus_edge_errors(
             trigger_binary, time_us, ref_phase, stim_cfg, start_ts, fs)
         if onset_err is not None:
@@ -249,9 +263,8 @@ def compute_errors(
                            "time_s": offset_err["time_s"], "values": offset_err["values"],
                            "unit": "degrees", "linestyle": "--"})
 
-        # With stim_dur_unit == "ms" there's no target phase for the falling
-        # edge (the burst is timed, not phase-targeted), so offset_err above
-        # is None; score the actual-vs-target burst length in ms instead.
+        # "ms" mode times the burst rather than phase-targeting the falling edge,
+        # so score actual-vs-target burst length in ms instead
         if stim_cfg.stim_dur_unit != "deg":
             dur_err = compute_stimulus_duration_error(trigger_binary, time_us, stim_cfg, start_ts)
             if dur_err is not None:
@@ -261,11 +274,7 @@ def compute_errors(
                                "time_s": dur_err["time_s"], "values": dur_err["values"],
                                "unit": "ms"})
 
-        # Same edges again, but scored against the online phase estimate
-        # (`PhaseEstimation_phase`, produced live by the real-time ECHT-based
-        # PhaseEstimation processor) instead of the offline/ground-truth
-        # reference above -- i.e. what the running system actually saw,
-        # rather than an offline reconstruction.
+        # Same edges, scored against the live ECHT PhaseEstimation output instead
         echt_phase = samples.get("PhaseEstimation_phase", {}).get("y")
         echt_onset_err, echt_offset_err = compute_stimulus_edge_errors(
             trigger_binary, time_us, echt_phase, stim_cfg, start_ts, fs)

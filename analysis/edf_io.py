@@ -39,17 +39,19 @@ _NAME_TO_INDEX = {name: idx for idx, name in CHANNEL_NAMES.items()}
 
 def _write_edf(filepath: str, fs: float, start_time_us: float, channels: list[tuple],
                 annotations: "mne.Annotations | None" = None) -> None:
-    """channels is a list of (name, mne_ch_type, values). Non-EEG numeric
-    channels (phase, target stimulus, ...) must use ch_type "stim", not
-    "misc": mne's EDF writer labels every non-stim, non-eeg channel's
-    physical_dimension as "uV" regardless of type, and mne.io.read_raw_edf()
-    then silently divides "misc" channels by 1e6 to convert that assumed uV
-    into V -- "stim" channels get an empty physical_dimension and round-trip
-    exactly. Only used for analysis.edf now; raw_signals.edf sticks to
-    "eeg"/"stim" types that are meaningful to any EDF reader, not just ours.
-    add_ch_type=False keeps channel labels exactly as given (no "STIM "/
-    "EEG " prefix) -- we never rely on the prefix, and dropping it leaves
-    more headroom under EDF's 16-character label limit."""
+    """Write channels to an EDF file.
+
+    Args:
+        channels: List of (name, mne_ch_type, values). Non-EEG numeric
+            channels (phase, target stimulus, ...) must use ch_type "stim",
+            not "misc": mne's EDF writer always labels non-stim/non-eeg
+            channels' physical_dimension as "uV", and mne.io.read_raw_edf()
+            then divides "misc" channels by 1e6 on read; "stim" channels
+            round-trip exactly instead.
+
+    add_ch_type=False keeps channel labels as given, within EDF's
+    16-character label limit.
+    """
     min_len = min(len(ch[2]) for ch in channels)
     info    = mne.create_info([ch[0] for ch in channels], sfreq=fs,
                               ch_types=[ch[1] for ch in channels], verbose=False)
@@ -86,18 +88,12 @@ def write_raw_signals_edf(
     """Write the generic, tool-agnostic recording (EEG channels, AUX, Trigger)
     to raw_signals.edf. No pipeline-internal data -- see runtime_meta.py.
 
-    Channels with a known 10-20 electrode (see analysis.plot.CHANNEL_NAMES,
-    e.g. index 3 -> "Fz") are labelled with that name; channels without one
-    keep the generic "EEG_{index}" label.
-
-    Raw per-channel samples come from either "UDPSource_{idx}" (real
-    hardware) or "SimulatedSource_{idx}" (simulated runs). Only "UDPSource_*"
-    channels get a real 10-20 electrode name -- "SimulatedSource_*" channels are
-    synthetic and carry no meaningful electrode correspondence, so they
-    always get the generic "EEG_{idx+1}" label even when their index happens
-    to match a named electrode. load_runtime() always reconstructs them as
-    "UDPSource_{idx}" on reload regardless of which one the original
-    recording used (see its docstring)."""
+    Channels with a known 10-20 electrode (analysis.plot.CHANNEL_NAMES, e.g.
+    index 3 -> "Fz") are labelled with that name; others get "EEG_{index}".
+    Only real "UDPSource_*" channels get an electrode name -- synthetic
+    "SimulatedSource_*" channels always get "EEG_{idx+1}", since load_runtime()
+    reconstructs either as "UDPSource_{idx}" on reload regardless.
+    """
     time = ground_truth["time"]
     n    = len(time)
 
@@ -161,29 +157,24 @@ def load_runtime(raw_edf_path: str, meta_h5_path: str) -> tuple[dict, dict, "mne
     recording = load_raw_signals_edf(raw_edf_path)
 
     fs   = meta["fs"]
-    # meta["n_samples"] (from runtime_metadata.h5) is authoritative, not
-    # recording["n"]: mne's EDF writer pads the final data record up to a
-    # whole number of seconds, so raw_signals.edf's channels usually come
-    # back a few samples longer than the (exact) online-estimate arrays.
+    # Authoritative over recording["n"]: EDF pads the final record to a whole second
     n    = meta["n_samples"]
     time = meta["start_ts"] + np.round(np.arange(n) / fs * 1e6).astype(np.int64)
 
     def source_ts(key):
         return meta["source_ts"].get(key)
 
-    # Only the lowest-indexed recorded channel carries the true jittered
-    # hardware_ts (see write_runtime_metadata) -- it's the only one
-    # analyse_latencies() reads. Not necessarily index 0: e.g. only channel 3
-    # may have been selected for recording.
+    # Only the lowest-indexed recorded channel carries hardware_ts (see write_runtime_metadata)
     hw_ts = meta.get("hardware_ts")
     hw_ts = hw_ts[:n] if hw_ts is not None else None
     first_idx = min(recording["eeg"], default=None)
 
+    raw_prefix = meta["raw_source_class"]
     samples = {}
     for idx, y in recording["eeg"].items():
-        samples[f"UDPSource_{idx}"] = {"x": time, "y": y[:n], "source_ts": source_ts(f"UDPSource_{idx}")}
+        samples[f"{raw_prefix}_{idx}"] = {"x": time, "y": y[:n], "source_ts": source_ts(f"{raw_prefix}_{idx}")}
         if idx == first_idx and hw_ts is not None:
-            samples[f"UDPSource_{idx}"]["hw_ts"] = hw_ts
+            samples[f"{raw_prefix}_{idx}"]["hw_ts"] = hw_ts
     if recording["trigger"] is not None:
         samples["UDPSource_TRIGGER"] = {"x": time, "y": recording["trigger"][:n], "source_ts": source_ts("UDPSource_TRIGGER")}
 
@@ -227,10 +218,17 @@ def write_analysis_edf(
     f0_continuous: np.ndarray = None,
     stim_ref: np.ndarray = None,
     annotations: "mne.Annotations | None" = None,
+    whitened: bool = False,
 ) -> None:
     """Write the offline-analysis outputs (selected-channel raw, offline/online
     filter+phase+f0, target+trigger stimulus) to analysis.edf, for visually
-    comparing online vs. offline estimates in an EDF viewer."""
+    comparing online vs. offline estimates in an EDF viewer.
+
+    Args:
+        whitened: Whether `filtered` was spectrally whitened (see
+            compute_hilbert_reference); if so, it's on a different scale than
+            Raw's uV and is stored as "stim" instead of "eeg".
+    """
     raw  = ground_truth["raw"]
     time = ground_truth["time"]
     n    = len(raw)
@@ -238,15 +236,9 @@ def write_analysis_edf(
     channels = [("Raw", "eeg", raw)]
 
     if filtered is not None:
-        # Deliberately whitened/on a different scale than Raw -- see
-        # compute_hilbert_reference's docstring -- so "stim" here, not "eeg";
-        # nothing about it is physically comparable to Raw's uV scale anyway.
-        channels.append(("Filt_off", "stim", filtered[:n]))
+        channels.append(("Filt_off", "stim" if whitened else "eeg", filtered[:n]))
     if samples.get("ecHTFilter") is not None:
-        # Plain online bandpass of raw uV EEG, no whitening (see
-        # MultiChannelFilter::Process) -- "eeg" like Raw, not "stim", so both
-        # get the same physical_dimension/scaling treatment on export/import
-        # (by any reader, mne included) and stay visually comparable.
+        # Plain online bandpass of raw uV EEG, no whitening: "eeg" like Raw so both stay comparable
         channels.append(("Filt_on", "eeg", samples["ecHTFilter"]["y"][:n]))
     if hilbert_phase is not None:
         channels.append(("Phase_off", "stim", np.nan_to_num(hilbert_phase, nan=-2 * np.pi)[:n]))

@@ -31,15 +31,10 @@ from scipy.ndimage import label
 import statsmodels.api as sm
 
 
-# --------------------------------------------------------------------------
-# Helper: substitute for the Kahana-lab "multiphasevec2" function.
-# Computes a (frequencies x time) power matrix via a bank of complex
-# Morlet wavelets, as noted is acceptable in the original MATLAB comments:
-#   "Requires Kahana lab eegtoolbox function 'multiphasevec2' or substitute
-#    your own function which calculates power in a single
-#    Frequencies X Times matrix"
-# --------------------------------------------------------------------------
 def _morlet_wavelet_power(signal, wavefreqs, srate, wavecycles=6):
+    """Substitute for the Kahana-lab "multiphasevec2" function: a
+    (frequencies x time) power matrix via a bank of complex Morlet wavelets.
+    """
     n = len(signal)
     pow_out = np.zeros((len(wavefreqs), n))
 
@@ -47,8 +42,7 @@ def _morlet_wavelet_power(signal, wavefreqs, srate, wavecycles=6):
         sigma_t = wavecycles / (2 * np.pi * f)
         half_len = int(np.ceil(3.5 * sigma_t * srate))
         if 2 * half_len + 1 > n:
-            # wavelet needs more samples than the signal provides (frequency
-            # too low for this window length) -- can't resolve it here.
+            # Frequency too low to resolve within this signal length
             warnings.warn(
                 f"_morlet_wavelet_power: frequency {f:.4g} Hz needs a wavelet "
                 f"longer than the {n}-sample signal; setting power to NaN."
@@ -59,21 +53,18 @@ def _morlet_wavelet_power(signal, wavefreqs, srate, wavecycles=6):
         wavelet = np.exp(2j * np.pi * f * t) * np.exp(-t ** 2 / (2 * sigma_t ** 2))
         # normalize wavelet energy
         wavelet = wavelet / np.sqrt(np.sum(np.abs(wavelet) ** 2))
-        # FFT-based convolution -- at real recording lengths/sample rates the
-        # direct-form np.convolve this was ported from is intractable (a
-        # low-frequency wavelet's kernel can run to tens of thousands of taps).
+        # FFT-based, unlike the direct-form np.convolve this was ported from:
+        # a low-frequency wavelet's kernel can run to tens of thousands of taps
         conv = fftconvolve(signal, wavelet, mode="same")
         pow_out[i, :] = np.abs(conv) ** 2
 
     return pow_out
 
 
-# --------------------------------------------------------------------------
-# Helper: robust linear fit, matching MATLAB's robustfit(x, y) default
-# (iteratively reweighted least squares with a bisquare/Tukey weight fn).
-# Returns intercept (b0) and slope (b1) such that y ~ b0 + b1*x
-# --------------------------------------------------------------------------
 def _robustfit(x, y):
+    """Robust linear fit matching MATLAB's robustfit(x, y) default (IRLS with
+    a bisquare/Tukey weight function). Returns (intercept, slope) for y ~ b0 + b1*x.
+    """
     good = ~np.isnan(x) & ~np.isnan(y)
     X = sm.add_constant(x[good])
     model = sm.RLM(y[good], X, M=sm.robust.norms.TukeyBiweight())
@@ -82,11 +73,9 @@ def _robustfit(x, y):
     return b0, b1
 
 
-# --------------------------------------------------------------------------
-# Helper: nearest-neighbor lookup, equivalent to MATLAB's dsearchn(x, xi)
-# for a 1-D sorted vector x and a scalar/array xi.
-# --------------------------------------------------------------------------
 def _dsearchn(x, xi):
+    """Nearest-neighbor lookup, equivalent to MATLAB's dsearchn(x, xi) for a
+    1-D sorted vector x and a scalar/array xi."""
     x = np.asarray(x)
     idx = np.searchsorted(x, xi)
     idx = np.clip(idx, 1, len(x) - 1)
@@ -96,12 +85,10 @@ def _dsearchn(x, xi):
     return idx
 
 
-# --------------------------------------------------------------------------
-# Helper: 1-D median filter matching MATLAB's medfilt1(x, n) reasonably
-# closely (odd window sizes are used natively; even orders are rounded up
-# to the next odd value, since scipy.signal.medfilt requires odd kernels).
-# --------------------------------------------------------------------------
 def _medfilt1(x, n):
+    """1-D median filter approximating MATLAB's medfilt1(x, n); even orders
+    are rounded up to the next odd value, since scipy.signal.medfilt requires
+    odd kernels."""
     n = int(round(n))
     if n < 1:
         n = 1
@@ -114,18 +101,19 @@ def _medfilt1(x, n):
     return medfilt(x, kernel_size=n)
 
 
-# --------------------------------------------------------------------------
-# Key Step #1: adaptively identify oscillatory bands from a 1/f fit.
-# --------------------------------------------------------------------------
 def _get_bands(wavefreqs, pow_mat):
-    """
-    wavefreqs : 1D array of sampled frequencies (not log-transformed)
-    pow_mat   : (frequencies x time) power matrix (not log-transformed)
+    """Key Step #1: adaptively identify oscillatory bands from a 1/f fit.
 
-    Returns:
-        freq_bands : (n_bands x 2) array of [lower, upper] band edges (Hz)
-        bandidx    : list of arrays, indices into wavefreqs for each band
-        bandpow    : (n_bands x time) mean log-power per band
+    Parameters
+    ----------
+    wavefreqs : 1D array of sampled frequencies (not log-transformed)
+    pow_mat : (frequencies x time) power matrix (not log-transformed)
+
+    Returns
+    -------
+    freq_bands : (n_bands x 2) array of [lower, upper] band edges (Hz)
+    bandidx : list of arrays, indices into wavefreqs for each band
+    bandpow : (n_bands x time) mean log-power per band
     """
     fz = np.log(wavefreqs)
     mean_pow = np.log(np.nanmean(pow_mat, axis=1))
@@ -153,19 +141,20 @@ def _get_bands(wavefreqs, pow_mat):
     return np.array(freq_bands), bandidx, np.array(bandpow_list)
 
 
-# --------------------------------------------------------------------------
-# Key Step #3: remove frequency-sliding estimates below a *local* 1/f fit
-# (computed on a smaller time window than the global fit).
-# --------------------------------------------------------------------------
 def _fit_one_over_f_windows(frequency_sliding, wavefreqs, pow_mat, bandidx):
-    """
-    frequency_sliding : (n_bands x window_time) FS estimates for this window
-    wavefreqs         : 1D array of sampled frequencies
-    pow_mat           : (frequencies x window_time) power for this window
-    bandidx           : list of arrays, indices into wavefreqs for each band
+    """Key Step #3: NaN out frequency-sliding estimates below a *local* 1/f
+    fit (computed on a smaller time window than the global fit).
 
-    Returns frequency_sliding with sub-threshold (below local 1/f) values
-    replaced with NaN.
+    Parameters
+    ----------
+    frequency_sliding : (n_bands x window_time) FS estimates for this window
+    wavefreqs : 1D array of sampled frequencies
+    pow_mat : (frequencies x window_time) power for this window
+    bandidx : list of arrays, indices into wavefreqs for each band
+
+    Returns
+    -------
+    frequency_sliding with sub-threshold values replaced by NaN
     """
     fz = np.log(wavefreqs)
     local_mean_pow = np.log(np.nanmean(pow_mat, axis=1))
@@ -191,40 +180,30 @@ def _fit_one_over_f_windows(frequency_sliding, wavefreqs, pow_mat, bandidx):
     return tmp_fs
 
 
-# --------------------------------------------------------------------------
-# Main function
-# --------------------------------------------------------------------------
 def modal(signal, params):
-    """
-    Multiple Oscillation Detection Algorithm (MOD-AL)
+    """Multiple Oscillation Detection Algorithm (MOD-AL).
 
     Parameters
     ----------
     signal : 1D array-like
         Signal to analyze (any neural timeseries).
-    params : dict, must include:
-        'srate'      : sampling rate of the signal in Hz
-        'wavefreqs'  : 1D array of frequencies to sample for background
-                       fitting (recommend max frequency >= 30 Hz for a
-                       good 1/f fit estimate)
-        optional keys:
-        'bad_data'         : boolean array, same length as signal.
-                              1/True == bad data excluded from calculations.
-        'local_winsize_sec': list/array of window sizes (seconds) for local
-                              1/f fitting (e.g. [1, 5, 10]). If omitted,
-                              defaults to a single 10-second window. Pass an
-                              empty list to skip local fitting/thresholding
-                              entirely (return FS for all timepoints).
-        'crop_fs'          : bool, crop frequency estimates that fall
-                              outside the detected band (default True).
-        'wavecycles'       : wavelet cycles (default 6).
+    params : dict
+        'srate' : sampling rate (Hz).
+        'wavefreqs' : 1D array of frequencies for background fitting
+            (recommend max frequency >= 30 Hz for a good 1/f fit).
+        'bad_data' (optional) : boolean array, same length as signal;
+            True == excluded from calculations.
+        'local_winsize_sec' (optional) : window sizes (seconds) for local 1/f
+            fitting, e.g. [1, 5, 10]. Defaults to a single 10-second window;
+            pass [] to skip local thresholding (return FS for all timepoints).
+        'crop_fs' (optional) : bool, crop estimates outside the detected band
+            (default True).
+        'wavecycles' (optional) : wavelet cycles (default 6).
 
     Returns
     -------
     frequency_sliding : (n_bands x n_samples) ndarray (float32)
         Instantaneous frequency of the signal in each detected band.
-        (bands, bandpow, and bandphases are computed internally but are
-        not returned, per the reduced-output request.)
     """
     signal = np.asarray(signal, dtype=float)
     if signal.ndim > 1:
@@ -245,22 +224,22 @@ def modal(signal, params):
     signal = signal - np.nanmean(signal)
     n_samples = len(signal)
 
-    # ---- extract (frequencies x time) power matrix ----
+    # Extract (frequencies x time) power matrix
     pow_mat = _morlet_wavelet_power(signal, wavefreqs, srate, wavecycles)
 
-    # ---- handle bad data: NaN out power during bad times ----
+    # Handle bad data: NaN out power during bad times
     if "bad_data" in params and params["bad_data"] is not None:
         bad_idx = np.where(np.asarray(params["bad_data"]) == 1)[0]
         pow_mat[:, bad_idx] = np.nan
 
-    # ---- Key Step #1: adaptive band identification via global 1/f fit ----
+    # Key Step #1: adaptive band identification via global 1/f fit
     bands, bandidx, _bandpow = _get_bands(wavefreqs, pow_mat)
     n_bands = bands.shape[0]
 
     if n_bands == 0:
         return np.array(np.nan)
 
-    # ---- Key Step #2: frequency sliding per band ----
+    # Key Step #2: frequency sliding per band
     FS = np.full((n_bands, n_samples), np.nan)
     trans_width = 0.15
     ideal_response = [0, 0, 1, 1, 0, 0]
@@ -310,11 +289,8 @@ def modal(signal, params):
 
         FS[i_band, :] = median_of_meds
 
-    # ---- Optional Key Step #3: local 1/f thresholding ----
-    # An empty `wins` (params["local_winsize_sec"] = []) means "skip this
-    # step": just return FS for every timepoint, matching MODAL.m (there,
-    # `for iW = 1:length(wins)` never executes when wins is empty, leaving
-    # frequency_sliding == FS untouched).
+    # Optional Key Step #3: local 1/f thresholding; an empty wins skips it,
+    # matching MODAL.m's `for iW = 1:length(wins)` never executing
     if len(wins) == 0:
         frequency_sliding = FS
     else:

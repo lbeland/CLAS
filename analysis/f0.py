@@ -9,7 +9,7 @@ from scipy.stats import linregress
 from tqdm import tqdm
 
 from .modal import modal
-from .plot import _edge_trim_window
+from .core import _edge_trim_window
 
 
 def gaussian_peak(freqs, amp, center, width):
@@ -38,28 +38,23 @@ def approve_peak(freqs, psd_safe, psd_flat, psd_smooth, popt, gaussian, aperiodi
 
 
 def alpha_fast(psd, freq_bins, config):
-    """Whitens the spectrum against a robust aperiodic fit, smooths it, and fits
-    a Gaussian to the resulting peak to estimate the fundamental frequency. The
-    whitened spectrum, its smoothed version and the Gaussian all stay in
-    log10-ratio space (0.0 = exactly on the aperiodic fit), which keeps
-    amplitude / gaussian / floor_value on a consistent scale for the BIC test in
-    ``approve_peak``.
+    """Whitens the spectrum against a robust aperiodic fit, smooths it, and
+    fits a Gaussian to the peak to estimate the fundamental frequency.
 
-    Returns ``(est_pf, [slope, intercept], snr)`` -- the peak frequency (Hz),
-    the refined aperiodic-fit parameters, and the linear-scale signal-to-noise
-    ratio of the approved alpha peak. When no peak is found or it fails the BIC
-    test, ``est_pf`` and ``snr`` are ``np.nan`` but ``[slope, intercept]`` still
-    holds the refined aperiodic fit (it doesn't depend on a peak existing), so
-    callers that only want the 1/f fit -- e.g. spectral whitening -- can still
-    use it. ``[slope, intercept]`` is ``[np.nan, np.nan]`` only if the linear
-    fit itself degenerates (too few sub-fit points).
+    Whitened spectrum, smoothed version, and Gaussian all stay in log10-ratio
+    space (0.0 = on the aperiodic fit), so amplitude/gaussian/floor_value are
+    on a consistent scale for the BIC test in ``approve_peak``. ``snr`` is
+    computed exactly as the online FrequencyEstimation processor
+    (extensions/processors/FrequencyEstimation/FrequencyEstimation.cpp): over
+    bins within +/-2 sigma of the peak, ``snr = sum(aperiodic_lin *
+    gauss_ratio) / sum(aperiodic_lin)`` in linear power.
 
-    ``snr`` is computed exactly as in the online ``FrequencyEstimation``
-    processor (``extensions/processors/FrequencyEstimation/FrequencyEstimation.cpp``):
-    over the bins within +/-2 sigma of the peak, the aperiodic fit is taken
-    back to linear power (``10 ** aperiodic``), the smoothed Gaussian bump is
-    taken to a linear ratio above that fit (``10 ** gaussian - 1``), and
-    ``snr = sum(aperiodic_lin * gauss_ratio) / sum(aperiodic_lin)``.
+    Returns:
+        (est_pf, [slope, intercept], snr): peak frequency (Hz), refined
+        aperiodic-fit parameters, and linear-scale SNR of the approved alpha
+        peak. est_pf/snr are NaN when no peak is found or it fails the BIC
+        test; [slope, intercept] is still valid then (doesn't depend on a
+        peak), and is [NaN, NaN] only if the linear fit itself degenerates.
     """
     band = (freq_bins >= config["freq_range"][0]) & (freq_bins <= config["freq_range"][1])
     psd_band = psd[band]
@@ -114,14 +109,11 @@ def alpha_fast(psd, freq_bins, config):
 
     amplitude = psd_smooth[global_max_bin]  # log10-ratio value of the smoothed spectrum at the peak bin
 
-    # Reject outright if the smoothed peak doesn't clear the aperiodic fit
-    # (log-ratio <= 0) -- there's no bump to fit a Gaussian to.
+    # No bump to fit if the smoothed peak doesn't clear the aperiodic fit
     if amplitude <= 0.0:
         return np.nan, [slope, intercept], np.nan
 
-    # FWHM: walk outward from the peak bin, in each direction, until the
-    # smoothed spectrum drops below half-max (over the full spectrum, not
-    # just the alpha band).
+    # FWHM: walk outward from the peak bin until the spectrum drops below half-max
     half_max = amplitude / 2.0
     left_bin = global_max_bin
     while left_bin > 0 and psd_smooth[left_bin] > half_max:
@@ -195,17 +187,11 @@ def estimate_f0(raw: np.ndarray, fs: float) -> list:
 
 
 def estimate_f0_with_phase(hilbert_phase: np.ndarray, fs: float, f0: float) -> np.ndarray:
-    """
-    Estimate f0 from the instantaneous phase of the Hilbert transform, using the
-    multi-order median filtering ("frequency sliding") technique of Cohen: the
-    noisy instantaneous frequency is median filtered at 10 window sizes spanning
-    10-400 ms, and the median across those filtered estimates is taken as the
-    final f0 time series.
-
-    Since the estimate is derived from the Hilbert phase, it is subject to the
-    same edge transients as other phase-estimate metrics, so the leading and
-    trailing edges are trimmed to NaN with the same window used for those
-    (see _edge_trim_window()).
+    """Estimate f0 from the Hilbert phase using Cohen's multi-order median
+    filtering ("frequency sliding"): the noisy instantaneous frequency is
+    median filtered at 10 window sizes spanning 10-400 ms, and the median
+    across those is the final f0 series. Edges are NaN-trimmed like other
+    Hilbert-phase metrics (see _edge_trim_window()).
     """
     inst_freq = np.diff(np.unwrap(hilbert_phase), prepend=f0) * fs / (2 * np.pi)
 
@@ -228,14 +214,10 @@ def estimate_f0_with_phase(hilbert_phase: np.ndarray, fs: float, f0: float) -> n
 def estimate_f0_modal(raw: np.ndarray, fs: float, alpha_band: tuple = (5, 18),
                       freq_range: tuple = (1.0, 30.0)) -> np.ndarray:
     """Estimate a continuous f0 time series with MODAL (Watrous 2017): bands
-    are adaptively identified from where the signal's power exceeds a robust
-    1/f background fit, then instantaneous frequency ("frequency sliding",
-    Cohen 2014) is tracked within each band. Of the detected bands, the one
-    closest to the centre of alpha_band is returned, for comparison against
-    estimate_f0_with_phase()'s Hilbert-phase estimate.
-
-    Returns a NaN-filled array the length of raw if MODAL finds no band
-    overlapping alpha_band.
+    are adaptively identified where power exceeds a robust 1/f fit, then
+    instantaneous frequency ("frequency sliding", Cohen 2014) is tracked
+    within each band. Returns the band closest to alpha_band's centre, or a
+    NaN-filled array the length of raw if none overlaps alpha_band.
     """
     params = {
         "srate": fs,

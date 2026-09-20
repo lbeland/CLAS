@@ -229,7 +229,7 @@ def make_processor_label(name: str, spec: Dict[str, Any], simple: bool = False) 
     else:
         color = "lightsteelblue"
 
-    rows = [f'<TR><TD BGCOLOR="{color}"><B>{escape_html(name)}</B></TD></TR>']
+    rows = [f'<TR><TD BGCOLOR="{color}"><FONT POINT-SIZE="16"><B>{escape_html(name)}</B></FONT></TD></TR>']
 
     if not simple:
         proc_class = spec.get("class", "Unknown")

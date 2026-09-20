@@ -23,6 +23,7 @@ doesn't dominate the pooled result. Produces:
   with one subplot per stim_onset_deg condition.
 """
 
+import argparse
 import os
 import sys
 from dataclasses import dataclass
@@ -761,6 +762,36 @@ def analyse_all(
     plt.show()
 
 
+def _parse_pair(s: str) -> tuple[int, int]:
+    a, b = s.split(",")
+    return int(a), int(b)
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="analyse_all(): log power change spectrum, opposite-phase time-frequency "
+                     "t-maps, and pooled Stim On/Off power change, per stim_onset_deg condition.")
+    parser.add_argument("--base-dir", default="results",
+                         help="Base directory to search for session folders (default: results).")
+    parser.add_argument("--channel", default="Fz",
+                         help="Electrode to analyse (default: Fz).")
+    parser.add_argument("--stim-onset-degs", type=int, nargs="*", default=list(STIM_ONSET_DEGS),
+                         help=f"stim_onset_deg conditions to include (default: {list(STIM_ONSET_DEGS)}).")
+    parser.add_argument("--comparisons", type=_parse_pair, nargs="*", default=list(TF_COMPARISONS),
+                         help="Opposite-phase condition pairs for the time-frequency t-maps, as "
+                              "'a,b' (default: %(default)s). Pass with no values to skip the t-maps.")
+    parser.add_argument("--win-s", type=float, default=1.0, help="Welch window length (s) (default: 1.0).")
+    parser.add_argument("--step-s", type=float, default=1.0, help="Welch hop between windows (s) (default: 1.0).")
+    parser.add_argument("--smooth-window-s", type=float, default=10.0,
+                         help="Time-resolved map smoothing window (s) (default: 10.0).")
+    parser.add_argument("--no-csd", dest="use_csd", action="store_false",
+                         help="Skip the surface Laplacian / CSD re-referencing step.")
+    return parser
+
+
 if __name__ == "__main__":
-    # analyse_spectrum(results_dir="results/CLAS_victor/victor_60_no_comp_20260817_144819")
-    analyse_all(comparisons=(), use_csd=True)
+    args = build_arg_parser().parse_args()
+    analyse_all(base_dir=args.base_dir, stim_onset_degs=tuple(args.stim_onset_degs),
+                comparisons=tuple(args.comparisons), channel=args.channel,
+                win_s=args.win_s, step_s=args.step_s, smooth_window_s=args.smooth_window_s,
+                use_csd=args.use_csd)

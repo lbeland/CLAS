@@ -1,5 +1,16 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+
+from iaf_compare.plot_style import FIG_WIDTH
+
+# pgf.texsystem defaults to xelatex, which isn't installed -- pdflatex is.
+mpl.rcParams.update({
+    "pgf.texsystem": "pdflatex",
+    'font.family': 'serif',
+    'text.usetex': True,
+    'pgf.rcfonts': False,
+})
 
 fs        = 256
 T         = 50
@@ -89,11 +100,12 @@ for p, q, label in configs:
     print(f"ARMA({p},{q})  bias={bias:+.3f} Hz  std={std:.3f} Hz")
 
 # ---- Plot ----
-fig, axes = plt.subplots(2, 1, figsize=(13, 9))
+fig, axes = plt.subplots(2, 1, figsize=(FIG_WIDTH, FIG_WIDTH * 9 / 16))
 
 axes[0].plot(t, signal, color='steelblue', lw=0.5, alpha=0.8)
 axes[0].set_title(f'FM signal  —  noise_std={noise_std}  (SNR ≈ 10 dB)', fontsize=11)
-axes[0].set_ylabel('Amplitude'); axes[0].grid(True, alpha=0.3)
+axes[0].set_ylabel('Amplitude')
+axes[0].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
 axes[1].plot(t, true_freq, 'k-', lw=2.5, label='True frequency', zorder=5)
 for (freq, bias, std, label), color in zip(results, colors):
@@ -107,8 +119,10 @@ axes[1].set_title(
     r'$z_t=s_t+n_t$ is ARMA not AR  $\Rightarrow$  '
     r'MA part absorbs $A(z)\,n_t$, freeing AR poles to sit at true frequency',
     fontsize=11)
-axes[1].set_ylabel('Frequency (Hz)'); axes[1].set_xlabel('Time (s)')
-axes[1].legend(fontsize=10); axes[1].grid(True, alpha=0.3)
+axes[1].set_ylabel('Frequency [Hz]'); axes[1].set_xlabel('Time [s]')
+axes[1].legend(fontsize=10)
+axes[1].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
 
 plt.tight_layout()
-plt.savefig('arma_kalman_fm.png', dpi=300)
+plt.savefig('arma_kalman_fm.pdf', bbox_inches="tight")
+plt.savefig('arma_kalman_fm.pgf', bbox_inches="tight")

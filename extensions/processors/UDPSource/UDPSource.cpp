@@ -496,6 +496,7 @@ void UDPSource::Process(ProcessingContext &context)
         data_out->set_data_sample(0, eeg_vec);
         data_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us_);
         // data_out->set_source_timestamp(micros_to_timepoint(hardware_time_us));
+        // Set pure receival timestamp here?! To recover UDPSource latency post hoc
         data_out->set_source_timestamp(Clock::now());
 
         data_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us_);
@@ -505,6 +506,7 @@ void UDPSource::Process(ProcessingContext &context)
         // AUX + trigger channel
         aux_out = aux_slot->ClaimData(true);
         // aux_out->set_source_timestamp(micros_to_timepoint(hardware_time_us));
+        // Set pure receival timestamp here?! To recover UDPSource latency post hoc
         aux_out->set_source_timestamp(Clock::now());
         aux_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us_);
         if (store_aux)

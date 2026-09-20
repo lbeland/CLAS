@@ -762,7 +762,7 @@ snd_pcm_sframes_t StimControl::write_with_recovery_(snd_pcm_t *pcm, const void *
 void StimControl::audio_thread_main_()
 {
     struct sched_param param;
-    param.sched_priority = 80;  // slightly below main (99) but above everything else
+    param.sched_priority = 80;
     if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) != 0)
         LOG(WARNING) << "Failed to set audio thread RT priority: " << strerror(errno);
 

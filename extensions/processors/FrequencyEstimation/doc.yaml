@@ -58,6 +58,12 @@ Options:
     default: true
     description: true = full Kalman filter (SNR-adaptive gain, uncertain cold start);
       false = EMA-equivalent fixed gain.
-
-# Note: max_gauss_width_hz (reject peaks broader than this, Hz; default 2.0) exists in the
-# code but is not currently registered as a graph option.
+  - name: max_gauss_width_hz
+    type: double
+    default: 2.0
+    description: Reject candidate peaks whose fitted Gaussian is broader than this (Hz).
+  - name: debug_output
+    type: bool
+    default: false
+    description: If true, also publish the raw peak f0 (pre-Kalman) on data-out slot 1 for
+      debugging. Connect a sink to '<name>.out.1' after the slot-0 connection.

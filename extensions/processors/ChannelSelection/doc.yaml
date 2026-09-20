@@ -30,8 +30,8 @@ Options:
     description: Comma-separated list of channel indices to select from (1-based).
   - name: rms_window_seconds
     type: double
-    default: 5.0
-    description: Length of the exponential RMS window in seconds (recent samples get higher weights).
+    default: 2.5
+    description: Length of the weighted RMS window in seconds (recent samples get higher weights).
   - name: rms_threshold_uv
     type: double
     default: 2.0

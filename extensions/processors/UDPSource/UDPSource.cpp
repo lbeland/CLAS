@@ -34,11 +34,10 @@
 constexpr int PORT = 25000;
 constexpr size_t PACKET_SIZE = 172;
 
-// P(n0) = C: initial RLS covariance scale, i.e. a large, poorly confident
-// prior around the 1/fs_nom initial guess.
+// Initial RLS covariance: large, unconfident prior around 1/fs_nom
 constexpr double CLOCK_RLS_INIT_C = 1;
 
-// Interval [s] between anchor re-basing / fs_eff_ commits
+// Interval (s) between anchor re-basing / fs_eff_ commits
 constexpr double REANCHOR_INTERVAL_S = 10.0;
 
 uint32_t read_u32_le(const uint8_t *p)
@@ -93,7 +92,7 @@ UDPSource::UDPSource() : IProcessor(PRIORITY_HIGH)
     add_option("nsamples", nsamples_, "Number of samples per packet.");
     add_option("n_messages", n_messages_, "Number of packets to receive (-1 = infinite).");
     add_option("store_aux", store_aux_, "Whether to forward auxiliary (AUX + trigger) data.");
-    add_option("calib_packets", calib_packets_, "Number of packets used for initial start-time calibration.");
+    add_option("calib_packets", calib_packets_, "Number of packets used for initial start-time calibration. At 10 kHz, 1000 packets is about 100 ms of startup delay.");
     add_option("fs_tau_s", fs_tau_s_, "Time constant (s) of the forgetting factor for continuous true-fs tracking.");
     add_option("recal_warmup_s", recal_warmup_s_, "Duration (s) of the RLS warm-up: below this, lambda=1 (no forgetting).");
 }
@@ -133,22 +132,17 @@ void UDPSource::Prepare(GlobalContext &context)
 
 void UDPSource::Preprocess(ProcessingContext &context)
 {
-    // theta1_(n0) = 1/fs_nom: the true rate is assumed close to nominal.
-    // P(n0) = C: a poorly confident prior.
+    // RLS prior: rate assumed close to nominal, low confidence
     theta1_ = 1e6 / fs_();
     P_ = CLOCK_RLS_INIT_C;
 
-    // Anchor starts at n0 with the nominal fs; both are only meaningful
-    // once calibration in Process() has run, but need a defined value for
-    // the warm-up window (see hardware_time_us_()).
+    // Placeholder anchor for the warm-up window, until Process() calibrates it
     fs_eff_ = fs_();
     anchor_n_ = 0;
     anchor_time_us_ = 0;
 
     packet_count_ = 0;
-    // n0/start_time_us_ themselves can only be set once the first packet
-    // arrives (see Process()); reset to 0 here for a clean Postprocess/
-    // Preprocess cycle between recordings.
+    // Set for real once the first packet arrives in Process()
     start_time_us_ = 0;
 
     sock_ = socket(AF_INET, SOCK_DGRAM, 0);
@@ -158,7 +152,7 @@ void UDPSource::Preprocess(ProcessingContext &context)
         return;
     }
 
-    // Set a receive timeout so recvfrom() does not block forever
+    // Receive timeout so recvfrom() does not block forever
     timeval tv{};
     tv.tv_sec = 1;
     if (setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
@@ -171,46 +165,25 @@ void UDPSource::Preprocess(ProcessingContext &context)
     LOG(INFO) << name() << " Listening on UDP port " << PORT;
 }
 
-// Full-precision, unrounded prediction: used internally (re-anchoring) so
-// that no fractional microsecond is ever discarded from the running state.
+// Full-precision prediction, used internally so re-anchoring never loses a
+// fractional microsecond
 double UDPSource::hardware_time_us_precise_(uint64_t sample_counter) const
 {
     return anchor_time_us_ +
         static_cast<double>(sample_counter - anchor_n_) * 1e6 / fs_eff_;
 }
 
-// Rounded (not truncated) integer microsecond timestamp for external/output
-// use. Rounding here is a one-off at the point of emission - it does not
-// feed back into anchor_time_us_, so it cannot accumulate across calls.
+// Rounded integer microsecond timestamp for external/output use
 uint64_t UDPSource::hardware_time_us_(uint64_t sample_counter) const
 {
     return static_cast<uint64_t>(std::llround(hardware_time_us_precise_(sample_counter)));
 }
 
-// Recursive Least Squares (RLS) clock model, fit through the anchor (no
-// intercept term), with exponential forgetting factor lambda:
-//   y(n) = theta1_ * x(n) + xi(n),
-//   x(n) = sample_counter - anchor_n_, y(n) = t(n) - anchor_time_us_,
-//   updated in O(1):
-//
-//   K(n)      = P(n-1) x(n) / (lambda + x(n)^2 P(n-1))
-//   theta1(n) = theta1(n-1) + K(n) [y(n) - theta1(n-1) x(n)]
-//   P(n)      = [P(n-1) - K(n) x(n) P(n-1)] / lambda
-//
-// lambda = 1 during warm-up (no forgetting, every sample weighted
-// equally, so P shrinks as fast as possible), then relaxes to the
-// fs_tau_s_-derived steady-state forgetting factor, letting the fit track
-// slow crystal drift.
-//
-// x(n)/y(n) are anchor-relative rather than measured from n0, so that x(n)
-// stays numerically small between re-anchors instead of growing for the
-// rest of the recording. theta1_/P_ are exactly invariant to shifting the
-// anchor (this is a through-origin fit), so re-basing loses no information
-// - anchor_time_us_ is kept as a double (hardware_time_us_precise_(), not
-// the rounded hardware_time_us_()) precisely so re-basing never discards a
-// fractional microsecond. Re-basing is still only committed every
-// REANCHOR_INTERVAL_S seconds (below) rather than every packet, simply to
-// bound how often the RLS commits a new fs_eff_/anchor.
+// RLS clock model through the anchor (no intercept), with forgetting factor
+// lambda: y(n) = theta1_*x(n), x/y measured relative to the anchor so they
+// stay numerically small. lambda=1 during warm-up, then relaxes to track
+// slow crystal drift. Re-anchoring (every REANCHOR_INTERVAL_S) keeps x/y
+// small without changing theta1_/P_, since this is a through-origin fit.
 void UDPSource::recalibrate_fs_(uint64_t sample_counter, int64_t ts_us)
 {
     const double x = static_cast<double>(sample_counter - anchor_n_);
@@ -227,24 +200,16 @@ void UDPSource::recalibrate_fs_(uint64_t sample_counter, int64_t ts_us)
     if (warming_up)
         return;
 
-    // Let x(n) accumulate until the next scheduled re-anchor instead of
-    // committing a new anchor/fs_eff_ on every packet.
+    // Only re-anchor once every reanchor_interval_samples_ packets
     if (x < static_cast<double>(reanchor_interval_samples_))
         return;
 
-    // Crystal drift is ppm-scale; reject implausible fits (packet-loss
-    // bursts, noise spikes) instead of adopting them into the anchor used
-    // for scheduling - keep the last accepted fs_eff_/anchor instead.
+    // Reject implausible fits (packet loss, noise spikes); crystal drift is ppm-scale
     const double nominal_fs = fs_();
     const double new_fs_eff = 1e6 / theta1_;
     if (std::isfinite(new_fs_eff) && std::abs(new_fs_eff - nominal_fs) < 0.00001 * nominal_fs)
     {
-        // Update fs_eff_ *before* using it to place the anchor: the anchor
-        // must be extrapolated with the rate that was just fit over this
-        // interval (theta1_/new_fs_eff), not the stale rate committed at
-        // the previous re-anchor - otherwise every commit silently jumps
-        // the anchor off the fitted line by (new_fs_eff vs old fs_eff_)
-        // worth of drift accumulated over the whole interval.
+        // Extrapolate the anchor with the newly fit rate, not the stale one
         fs_eff_ = new_fs_eff;
         anchor_time_us_ = hardware_time_us_precise_(sample_counter);
         anchor_n_ = sample_counter;
@@ -266,8 +231,7 @@ void UDPSource::Process(ProcessingContext &context)
     uint32_t first_sample_counter = 0;
     uint32_t sample_counter = 0;
 
-    // Samples arrive over UDP as float32 (see parse_packet/read_f32_le); they are
-    // mapped to double immediately here so every downstream processor works in double.
+    // Samples arrive as float32, mapped to double for downstream processors
     std::vector<double> eeg_vec(nchannels_());
     std::vector<double> aux_vec(9); // 8 AUX + 1 trigger
 
@@ -293,23 +257,12 @@ void UDPSource::Process(ProcessingContext &context)
         return;
     }
 
-    // -----------------------------------------------------------------
-    // Calibration phase
-    //
-    // Receive calib_packets_ packets without publishing them. Use the
-    // (timestamp, sample_counter) pairs to estimate start_time_us_ such
-    // that:
-    //   hardware_time_us(n) = start_time_us_ + n * 1e6 / fs
-    // approximates the true ADC sampling time of sample n (plus the fixed
-    // transit-delay floor). Because reception jitter is one-sided (packets
-    // can only be delayed, never early), the minimum observed offset is the
-    // best estimate of that floor.
-    // -----------------------------------------------------------------
+    // Calibration: receive calib_packets_ packets without publishing them, and
+    // estimate start_time_us_ from the minimum observed (timestamp - ideal
+    // sample time) offset, since reception jitter only ever delays a packet
     {
-        // At least 1: a value of 0 would skip the receive loop below
-        // entirely, leaving first_sample_counter/sample_counter at their
-        // stale defaults for the main loop.
-        const int n_calib = std::max(calib_packets_(), 1);
+        const int n_calib = std::max(calib_packets_(), 1); // 0 would skip the loop below entirely
+
         std::vector<int64_t> offsets_us;
         offsets_us.reserve(static_cast<size_t>(n_calib));
 
@@ -379,9 +332,7 @@ void UDPSource::Process(ProcessingContext &context)
             LOG(WARNING) << name() << " Calibration received no packets; using current time as fallback start_time_us_=" << start_time_us_;
         }
 
-        // Anchor hardware_time_us_()'s post-warm-up projection at n0 =
-        // (start_time_us_, sample 0), now that calibration has produced the
-        // real start_time_us_ (Preprocess() can only zero-initialize it).
+        // Anchor at (start_time_us_, sample 0) now that calibration is done
         fs_eff_ = fs_();
         anchor_n_ = 0;
         anchor_time_us_ = start_time_us_;
@@ -480,11 +431,10 @@ void UDPSource::Process(ProcessingContext &context)
         hardware_time_us = hardware_time_us_(sample_counter);
         if (hardware_time_us > ts_us)
         {
-            // Calibration floor was set too high for this packet; clamp to now.
-            // LOG(WARNING) << name() << " hardware_time_us (" << hardware_time_us << ") is in the future (now=" << ts_us << "). Clamping.";
+            // Calibration floor was set too high for this packet; clamp to now
             hardware_time_us = ts_us;
         }
-        else if ((int)ts_us - (int)hardware_time_us > 5 * 1e3)
+        else if (ts_us - hardware_time_us > 5 * 1e3)
         {
             LOG(WARNING) << name() << " hardware_time_us (" << hardware_time_us << ") is more than 5ms behind (now=" << ts_us << "). Clamping";
             hardware_time_us = ts_us - 5 * 1e3;
@@ -495,8 +445,7 @@ void UDPSource::Process(ProcessingContext &context)
         std::copy(pkt.eeg.begin(), pkt.eeg.begin() + nchannels_(), eeg_vec.begin());
         data_out->set_data_sample(0, eeg_vec);
         data_out->set_sample_timestamp(0, hardware_time_us + steady_to_wallclock_offset_us_);
-        // data_out->set_source_timestamp(micros_to_timepoint(hardware_time_us));
-        // Set pure receival timestamp here?! To recover UDPSource latency post hoc
+        // Receival time, not hardware_time_us, so downstream latency can be measured
         data_out->set_source_timestamp(Clock::now());
 
         data_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us_);
@@ -505,8 +454,7 @@ void UDPSource::Process(ProcessingContext &context)
 
         // AUX + trigger channel
         aux_out = aux_slot->ClaimData(true);
-        // aux_out->set_source_timestamp(micros_to_timepoint(hardware_time_us));
-        // Set pure receival timestamp here?! To recover UDPSource latency post hoc
+        // Receival time, not hardware_time_us, so downstream latency can be measured
         aux_out->set_source_timestamp(Clock::now());
         aux_out->set_hardware_timestamp(hardware_time_us + steady_to_wallclock_offset_us_);
         if (store_aux)

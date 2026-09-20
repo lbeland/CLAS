@@ -46,9 +46,7 @@ namespace
         return std::remainder(phase, 2.0 * M_PI);
     }
 
-    // Incremental Voss-McCartney 1/f ("pink") noise generator. Same algorithm family
-    // as StimControl's block-based voss() (Downey, ThinkDSP); this variant is
-    // stateful so it can be pulled one sample at a time inside the streaming loop.
+    // Incremental Voss-McCartney pink-noise generator, pulled one sample at a time
     class PinkNoise
     {
     public:
@@ -231,9 +229,7 @@ void SimulatedSource::Process(ProcessingContext &context)
 
     const double modulation_step = 2.0 * M_PI * modulation_frequency_() / fs_();
 
-    // ---- Additive noise, scaled for a target in-band SNR relative to the carrier ----
-    // snr_db := 10*log10( P_carrier / P_noise_in_band ), where P_noise_in_band is the noise
-    // power within [carrier_frequency +/- noise_band_hz/2].
+    // Additive noise scaled for a target in-band SNR relative to the carrier
     std::mt19937 noise_rng{
         noise_seed_() >= 0
             ? static_cast<std::mt19937::result_type>(noise_seed_())
@@ -248,8 +244,7 @@ void SimulatedSource::Process(ProcessingContext &context)
     const double band_width = std::max(1e-9, band_hi - band_lo);
     const double target_inband_power = carrier_power * std::pow(10.0, -snr_db_() / 10.0);
 
-    // noise_gain multiplies the unit output of the chosen generator so that its in-band
-    // power equals target_inband_power.
+    // Scales the unit output of the chosen generator to target_inband_power
     double noise_gain = 0.0;
     std::vector<PinkNoise> pink_gen;
     if (pink_noise)
@@ -269,8 +264,7 @@ void SimulatedSource::Process(ProcessingContext &context)
         const double raw_var =
             std::max(1e-12, s2 / kCalN - (s / kCalN) * (s / kCalN));
 
-        // In-band fraction from an ideal 1/f model with a low-frequency knee at
-        // fs / 2^rows (below which Voss-McCartney flattens); total power ~ 1 + ln(fN/fknee).
+        // In-band fraction from an ideal 1/f model with a knee at fs / 2^rows
         const double f_knee = nyquist / std::pow(2.0, kPinkRows);
         const double total_power_norm = 1.0 + std::log(nyquist / f_knee);
         const double lo = std::max(band_lo, f_knee);
@@ -285,16 +279,10 @@ void SimulatedSource::Process(ProcessingContext &context)
     }
     else
     {
-        // ---- In-band white-noise SNR (original) ----
-        // White noise: flat one-sided PSD = var / nyquist, so the power in a band of
-        // width band_width is var * band_width / nyquist.
+        // In-band white-noise SNR: flat PSD, so power scales with band_width / nyquist
         noise_gain = std::sqrt(target_inband_power * nyquist / band_width);
 
-        // ---- Broadband white-noise SNR (matches _snr_one_point) ----
-        // snr_db := 10*log10( P_carrier / var(noise_total) ): the reference is the
-        // *total* noise variance over [0, nyquist], so noise_band_hz is ignored here.
-        // target_inband_power == carrier_power * 10^(-snr_db/10) is now the target
-        // total variance, and white_dist has unit variance, so noise_gain is its sqrt.
+        // Alternative: broadband SNR over the full [0, nyquist] range (ignores noise_band_hz)
         // noise_gain = std::sqrt(target_inband_power);
     }
 
@@ -305,7 +293,7 @@ void SimulatedSource::Process(ProcessingContext &context)
     const double kNaN = std::numeric_limits<double>::quiet_NaN();
 
     // Base time in steady_clock (same domain as source_timestamp / Clock::now()).
-    // The wallclock offset converts it to UTC µs for hardware_timestamp, matching UDPSource.
+    // The wallclock offset converts it to UTC microseconds for hardware_timestamp, matching UDPSource.
     uint64_t start_time = std::chrono::duration_cast<std::chrono::microseconds>(
         Clock::now().time_since_epoch()).count();
     TimePoint start_time_point = Clock::now();
@@ -393,7 +381,7 @@ void SimulatedSource::Process(ProcessingContext &context)
             // f0 broadcaster holds its last valid value for downstream processors.
         }
 
-        // hardware_time_us is in steady_clock µs; convert to wall-clock for hardware_timestamp
+        // hardware_time_us is in steady_clock microseconds; convert to wall-clock for hardware_timestamp
         hardware_time_us = start_time + (uint64_t)packet_count_ * 1000000ULL / fs_();
 
         // Independent noise per channel (white Gaussian or pink 1/f), scaled for in-band SNR.
@@ -420,12 +408,10 @@ void SimulatedSource::Process(ProcessingContext &context)
 
         ++packet_count_;
 
-        // Re-anchor from the actual emit time (not the fixed schedule), so the next
-        // iteration's pacing reflects reality rather than trying to catch up.
+        // Alternative: re-anchor pacing from the actual emit time instead of the fixed schedule
         // last_emit_time_ = Clock::now();
 
-        // Advance the carrier phase with the (possibly perturbed) instantaneous frequency
-        // so that frequency steps and chirps integrate continuously into the phase.
+        // Advance carrier phase so frequency steps and chirps integrate continuously
         carrier_phase = WrapPhase(carrier_phase + 2.0 * M_PI * effective_freq / fs_());
         modulation_phase = WrapPhase(modulation_phase + modulation_step);
     }

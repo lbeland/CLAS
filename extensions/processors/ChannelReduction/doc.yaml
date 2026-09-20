@@ -1,20 +1,36 @@
-Description: Data sink that writes samples to csv files and measures latency and throughput
+Description: Reduces a multi-channel stream to a single output channel, selected either from
+  a shared channel-index state or overridden externally via the set_channel apply command.
+
 Input port:
-  - name: data
-    type: IData
+  - name: in
+    type: MultiChannelType <double>
     slots: 1-256
     description:
+
+Output port:
+  - name: out
+    type: MultiChannelType <double>
+    slots: 1-256
+    description: The selected channel, passed through with the input's sample rate and count.
+
+Shared state:
+  - name: ch_idx
+    type: follower <unsigned int>
+    default: default_channel_index - 1
+    description: Currently selected channel index (zero-based) shared by an upstream processor.
+
+Methods:
+  - name: set_channel
+    args: { channel: int }
+    description: Runtime apply command to override the active channel (1-based; -1 releases the
+      override and reverts to automatic selection via ch_idx). Returns { channel: <int> }.
 
 Options:
   - name: n_messages
     type: int
     default: -1
-    description: Number of messages to process before stopping. Set to -1 to run indefinitely.
-  - name: window_size
+    description: Number of packets to receive before stopping. -1 = infinite.
+  - name: default_channel_index
     type: int
     default: 1
-    description: Number of samples to discard from latency measurements to account for Phase Estimation
-  - name: output_file
-    type: string
-    default: ChannelReduction.csv
-    description: Path to output CSV file where samples and latency measurements will be stored
+    description: Channel index to use when no valid index is received from channel_state (1-based).

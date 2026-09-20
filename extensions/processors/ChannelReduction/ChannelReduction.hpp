@@ -42,7 +42,7 @@ class ChannelReduction : public IProcessor {
 
     // Options
     options::Int n_messages_{-1};
-    options::Int default_channel_index_{1}; // 1-based
+    options::Int default_channel_index_{1};
 
     // Runtime state
     FollowerState<unsigned int> *channel_state_ = nullptr;

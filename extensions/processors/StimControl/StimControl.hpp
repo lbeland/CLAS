@@ -56,30 +56,30 @@ class StimControl : public IProcessor {
     options::Int max_n_stimuli_{-1};
     options::Double stim_onset_deg_{0};
     options::Double audio_latency_s_{0};
-    options::Double erp_latency_s_{0};        // auditory evoked response potential latency (s)
+    options::Double erp_latency_s_{0};
     options::Bool   correct_latencies_{true};
 
     options::Double stim_period_ms_{0.5};
     options::Double stim_amplitude_{0.7};
-    options::Int    stim_num_octaves_{16};      // Voss-McCartney pink noise octaves
+    options::Int    stim_num_octaves_{16};
 
-    options::String stim_dur_unit_{"deg"};     // "deg" or "ms"
-    options::Double stim_dur_ms_{20};          // fallback burst duration when f0 is unavailable
+    options::String stim_dur_unit_{"deg"};
+    options::Double stim_dur_ms_{20};
     options::Double stim_dur_deg_{90};
 
     options::String audio_device_{"hw:1,0"};
     options::Int    audio_sample_rate_{44100};
     options::Int    audio_channels_{2};
-    options::String audio_format_{"s32"};      // "float", "s16", or "s32"
+    options::String audio_format_{"s32"};
 
     options::Bool   randomize_stim_onset_{false};
     options::Double min_stim_dist_sec_{0};
     options::Double max_stim_dist_sec_{-1};
     options::Bool   use_background_sound_{false};
     options::String background_sound_file_{"background.wav"};
-    options::Int    background_dB_{18};        // stimulus level above background sound (dB)
+    options::Int    background_dB_{18};
 
-    // Runtime state — phase / burst logic
+    // Runtime state - phase / burst logic
     unsigned int packet_count_ = 0;
     int stimuli_count_ = 0;
     bool output_      = false;
@@ -87,7 +87,7 @@ class StimControl : public IProcessor {
     double stim_onset_rad_ = 0;
     double stim_dur_rad_   = 0;
 
-    // Cached enum for stim_dur_unit_ — avoids string comparison every packet in Process()
+    // Cached enum for stim_dur_unit_ - avoids string comparison every packet in Process()
     enum class DurUnit { kMs, kDeg };
     DurUnit dur_unit_ = DurUnit::kMs;
 

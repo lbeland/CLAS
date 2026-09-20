@@ -43,7 +43,7 @@ Options:
       (at 10 kHz, 10000 packets is ~1 s of startup delay).
   - name: fs_tau_s
     type: double
-    default: 15.0
+    default: 30.0
     description: Time constant (s) of the RLS forgetting factor for continuous true-fs tracking.
   - name: recal_warmup_s
     type: double

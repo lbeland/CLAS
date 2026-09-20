@@ -1,7 +1,7 @@
-Description: Data sink that writes samples to csv files and measures latency and throughput
+Description: Data sink that measures per-packet latency and throughput and logs the statistics.
 Input port:
-  - name: data
-    type: IData
+  - name: in
+    type: AnyType
     slots: 1-256
     description:
 
@@ -9,12 +9,12 @@ Options:
   - name: n_messages
     type: int
     default: -1
-    description: Number of messages to process before stopping. Set to -1 to run indefinitely.
+    description: Number of packets to receive before stopping. -1 = infinite.
   - name: window_size
     type: int
-    default: 1
-    description: Number of samples to discard from latency measurements to account for Phase Estimation
-  - name: output_file
+    default: 2000
+    description: Number of packets to skip at startup before computing latency statistics.
+  - name: path
     type: string
-    default: BenchSink.csv
-    description: Path to output CSV file where samples and latency measurements will be stored
+    default: "run://"
+    description: Path (server-side) where to save data.

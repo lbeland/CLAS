@@ -50,7 +50,7 @@ Options:
       toggles on and off (alternating) at every multiple of this period.
   - name: phase_jump_angle
     type: double
-    default: 3.14159265358979
+    default: pi
     description: phase_jump mode - phase offset (rad) applied to the carrier while toggled on.
   - name: freq_step_size
     type: double
@@ -79,6 +79,12 @@ Options:
     type: double
     default: 4.0
     description: Width (Hz) of the band around carrier_frequency in which snr_db is defined.
+  - name: noise_seed
+    type: int
+    default: -1
+    description: >
+      Seed for the additive-noise RNG. -1 (default) seeds from std::random_device
+      (non-deterministic); any value >= 0 gives a reproducible noise realisation.
   - name: burst_on_s
     type: double
     default: 1.0

@@ -113,7 +113,7 @@ StimControl::StimControl() : IProcessor(PRIORITY_HIGH)
     add_option("stim_period_ms", stim_period_ms_, "Silence period chunk size in milliseconds.");
     add_option("stim_amplitude", stim_amplitude_, "Burst amplitude (0..1).");
     add_option("stim_num_octaves", stim_num_octaves_, "Voss-McCartney pink noise octaves.");
-    add_option("audio_format", audio_format_, "Sample format: float (FLOAT_LE) or s16 (S16_LE). hw:* devices often require s16.");
+    add_option("audio_format", audio_format_, "Sample format: 'float' (FLOAT_LE), 's16' (S16_LE), or 's32' (S32_LE). hw:* devices often require s16 or s32.");
 
     add_option("stim_dur_deg", stim_dur_deg_, "Stimulus duration in degrees.");
     add_option("stim_dur_ms", stim_dur_ms_, "Fallback burst duration in ms (used only when f0 is unavailable).");
@@ -177,7 +177,7 @@ bool StimControl::compute_burst_params_(double f0)
     }
     else if (dur_unit_ == DurUnit::kDeg)
     {
-        // Duration tracks f0 — burst must be rebuilt whenever f0 changes.
+        // Duration tracks f0 - burst must be rebuilt whenever f0 changes.
         if (!std::isfinite(f0) || f0 <= 0.0)
         {
             // Fallback to stim_dur_ms_ until a valid f0 arrives.
@@ -285,11 +285,7 @@ void StimControl::Preprocess(ProcessingContext &context)
         }
         power_b /= out_f.size();
 
-        // R = desired amplitude ratio signal/background that achieves the requested dB power ratio.
-        // Solving jointly: gain_ * peak_stim + bg_gain_ * peak_bg = 1.0  (no clipping)
-        //                  (gain_^2 * power_s_) / (bg_gain_^2 * power_b) = 10^(dB/10)  (dB target)
-        // gives: gain_ = R / (R + peak_bg),  bg_gain_ = 1 / (R + peak_bg)
-        // where R = sqrt(10^(dB/10) * power_b / power_s_).  peak_stim = 1 (normalised above).
+        // R = signal/background amplitude ratio giving the requested dB power ratio without clipping
         double R = std::sqrt(std::pow(10.0, background_dB_() / 10.0) * power_b / power_s_);
         gain_    = static_cast<float>(R / (R + peak_bg));
         bg_gain_ = static_cast<float>(1.0 / (R + peak_bg));
@@ -380,10 +376,6 @@ void StimControl::build_audio_buffers_()
 {
     const int channels = std::clamp(audio_channels_(), 1, 8);
     const int num_octaves = std::clamp(stim_num_octaves_(), 1, 16);
-
-    // LOG(INFO) << name() << " Building audio buffers: burst=" << burst_frames_
-    //           << " frames (" << (static_cast<double>(burst_frames_) / fs_audio_ * 1000.0) << " ms)"
-    //           << ", period=" << period_frames_ << " frames";
 
     int burst_frames_precompute =(int)(burst_precompute_ms_ * fs_audio_ / 1000.0);
 
@@ -610,9 +602,7 @@ bool StimControl::start_audio_()
 
     const int channels = std::clamp(audio_channels_(), 1, 8);
     const snd_pcm_uframes_t period = static_cast<snd_pcm_uframes_t>(std::max(1, period_frames_));
-    // How many frames ALSA can buffer internally; must be >= 2*period_frames_.
-    // (older approach below used a fixed 10ms instead of a period-relative size)
-    // const snd_pcm_uframes_t bufsize = static_cast<snd_pcm_uframes_t>(std::max(1, fs_audio_ * 10 / 1000));
+    // ALSA internal buffer; must be >= 2*period_frames_
     const snd_pcm_uframes_t bufsize = static_cast<snd_pcm_uframes_t>(std::max(1, period_frames_ * 3)); // 3 periods
 
     snd_pcm_t *local_pcm = nullptr;
@@ -638,7 +628,6 @@ bool StimControl::start_audio_()
 
     auto try_config = [&](snd_pcm_format_t fmt, std::string &fail_step, int &fail_rc)
     {
-        // ALSA 
         return set_hw_params_interleaved_(local_pcm, fs_audio_, channels, period, bufsize,
                                           fmt, format_name_(fmt), &fail_step, &fail_rc);
     };
@@ -776,24 +765,18 @@ void StimControl::audio_thread_main_()
     bool do_burst = false;
     snd_pcm_sframes_t frames = 0;
     snd_pcm_sframes_t written;
-    // One-pole gain smoother scaffolding: currently disabled (alpha=1.0 means an
-    // instant step to target_gain each sample, no ramping). The commented-out
-    // expression below is the formula to re-enable a ~kGainRampMs ramp if needed.
-    constexpr float kGainRampMs = 2.0f;
-    const float gain_ramp_alpha_ = 1.0f; // - std::exp(-1.0f / (kGainRampMs * 0.001f * static_cast<float>(fs_audio_)));
+    // One-pole gain smoother, disabled: alpha=1.0 steps to target_gain instantly
+    const float gain_ramp_alpha_ = 1.0f;
 
     while (audio_running_.load())
     {
-        // TimePoint start_time = Clock::now();
         {
             std::lock_guard<std::mutex> lock(audio_mutex_);
             local_pcm = pcm_;
             if (!local_pcm)
                 break;
-            // Resolve buffer pointer and frame count under the mutex so we never
-            // race with build_audio_buffers_() rewriting these vectors.
+            // Under the mutex so we never race with build_audio_buffers_() rewriting these
             do_burst = audio_trigger_pending_.exchange(false);
-            // target_gain = do_burst ? static_cast<float>(stim_amplitude_()) : 0.0f;
             frames = do_burst ? burst_frames_ : period_frames_;
         }
         float target_gain = (do_burst && stim_enabled_.load()) ? gain_ : 0.0f;
@@ -834,7 +817,6 @@ void StimControl::audio_thread_main_()
                 written = write_with_recovery_(local_pcm, out_f.data(), frames);
             }
         }
-        // LOG(INFO) << name() << " Audio thread loop time: " << std::chrono::duration<double, std::milli>(Clock::now() - start_time).count() << " ms";
     }
 
     // Drain only if we still have a valid handle
@@ -893,25 +875,19 @@ void StimControl::Process(ProcessingContext &context)
         valid_f0_and_phase = true;
 
         data_out = data_out_port_->slot(0)->ClaimData(false);
-
-        // data_out->CloneTimestamps(*data_in);
         data_out->set_hardware_timestamp(data_in->hardware_timestamp());
-        // data_out->set_source_timestamp(data_in->source_timestamp());
 
         double phase = data_in->data_sample(0, 0);
         if (std::isnan(phase))
         {
             valid_f0_and_phase = false;
-            // LOG(WARNING) << name() << " Received NaN phase; skipping stimulation for this packet.";
         }
         const double f0 = f0_state_->get();
 
-        // In "deg" mode the burst duration depends on f0, so burst_ms_/burst_frames_
-        // are recomputed here when f0 changes
+        // Burst duration depends on f0 in "deg" mode, so recompute when it changes
         if (std::isnan(f0))
         {
             valid_f0_and_phase = false;
-            // LOG(WARNING) << name() << " f0 is NaN; skipping stimulation for this packet.";
         }
         else if ((std::isnan(last_f0_) && std::isfinite(f0)) || std::abs(f0 - last_f0_) > 1e-1)
         {
@@ -919,9 +895,8 @@ void StimControl::Process(ProcessingContext &context)
 
             if (!randomize_stim_onset_() && min_stim_dist_sec_() == 0)
             {
-                // Allow the next stimuli to fire only at the tail of this cycle
-                // Period of a rate 10% faster than f0
-                double min_dist = 1 / (f0 + f0 * 0.1); // 10% faster than f0
+                // Only allow the next stimulus at the tail of this cycle, 10% faster than f0
+                double min_dist = 1 / (f0 + f0 * 0.1);
                 distrib_interval = std::uniform_real_distribution<double>(min_dist, min_dist);
                 stim_dist_sec_ = distrib_interval(gen);
             }
@@ -930,7 +905,7 @@ void StimControl::Process(ProcessingContext &context)
 
         TimePoint now = Clock::now();
 
-        uint64_t hw_ts_us = data_in->hardware_timestamp(); // UTC µs of ADC capture
+        uint64_t hw_ts_us = data_in->hardware_timestamp(); // UTC microseconds of ADC capture
         uint64_t sys_now_us = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
@@ -938,14 +913,13 @@ void StimControl::Process(ProcessingContext &context)
         if (sys_now_us < hw_ts_us)
         {
             LOG(WARNING) << name() << " Current time is before hardware timestamp (sys_now: "
-                         << sys_now_us << " µs, hw_ts: " << hw_ts_us << " µs).";
+                         << sys_now_us << " us, hw_ts: " << hw_ts_us << " us).";
         }
         data_in_port_->slot(0)->ReleaseData();
 
         time_since_last_stim = std::chrono::duration<double>(now - last_stim_time_).count();
 
-        // Still inside a previously triggered stimulus window: output_ keeps
-        // mirroring the nominal burst duration independently
+        // Still inside a previously triggered stimulus window
         bool in_stim_window = output_samples_remaining_ > 0;
 
         bool stimulate = false;
@@ -976,27 +950,21 @@ void StimControl::Process(ProcessingContext &context)
                 {
                     wrapped_diff += 2.0 * M_PI;
                 }
-                // Trigger as soon as the predicted phase enters the first tenths of the
-                // target window, so at least 90% of the burst still lands on target
-                // even after a bigger phase jump
-                stimulate = (wrapped_diff < 0.1 * 2.0 * M_PI); // 10% of an alpha cycle
+                // Trigger within the first 10% of the target window, so most of the
+                // burst still lands on target even after a bigger phase jump
+                stimulate = (wrapped_diff < 0.1 * 2.0 * M_PI);
             }
 
-            if (stimulate) 
+            if (stimulate)
             {
-                // LOG(INFO) << name() << "Deliver stimulus after: " << time_since_last_stim << " s since last stimulus";
                 audio_trigger_pending_.store(true);
                 last_stim_time_ = now;
                 stimuli_count_++;
                 stim_dist_sec_ = distrib_interval(gen);
 
-                // output_ mirrors the full nominal stimulus duration (in samples of
-                // the phase stream), independent of how the trigger was decided.
-                // Uses burst_ms_ so this stays valid when f0 is NaN, e.g. in fully randomized mode.
+                // Mirrors the full nominal burst duration regardless of how it was triggered
                 output_samples_remaining_ = std::max(1, (int)std::round(burst_ms_ / 1000.0 * fs_));
                 in_stim_window = true;
-
-                // LOG(INFO) << name() << " Packet " << packet_count_ << ": Estimated phase = " << phase << " , delay = " << delay_sec << " s, corr_phase = " << corrected_phase;
             }
         }
 
@@ -1074,7 +1042,6 @@ void StimControl::Unprepare(GlobalContext &context)
     (void)context; 
     if (use_background_sound_() && valid_background_)
     {
-        // ma_device_uninit(&device_);
         ma_decoder_uninit(&decoder_);
     }
 

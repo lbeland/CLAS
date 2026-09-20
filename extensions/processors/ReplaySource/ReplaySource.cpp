@@ -34,7 +34,7 @@
 
 namespace fs = std::filesystem;
 
-// DtypeSize — byte size of one element for a given dtype string
+// DtypeSize - byte size of one element for a given dtype string
 std::size_t ReplaySource::DtypeSize(const std::string &dtype)
 {
     if (dtype == "int8" || dtype == "uint8")
@@ -48,7 +48,7 @@ std::size_t ReplaySource::DtypeSize(const std::string &dtype)
     throw std::runtime_error("ReplaySource: unknown dtype '" + dtype + "'");
 }
 
-// ParseDataEntry — parse one YAML "data" list entry, e.g. "signal float32 (32,64)"
+// ParseDataEntry - parse one YAML "data" list entry, e.g. "signal float32 (32,64)"
 FieldDescriptor ReplaySource::ParseDataEntry(const std::string &entry)
 {
     static const std::regex kPattern(R"(^(.+?)\s+(\w+)\s*\(([^)]*)\)\s*$)");
@@ -86,11 +86,8 @@ FieldDescriptor ReplaySource::ParseDataEntry(const std::string &entry)
     return fd;
 }
 
-// ResolveFilePath
-// Priority:
-//   1. file_ option set explicitly → use verbatim.
-//   2. Otherwise search <resolved_path>/ for a file matching
-//      "*.<slot_>_*.bin"  (the naming convention from FileSerializer).
+// Uses file_ verbatim if set, otherwise searches <resolved_path>/ for a
+// "*.<slot_>_*.bin" file (the FileSerializer naming convention)
 std::string ReplaySource::ResolveFilePath(const std::string path) const
 {
     if (!file_().empty())
@@ -158,7 +155,7 @@ std::string ReplaySource::ResolveFilePath(const std::string path) const
         " in '" + run_dir.string() + "'");
 }
 
-// LoadFile — read YAML header + binary payload into memory
+// LoadFile - read YAML header + binary payload into memory
 void ReplaySource::LoadFile(const std::string &filepath)
 {
     std::ifstream f(filepath, std::ios::binary);

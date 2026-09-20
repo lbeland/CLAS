@@ -40,7 +40,7 @@ class BenchSink : public IProcessor {
 
     // Options
     options::Int n_messages_{-1};
-    options::Int window_size_{2000}; // packets to skip at startup before computing statistics
+    options::Int window_size_{2000};
     options::String path_{"run://"};
 
     // Runtime state

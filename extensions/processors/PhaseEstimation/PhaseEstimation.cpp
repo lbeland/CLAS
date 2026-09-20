@@ -155,14 +155,11 @@ void PhaseEstimation::load_filter_coeffs(const StorageContext &context, double f
     if (!filter_def_()["file"])
     {
         int N = 1;
-        // double bandwidth = filter_def_()["bandwidth"].as<double>(4.0);
-        double bandwidth = 0.9 * f0; // 90% of f0 as bandwidth
+        double bandwidth = 0.9 * f0; // 90% of f0
         double low_cutoff = f0 - bandwidth / 2.0;
         double high_cutoff = f0 + bandwidth / 2.0;
         int window_size = n_fft_;
-        // Nudge away from exact .xx5 boundaries before rounding to 2 decimals, so that
-        // tiny floating-point noise relative to the Python precompute script can't flip the rounding direction and produce
-        // a mismatched filename.
+        // Nudge away from .xx5 boundaries so rounding matches the Python precompute script
         constexpr double tie_break_epsilon = 1e-9;
         std::string filename;
         filename = std::to_string(N) + "_" + std::format("{:.2f}", low_cutoff + tie_break_epsilon) + "_" + std::format("{:.2f}", high_cutoff + tie_break_epsilon) + "_" + std::to_string(fs_) + "_" + std::to_string(window_size) + ".txt";
@@ -262,7 +259,7 @@ void PhaseEstimation::Prepare(GlobalContext &context)
 
     window_size_ = static_cast<int>(fs_ * (1.0 / f0_) * 2.0); // 2 cycles of the current f0
     n_fft_ = static_cast<int>(good_size_real(window_size_));
-    // Pre-size the circular buffer for the worst-case f0 (5 Hz → 2 cycles = 2/5 * fs samples)
+    // Pre-size the circular buffer for the worst-case f0 (5 Hz, 2 cycles = 2/5 * fs samples)
     sample_window.set_capacity(static_cast<int>(fs_ * (1.0 / 5.0) * 2.0));
     LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
@@ -300,7 +297,7 @@ void PhaseEstimation::Preprocess(ProcessingContext &context)
 
     window_size_ = static_cast<int>(fs_ * (1.0 / f0_) * 2.0); // 2 cycles of the current f0
     n_fft_ = static_cast<int>(good_size_real(window_size_));
-    // Pre-size the circular buffer for the worst-case f0 (5 Hz → 2 cycles = 2/5 * fs samples)
+    // Pre-size the circular buffer for the worst-case f0 (5 Hz, 2 cycles = 2/5 * fs samples)
     sample_window.set_capacity(static_cast<int>(fs_ * (1.0 / 5.0) * 2.0));
     LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
@@ -362,7 +359,7 @@ void PhaseEstimation::Process(ProcessingContext &context)
 
                 if (std::abs(new_f0 - f0_) >= 0.1)
                 {
-                    // f0 changed — update window, FFT, and calibration
+                    // f0 changed - update window, FFT, and calibration
                     f0_ = new_f0;
                     int old_n_fft = n_fft_;
                     window_size_ = static_cast<int>(2.0 * fs_ / f0_); // 2 cycles of new f0

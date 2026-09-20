@@ -84,7 +84,7 @@ Options:
     type: string
     default: "s32"
     description: Sample format - "float" (FLOAT_LE), "s16" (S16_LE) or "s32" (S32_LE).
-      hw:* devices often require s16/s32.
+      hw:* devices often require s16 or s32.
   - name: stim_dur_unit
     type: string
     default: "deg"
@@ -113,6 +113,10 @@ Options:
     type: bool
     default: false
     description: Play a continuous background sound underneath the stimuli.
+  - name: background_sound_file
+    type: string
+    default: "background.wav"
+    description: Background sound file name, resolved under the "sounds" resource path.
   - name: background_dB
     type: int
     default: 18

@@ -322,6 +322,7 @@ FrequencyEstimation::FrequencyEstimation() : IProcessor(PRIORITY_HIGH)
     add_option("max_invalid_sec", max_invalid_sec_, "Maximum duration of invalid data in seconds before reset of estimation.");
     add_option("kalman_f0_std", kalman_f0_std_, "Std of the f0 drift [Hz/s]. Sets Kalman Q.");
     add_option("kalman_full", kalman_full_, "If true, use full Kalman filter with adaptive gain and cold-start. If false, use EMA-equivalent fixed gain.");
+    add_option("max_gauss_width_hz", max_gauss_width_hz_, "Reject candidate peaks whose fitted Gaussian is broader than this (Hz).");
     add_option("debug_output", debug_output_, "If true, also publish the raw peak f0 (pre-Kalman) on data-out slot 1 for debugging. Connect a sink to '<name>.out.1' after the slot-0 connection.");
 
     f0_state_ = create_broadcaster_state<double>(
@@ -558,7 +559,7 @@ void FrequencyEstimation::Process(ProcessingContext &context)
                 current_gauss_sigma_ = peak.sigma_hz;
                 if (std::isnan(kf_x_))
                 {
-                    // First valid estimate — initialize directly (no smoothing yet)
+                    // First valid estimate - initialize directly (no smoothing yet)
                     kf_x_ = peak.f0_hz;
                 }
                 else
@@ -567,7 +568,7 @@ void FrequencyEstimation::Process(ProcessingContext &context)
                     {
                         double signal_power = 0.0;
                         double noise_power = 0.0;
-                        // Compute SNR from Gaussian peak power within ±2σ
+                        // Compute SNR from Gaussian peak power within +/-2 sigma
                         for (int k = 0; k < max_analyze_bin_; ++k)
                         {
                             if (std::abs(freqs_[k] - peak.f0_hz) <= 2 * peak.sigma_hz)

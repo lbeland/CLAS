@@ -57,12 +57,8 @@ class UDPSource : public IProcessor {
     options::Int nsamples_{1};
     options::Int n_messages_{-1};
     options::Bool store_aux_{true};
-    // Number of packets used for initial start-time calibration.
-    // At 10 kHz, 1000 packets ≈ 100 ms of startup delay.
     options::Int calib_packets_{10000};
-    // Time constant [s] of the exponential forgetting factor
     options::Double fs_tau_s_{30.0};
-    // Duration [s] of the RLS warm-up
     options::Double recal_warmup_s_{60.0};
 
     // Runtime state
@@ -70,10 +66,10 @@ class UDPSource : public IProcessor {
     int packet_count_ = 0;
     Packet last_packet_;
 
-    // Offset [µs] such that: wallclock_us = clock_us + steady_to_wallclock_offset_us_
+    // Offset [microseconds] such that: wallclock_us = clock_us + steady_to_wallclock_offset_us_
     int64_t steady_to_wallclock_offset_us_ = 0;
 
-    // t0: calibrated reference time [µs, in Clock's epoch] of sample n0
+    // t0: calibrated reference time [microseconds, in Clock's epoch] of sample n0
     uint64_t start_time_us_ = 0;
 
     double fs_eff_ = 0.0;

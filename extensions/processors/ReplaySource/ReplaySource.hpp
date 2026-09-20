@@ -58,18 +58,18 @@ class ReplaySource : public IProcessor {
     // Data ports
     PortOut<MultiChannelType<double>> *data_out_port_;
 
-    // Options — replay source selection
+    // Options - replay source selection
     options::String path_{"run://"};
     options::String file_{""};
     options::Int    slot_{0};
 
-    // Options — playback controls
+    // Options - playback controls
     options::Bool   loop_{false};
     options::Bool   real_time_{true};
     options::Double speed_factor_{1.0};
     options::Int    n_messages_{-1};
 
-    // Options — output contract
+    // Options - output contract
     options::Value<unsigned int, false> nchannels_{32};
     options::Value<unsigned int, false> nsamples_{1};
     options::Double fs_{1000.0};

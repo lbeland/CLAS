@@ -1,21 +1,20 @@
-graph:
-  file: ""
-  autostart: false
 debug:
   enabled: false
-testing:
-  enabled: false
-network:
-  port: 5560
+graph:
+  autostart: false
+  file: ''
 logging:
-  path: ./
+  cloud:
+    enabled: true
+    port: 5556
+  path: results/
   screen:
     enabled: true
-  cloud:
-    enabled: false
-    port: 5556
+network:
+  port: 5555
 server_side_storage:
+  custom: {}
   environment: ./
-  resources: /home/linda/Documents/CLAS/resources
-  custom:
-    {}
+  resources: ./resources
+testing:
+  enabled: false

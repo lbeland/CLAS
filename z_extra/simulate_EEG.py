@@ -4,7 +4,6 @@ import struct
 import time
 from datetime import datetime, timezone
 import zmq
-from scipy.signal import hilbert
 import matplotlib.pyplot as plt
 import numpy as np
 

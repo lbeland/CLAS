@@ -39,4 +39,4 @@ CMakeFiles
 # keep the committed figures despite the repo-wide *.png / *.csv ignores.
 !IAF_Estimation/cecHT_ext/figures/*.png
 
-
+!stim_protocol.csv

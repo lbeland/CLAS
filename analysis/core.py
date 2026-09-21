@@ -208,7 +208,7 @@ def compute_errors(
             errors.append({"label": r"$\theta_{\mathrm{HT}} - \theta$", "time_s": t, "values": h_err,
                            "unit": "degrees", "linestyle": "-"})
 
-            # Online vs offline Hilbert estimate; equals "Phase error" without true_phase
+            # Online vs offline Hilbert estimate
             oh_err = np.angle(np.exp(1j * (phi - hilbert_phase[:n])), deg=True)
             errors.append({"label": r"$\hat\theta - \theta_{\mathrm{HT}}$", "time_s": t, "values": oh_err,
                            "unit": "degrees", "linestyle": "--"})

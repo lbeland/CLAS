@@ -5,7 +5,7 @@ This repository contains two related but distinct things:
 1. **CLAS core** — a closed-loop auditory stimulation system (CLAS) built on **Falcon** (https://github.com/falcon-eyrie/falcon-core, moved to https://github.com/falcon-neuro/falcon on Sep 17, 2026), a real-time processing-graph engine. This is the actual experiment/recording pipeline
 2. **Side analysis / research** — standalone explorations of signal-processing algorithms that CLAS uses or could use (alpha-frequency estimation, phase estimation, sliding-DFT, TurboLink hardware latency), kept alongside the core system but developed and run independently of it.
 
-![CLAS system overview](CLAS_overview.png)
+![CLAS system overview](CLAS_overview_white.png)
 ## Table of contents
 
 - [Repository structure](#repository-structure)

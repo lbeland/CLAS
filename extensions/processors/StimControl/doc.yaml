@@ -44,14 +44,14 @@ Options:
     type: double
     default: 0
     description: Target stimulus onset phase in degrees.
-  - name: audio_latency_s
+  - name: audio_latency_ms
     type: double
     default: 0
-    description: Estimated audio-output latency (s), used for phase correction.
-  - name: erp_latency_s
+    description: Estimated audio-output latency (ms), used for phase correction.
+  - name: erp_latency_ms
     type: double
     default: 0
-    description: Estimated auditory evoked-response-potential latency (s), used for phase correction.
+    description: Estimated auditory evoked-response-potential latency (ms), used for phase correction.
   - name: correct_latencies
     type: bool
     default: true

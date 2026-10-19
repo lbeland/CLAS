@@ -108,8 +108,8 @@ graph:
         # stim_dur_deg: 90
         stim_dur_ms: 20 
         correct_latencies: true
-        audio_latency_s: 0.005
-        erp_latency_s: 0.0 #728  ######
+        audio_latency_ms: 5
+        erp_latency_ms: 0 #72.8  ######
         stim_amplitude: 1.0
         stim_period_ms: 0.8
         use_background_sound: false

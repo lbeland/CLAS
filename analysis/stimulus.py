@@ -15,7 +15,7 @@ class StimulusConfig:
     stim_dur_deg:   float = 90.0
     stim_dur_unit:  str   = "deg"
     stim_dur_ms:    float = 20.0
-    erp_latency_s:  float = 0.0
+    erp_latency_ms: float = 0.0
 
     @classmethod
     def from_yaml(cls, graph_config: dict) -> "StimulusConfig":
@@ -30,7 +30,7 @@ class StimulusConfig:
             stim_dur_deg=opts.get("stim_dur_deg",   90.0),
             stim_dur_unit=opts.get("stim_dur_unit", "deg"),
             stim_dur_ms=opts.get("stim_dur_ms",     20.0),
-            erp_latency_s=opts.get("erp_latency_s",  0.0),
+            erp_latency_ms=opts.get("erp_latency_ms", opts.get("erp_latency_s", 0.0) * 1000.0),
         )
 
 
@@ -70,7 +70,7 @@ def compute_reference_stimulus(
 
     corrected_phase = phase.copy()
     corrected_phase[f0_safe] = (
-        phase[f0_safe] + 2.0 * np.pi * f0[f0_safe] * config.erp_latency_s
+        phase[f0_safe] + 2.0 * np.pi * f0[f0_safe] * (config.erp_latency_ms / 1000.0)
     ) % (2.0 * np.pi)
 
     diff         = corrected_phase - onset_rad
@@ -164,7 +164,7 @@ def compute_stimulus_edge_errors(
     phase          = np.asarray(phase, dtype=float)
 
     onset_rad       = np.deg2rad(config.stim_onset_deg)
-    latency_samples = int(round(config.erp_latency_s * fs))
+    latency_samples = int(round(config.erp_latency_ms / 1000.0 * fs))
     rising          = get_edges(trigger_binary, "rising")
     falling         = get_edges(trigger_binary, "falling")
 

@@ -105,8 +105,8 @@ graph:
         # stim_dur_deg: 90
         # stim_dur_ms: 20         # default
         # correct_latencies: true  # default
-        audio_latency_s: 0.005
-        erp_latency_s: 0.0 #631   ###### TODO #########
+        audio_latency_ms: 5
+        erp_latency_ms: 0 #63.1   ###### TODO #########
         stim_amplitude: 1.0
         stim_period_ms: 0.8
         # use_background_sound: false  # default

@@ -104,7 +104,7 @@ StimControl::StimControl() : IProcessor(PRIORITY_HIGH)
     add_option("max_n_stimuli", max_n_stimuli_, "Maximum number of stimuli to present (-1 = infinite). Graph is stopped automatically");
     add_option("stim_onset_deg", stim_onset_deg_, "Stimulus onset phase in degrees.");
     add_option("audio_latency_ms", audio_latency_ms_, "Estimated audio latency in milliseconds (for phase correction).");
-    add_option("erp_latency_ms", erp_latency_ms_, "Estimated auditory evoked response potential latency in milliseconds (for phase correction).");
+    add_option("p1_latency_ms", p1_latency_ms_, "Estimated auditory P1 latency in milliseconds (for phase correction).");
     add_option("correct_latencies", correct_latencies_, "Whether to apply latency corrections to stimulus timing (default: true).");
 
     add_option("audio_device", audio_device_, "ALSA device string for playback (e.g. hw:1,0 or default).");
@@ -938,7 +938,7 @@ void StimControl::Process(ProcessingContext &context)
                     // System latency
                     delay_sec += static_cast<double>(sys_now_us - hw_ts_us) / 1e6;
                     // Brain latency
-                    delay_sec += (audio_latency_ms_() + erp_latency_ms_()) / 1e3;
+                    delay_sec += (audio_latency_ms_() + p1_latency_ms_()) / 1e3;
                 }
 
                 double phase_advance = 2.0 * M_PI * f0 * delay_sec;

@@ -48,14 +48,14 @@ Options:
     type: double
     default: 0
     description: Estimated audio-output latency (ms), used for phase correction.
-  - name: erp_latency_ms
+  - name: p1_latency_ms
     type: double
     default: 0
-    description: Estimated auditory evoked-response-potential latency (ms), used for phase correction.
+    description: Estimated latency (ms) of the auditory P1 evoked response, used for phase correction.
   - name: correct_latencies
     type: bool
     default: true
-    description: Apply the audio + ERP latency corrections to stimulus timing.
+    description: Apply the audio + P1 latency corrections to stimulus timing.
   - name: stim_period_ms
     type: double
     default: 0.5

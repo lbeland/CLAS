@@ -83,7 +83,7 @@ graph:
         stim_dur_ms: 12
         correct_latencies: true 
         audio_latency_ms: 5
-        erp_latency_ms: 0
+        p1_latency_ms: 0
         stim_amplitude: 1.0
         stim_period_ms: 0.8
         randomize_stim_onset: true

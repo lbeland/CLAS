@@ -56,7 +56,7 @@ class StimControl : public IProcessor {
     options::Int max_n_stimuli_{-1};
     options::Double stim_onset_deg_{0};
     options::Double audio_latency_ms_{0};
-    options::Double erp_latency_ms_{0};
+    options::Double p1_latency_ms_{0};
     options::Bool   correct_latencies_{true};
 
     options::Double stim_period_ms_{0.5};

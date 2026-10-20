@@ -19,6 +19,8 @@
 
 #pragma once
 #include <thread>
+#include <variant>
+#include <vector>
 
 typedef int16_t ThreadPriority;
 
@@ -31,6 +33,6 @@ typedef int ThreadCore;
 
 const ThreadCore CORE_NOT_PINNED = -1;
 
-bool set_realtime_priority(pthread_t thread, ThreadPriority priority = PRIORITY_NONE);
+bool set_realtime_priority(pthread_t thread, ThreadPriority priority = PRIORITY_HIGH);
 
 int set_thread_core(pthread_t thread, std::variant<ThreadCore, std::vector<ThreadCore>> core);

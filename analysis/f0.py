@@ -45,7 +45,7 @@ def alpha_fast(psd, freq_bins, config):
     space (0.0 = on the aperiodic fit), so amplitude/gaussian/floor_value are
     on a consistent scale for the BIC test in ``approve_peak``. ``snr`` is
     computed exactly as the online FrequencyEstimation processor
-    (extensions/processors/FrequencyEstimation/FrequencyEstimation.cpp): over
+    (extensions/clas/processors/FrequencyEstimation/FrequencyEstimation.cpp): over
     bins within +/-2 sigma of the peak, ``snr = sum(aperiodic_lin *
     gauss_ratio) / sum(aperiodic_lin)`` in linear power.
 

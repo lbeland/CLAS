@@ -40,3 +40,6 @@ CMakeFiles
 !IAF_Estimation/cecHT_ext/figures/*.png
 
 !stim_protocol.csv
+
+# FetchContent download cache (Falcon upstream)
+.cache/

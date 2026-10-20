@@ -25,6 +25,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "ringbuffer.hpp"
 
@@ -47,7 +48,7 @@ class BaseData {};
  */
 class BaseType {
    public:
-    static const bool ispure() { return true; }
+    static bool ispure() { return true; }
     using Data = BaseData;
 };
 
@@ -76,7 +77,7 @@ class DefineType {
     static const std::string datatype() { return DATA::static_datatype(); }
     static const std::string dataname() { return DATA::static_dataname(); }
 
-    static const bool ispure() { return pure && BASETYPE::ispure(); }
+    static bool ispure() { return pure && BASETYPE::ispure(); }
 
     using Data = DATA;
     using Parameters = PARAMS;
@@ -127,7 +128,7 @@ struct Parameters {};
  */
 class Data : public IData<Data, BaseType> {
    public:
-    Data() : hardware_timestamp_(0), serial_number_(0) {}
+    Data() : hardware_timestamp_(0), serial_number_(0) { set_ingestion_tsc(); }
     virtual ~Data() {}
 
     /**
@@ -157,19 +158,19 @@ class Data : public IData<Data, BaseType> {
      *
      * @return int64_t
      */
-    int64_t ingestion_ns() const;
+    int64_t ingestion_tsc() const;
 
     /**
      * @brief Set the ingestion timestamp to now. This should only be called
      * by a "source" processor when the data packet is first ingested.
      */
-    void set_ingestion_ns();
+    void set_ingestion_tsc();
 
     /**
      * @brief Forward the ingestion timestamp from an upstream data packet
      * to this data packet.
      */
-    void forward_ingestion_ns(const Data& data);
+    void forward_ingestion_tsc(const Data& data);
 
     /**
      * @brief set_source_timestamp set the timepoint based on the internal
@@ -238,6 +239,12 @@ class Data : public IData<Data, BaseType> {
     virtual void SerializeBinary(std::ostream& stream, Serialization::Format format) const;
 
     /**
+     * @brief Identifies the underlying dynamic type for binary serialization.
+     * @return String view of the class or payload type name.
+     */
+    virtual std::string_view serialized_type_name() const { return "Unknown"; }
+
+    /**
      * @brief SerializeYAML - Serialize data specific for the data type in yaml
      * form according to the layout described in YAMLDescription. At this level,
      * only serialize the source timestamp duration, hardware timestamp and
@@ -274,10 +281,10 @@ class Data : public IData<Data, BaseType> {
 
    protected:
     /**
-     * @brief timestamp in nanoseconds when the data packet
+     * @brief CPU timestamp counter when the data packet
      * was first ingested by Falcon.
      */
-    int64_t ingestion_ns_;
+    int64_t ingestion_tsc_;
     TimePoint source_timestamp_;
     uint64_t hardware_timestamp_;  // e.g. from Neuralynx
     uint64_t serial_number_;
@@ -297,7 +304,7 @@ class Capabilities {
      *
      * @param prototype
      */
-    void Validate(const Data& prototype) const {}
+    void Validate(const Data& _) const {}
 };
 
 }  // namespace nsAnyType

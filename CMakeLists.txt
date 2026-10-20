@@ -8,12 +8,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 
+# Prevents re-downloading dependencies every time the build folder is deleted
+set(FETCHCONTENT_BASE_DIR "${CMAKE_HOME_DIRECTORY}/.cache" CACHE PATH "")
+
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 	message(STATUS "Debug build")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g -Wall -Wextra -Wunused -pthread")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Profile")
 	message(STATUS "Profile build")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -g -fno-omit-frame-pointer -fno-inline-functions -Wall -Wextra -Wunused -pthread")
+   	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -g -fno-omit-frame-pointer -Wall -Wextra -Wunused -pthread")
 else()
 	message(STATUS "Release build")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -Wextra -Wunused -pthread")
@@ -37,46 +41,37 @@ if(GIT_FOUND)
 endif()
 string(TIMESTAMP _time_stamp)
 
-############################
-# Add the basic libraries
-# to read on the use of fetch content :
-# https://android.googlesource.com/platform/external/cmake/+/refs/heads/upstream-release/Modules/FetchContent.cmake
-############################
 
+cmake_policy(SET CMP0135 NEW)
 include(FetchContent)
 
 FetchContent_Declare(
     flatbuffers
-    GIT_REPOSITORY "https://github.com/google/flatbuffers"
-    GIT_TAG        v25.9.23
+    URL "https://github.com/google/flatbuffers/archive/refs/tags/v25.12.19-2026-02-06-03fffb2.zip"
 )
 
 FetchContent_Declare(
 		yaml-cpp
-		GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-		GIT_SHALLOW	OFF
-		GIT_TAG bbf8bdb087bb3f3621ca0a5ace06047805f4e9f3
-	)
+		URL "https://github.com/jbeder/yaml-cpp/archive/refs/tags/yaml-cpp-0.9.0.zip"
+)
 
 FetchContent_Declare(
 		cppzmq
-		GIT_REPOSITORY https://github.com/zeromq/cppzmq.git
-		GIT_SHALLOW	ON
-		GIT_TAG v4.11.0
-	)
+		URL "https://github.com/zeromq/cppzmq/archive/refs/tags/v4.11.0.zip"
+)
+
+FetchContent_Declare(
+	g3log
+	URL "https://github.com/KjellKod/g3log/archive/refs/tags/2.6.zip"
+)
 
 FetchContent_Declare(
 	units
 	GIT_REPOSITORY https://github.com/LLNL/units.git
 	GIT_SHALLOW OFF
+	# The fix is not released yet, therefore we need to fetch a specific commit
+	# rather than downloading the source code as zip file
 	GIT_TAG c5610c81fb9285abef1217145365ac6532b6f0cc
-)
-
-FetchContent_Declare(
-	g3log
-	GIT_REPOSITORY https://github.com/KjellKod/g3log.git
-	GIT_SHALLOW ON
-	GIT_TAG 2.6
 )
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -163,8 +158,6 @@ SET(INSTALLED_EXTENSIONS "")
 message(STATUS "Checking for extensions.")
 
 include(scripts/cmake/ParseExtensions.cmake)
-
-option(COMPILE_EXTENSIONS "compile all extensions" ON)
 
 ## External extensions ##
 add_subdirectory(lib)

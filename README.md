@@ -34,7 +34,8 @@ This repository contains two related but distinct things:
 
 CLAS is built on [**Falcon**](https://github.com/falcon-neuro/falcon), a soft real-time
 framework for closed-loop neural applications developed at Neuro-Electronics Research Flanders
-(NERF) and licensed under the [GNU GPL v3](https://github.com/falcon-neuro/falcon/blob/develop/LICENSE.txt).
+(NERF) and licensed under the GNU GPL v3; CLAS is distributed under the same license
+([`LICENSE.txt`](LICENSE.txt)).
 The graph engine and much of the infrastructure come from Falcon and its authors. This repository
 started from Falcon [`516c7bc`](https://github.com/falcon-neuro/falcon/commit/516c7bc) and merges
 upstream history; CLAS's own processors and data types live in the Falcon extension

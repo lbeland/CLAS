@@ -18,7 +18,7 @@ BRANCH=${1:-develop}
 DROPPED=(
     .clang-format .clang-tidy .github .vscode/settings.json
     CHANGELOG.md analysis_options.yaml cspell.yaml docs falcon_gui
-    install.sh LICENSE.txt scripts/format.sh scripts/setup scripts/tidy.sh
+    install.sh scripts/format.sh scripts/setup scripts/tidy.sh
 )
 OURS=(README.md .gitignore .vscode/launch.json scripts/make.sh)
 

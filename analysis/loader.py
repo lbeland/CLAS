@@ -452,7 +452,7 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
         ts_ancestor = proc_ts[ancestor]
         n   = min(len(ts_ancestor), len(ts_proc))
         lat = (ts_proc[:n] - ts_ancestor[:n])
-        plt.plot(lat, alpha=0.5, linewidth=0.5, label=f"{ancestor} -> {proc}")
+        plt.plot(lat, alpha=0.5, linewidth=0.5, label=rf"{ancestor} $\to$ {proc}")
         print(f"  {ancestor:<{col}} {proc:<{col}} "
               f"{np.mean(lat):>8.2f} {np.median(lat):>8.2f} "
               f"{np.std(lat):>8.2f} {np.max(lat):>8.2f} {np.argmax(lat):>8}")
@@ -463,7 +463,7 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
     last_proc = next((p for p in reversed(topo_order) if p in proc_ts), None)
     total = compute_total_latency(samples, ground_truth, graph_config)
     if source_proc and last_proc and last_proc != source_proc and total is not None:
-        plt.plot(total, alpha=0.5, linewidth=0.5, label=f"{source_proc} -> {last_proc}", color="black")
+        plt.plot(total, alpha=0.5, linewidth=0.5, label=rf"{source_proc} $\to$ {last_proc}", color="black")
         print(f"{'-' * W}")
         print(f"  {'TOTAL  ' + source_proc:<{col}} {last_proc:<{col}} "
               f"{np.mean(total):>8.2f} {np.median(total):>8.2f} "

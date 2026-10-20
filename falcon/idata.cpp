@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------
 
 #include "idata.hpp"
+#include "utilities/tsc_duration_clock.cpp"
 using namespace nsAnyType;
 
 void Data::set_serial_number(uint64_t n) {
@@ -28,18 +29,16 @@ uint64_t Data::serial_number() const {
     return serial_number_;
 }
 
-int64_t Data::ingestion_ns() const {
-    return ingestion_ns_;
+int64_t Data::ingestion_tsc() const {
+    return ingestion_tsc_;
 }
 
-void Data::set_ingestion_ns() {
-    ingestion_ns_ = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::steady_clock::now().time_since_epoch())
-                        .count();
+void Data::set_ingestion_tsc() {
+    ingestion_tsc_ = TscDurationClock::tsc();
 }
 
-void Data::forward_ingestion_ns(const Data& data) {
-    ingestion_ns_ = data.ingestion_ns_;
+void Data::forward_ingestion_tsc(const Data& data) {
+    ingestion_tsc_ = data.ingestion_tsc_;
 }
 
 void Data::set_source_timestamp() {
@@ -76,6 +75,14 @@ void Data::SerializeBinary(std::ostream& stream, Serialization::Format format) c
         stream.write(reinterpret_cast<const char*>(&hardware_timestamp_),
                      sizeof(hardware_timestamp_));
         stream.write(reinterpret_cast<const char*>(&serial_number_), sizeof(serial_number_));
+    }
+
+    if (format == Serialization::Format::COMPACT) {
+        std::string_view type_name = serialized_type_name();
+        uint8_t type_len = static_cast<uint8_t>(std::min<size_t>(type_name.size(), 255));
+
+        stream.write(reinterpret_cast<const char*>(&type_len), sizeof(uint8_t));
+        stream.write(type_name.data(), type_len);
     }
 }
 

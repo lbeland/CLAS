@@ -4,7 +4,7 @@
 are a verbatim copy of ``analysis/f0.py`` (itself the production version of the
 ``alpha_fast`` estimator in ``IAF_Estimation/compare_f0_algos/iaf_compare/algorithms.py``,
 plus a linear-scale SNR matching
-``extensions/processors/FrequencyEstimation/FrequencyEstimation.cpp``). Kept as a
+``extensions/clas/processors/FrequencyEstimation/FrequencyEstimation.cpp``). Kept as a
 local copy rather than importing ``analysis.f0`` to avoid pulling in that
 package's dependencies (mne-free here).
 
@@ -63,7 +63,7 @@ def alpha_fast(psd, freq_bins, config):
     fit itself degenerates (too few sub-fit points).
 
     ``snr`` is computed exactly as in the online ``FrequencyEstimation``
-    processor (``extensions/processors/FrequencyEstimation/FrequencyEstimation.cpp``):
+    processor (``extensions/clas/processors/FrequencyEstimation/FrequencyEstimation.cpp``):
     over the bins within +/-2 sigma of the peak, the aperiodic fit is taken
     back to linear power (``10 ** aperiodic``), the smoothed Gaussian bump is
     taken to a linear ratio above that fit (``10 ** gaussian - 1``), and

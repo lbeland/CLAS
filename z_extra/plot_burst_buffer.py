@@ -8,7 +8,7 @@ followed by one mono sample per line, normalized to peak amplitude 1).
 Run from the repo root after the falcon graph has run StimControl at
 least once:
 
-    python extensions/processors/StimControl/plot_burst_buffer.py
+    python extensions/clas/processors/StimControl/plot_burst_buffer.py
 """
 import sys
 from pathlib import Path

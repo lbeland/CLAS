@@ -24,6 +24,7 @@
 #include <regex>
 #include <string>
 
+#include <sys/mman.h>
 #include "buildconstant.hpp"
 #include "cmdline/cmdline.h"
 #include "commandhandler.hpp"
@@ -35,10 +36,15 @@
 #include "logging/log.hpp"
 #include "options/units.hpp"
 #include "utilities/time.hpp"
-
+#include "utilities/tsc_duration_clock.cpp"
 using namespace std;
 
 int main(int argc, char** argv) {
+    if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
+        perror("ERR: mlockall failed. Run as root or check ulimit -l");
+    }
+    TscDurationClock::init();
+
     // create a parser
     cmdline::parser parser;
 
@@ -71,7 +77,7 @@ int main(int argc, char** argv) {
         std::cout << "Configuration: " << BUILD_TYPE << '\n';
         std::cout << "Extensions: " << '\n';
 
-        std::vector<std::string> extensions = split(EXTENSIONS_BUILD, ';');
+        std::vector<std::string> extensions = str_split(EXTENSIONS_BUILD, ';');
         for (const auto& it : extensions) {
             std::cout << it << '\n';
         }

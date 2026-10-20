@@ -99,7 +99,7 @@ std::vector<std::string> expandProcessorName(const std::string& s) {
                 range.end());
 
             // split on comma
-            auto id_range = split(range, ',');
+            auto id_range = str_split(range, ',');
 
             std::regex re_range("(\\d+)(?:\\-(\\d+))?");
             std::smatch match_range;
@@ -206,16 +206,19 @@ void ParseConnectionRules(const YAML::Node& node, StreamConnections& connections
 ProcessorGraph::ProcessorGraph(GlobalContext& context)
     : global_context_(context), terminate_signal_(false) {
     LOG(STATE) << state_string();
-    // log list of registered processors
     std::vector<std::string> processors = ProcessorFactory::instance().listEntries();
+    std::string registered_list = "";
+
     for (const auto& item : processors) {
         documentation_[item] = LoadProcessorDoc(item);
-        if (documentation_[item].IsMap() && documentation_[item]["Description"]) {
-            LOG(INFO) << "Registered processor " << item << " - "
-                      << documentation_[item]["Description"];
-        } else {
-            LOG(INFO) << "Registered processor " << item;
+        if (!registered_list.empty()) {
+            registered_list += ", ";
         }
+        registered_list += item;
+    }
+
+    if (!registered_list.empty()) {
+        LOG(INFO) << "Registered processors: " << registered_list;
     }
 }
 
@@ -254,7 +257,7 @@ std::vector<std::pair<std::string, std::shared_ptr<IState>>> ProcessorGraph::Loo
 
     for (auto& state_address : state_addresses) {
         // parse processor.state name
-        std::vector<std::string> address = split(state_address, '.');
+        std::vector<std::string> address = str_split(state_address, '.');
 
         if (address.size() != 2) {
             throw InvalidGraphError("Error parsing state address \"" + state_address + "\"");

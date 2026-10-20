@@ -28,8 +28,8 @@ _last_run_group
 *.pgf
 */filters/
 
-
-LICENSE
+# Always commit license files (they have no extension, so "*" above ignores them)
+!LICENSE*
 
 results/
 

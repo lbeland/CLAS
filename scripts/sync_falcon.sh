@@ -20,7 +20,7 @@ DROPPED=(
     CHANGELOG.md analysis_options.yaml cspell.yaml docs falcon_gui
     install.sh LICENSE.txt scripts/format.sh scripts/setup scripts/tidy.sh
 )
-OURS=(README.md extensions.txt .vscode/launch.json)
+OURS=(README.md .gitignore .vscode/launch.json scripts/make.sh)
 
 cd "$(git rev-parse --show-toplevel)"
 
@@ -54,7 +54,7 @@ done
 for p in "${OURS[@]}"; do
     if [ -n "$(git diff --name-only --diff-filter=U -- "$p")" ]; then
         git checkout --ours -- "$p"
-        git add -- "$p"
+        git add -f -- "$p"
     fi
 done
 

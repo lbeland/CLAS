@@ -32,8 +32,16 @@ This repository contains two related but distinct things:
 
 ### CLAS core (Falcon)
 
-- [**`falcon/`**](falcon/) — vendored Falcon engine source.
-- [**`extensions/clas/processors/`**](extensions/clas/processors/) — this project's custom Falcon processors (e.g. [`PhaseEstimation`](extensions/clas/processors/PhaseEstimation/), [`FrequencyEstimation`](extensions/clas/processors/FrequencyEstimation/), [`StimControl`](extensions/clas/processors/StimControl/), [`UDPSource`](extensions/clas/processors/UDPSource/), [`MultiChannelFilter`](extensions/clas/processors/multichannelfilter/)); each has its own `doc.yaml` documenting its ports and parameters.
+CLAS is built on [**Falcon**](https://github.com/falcon-neuro/falcon), a soft real-time
+framework for closed-loop neural applications developed at Neuro-Electronics Research Flanders
+(NERF) and licensed under the [GNU GPL v3](https://github.com/falcon-neuro/falcon/blob/develop/LICENSE.txt).
+The graph engine and much of the infrastructure come from Falcon and its authors. This repository
+started from Falcon [`516c7bc`](https://github.com/falcon-neuro/falcon/commit/516c7bc) and merges
+upstream history; CLAS's own processors and data types live in the Falcon extension
+[`extensions/clas/`](extensions/clas/).
+
+- [**`falcon/`**](falcon/) — Falcon engine source, merged from upstream (see [Syncing with upstream Falcon](#syncing-with-upstream-falcon)).
+- [**`extensions/clas/processors/`**](extensions/clas/processors/) — the CLAS Falcon extension's processors (e.g. [`PhaseEstimation`](extensions/clas/processors/PhaseEstimation/), [`FrequencyEstimation`](extensions/clas/processors/FrequencyEstimation/), [`StimControl`](extensions/clas/processors/StimControl/), [`UDPSource`](extensions/clas/processors/UDPSource/), [`MultiChannelFilter`](extensions/clas/processors/multichannelfilter/)); each has its own `doc.yaml` documenting its ports and parameters.
 - [**`resources/`**](resources/) — shared assets used by processors and graphs: [**`graphs/`**](resources/graphs/) holds the Falcon graph YAMLs that wire processors together into a pipeline, [**`filters/`**](resources/filters/) and [**`fft_wisdom/`**](resources/fft_wisdom/) hold precomputed filter coefficients and cached FFTW wisdom that processors load at startup, and [**`sounds/`**](resources/sounds/) holds the auditory stimuli (wav files) played during stimulation.
 - [**`analysis/`**](analysis/) — the shared Python package that `clas.py` runs automatically after a recording finishes to score/plot the result; also runnable standalone. See [analysis/README.md](analysis/README.md).
 - [**`lib/`**](lib/) — vendored C++ dependencies used by Falcon/extensions.
@@ -42,6 +50,16 @@ This repository contains two related but distinct things:
 - [**`plot_processor_flowchart.py`**](plot_processor_flowchart.py) — renders a Falcon graph yaml as a flowchart.
 - [**`stim_protocol.csv`**](stim_protocol.csv) — example stimulation on/off schedule for `clas.py`.
 - [**`results/`**](results/) — timestamped output directories from `clas.py` runs.
+
+#### Syncing with upstream Falcon
+
+```bash
+scripts/sync_falcon.sh            # merges falcon/develop into the current branch
+```
+
+[`scripts/sync_falcon.sh`](scripts/sync_falcon.sh) resolves the expected conflicts automatically;
+anything else (usually CLAS patches in `falcon/`) is left for you to resolve. Rebuild and run a
+graph before merging into `master`. Always merge, never rebase onto Falcon.
 
 ### Side analysis / research
 

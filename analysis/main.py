@@ -489,8 +489,7 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Offline CLAS analysis entry point -- pick which of the analyse_*() "
-                     "functions to run instead of (un)commenting them below.")
+        description="Offline CLAS analysis entry point")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     all_p = subparsers.add_parser(

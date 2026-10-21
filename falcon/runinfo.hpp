@@ -103,7 +103,7 @@ class RunContext : public StorageContext {
         // create run destination folder
         if (mkdir(storage_context("runbase").c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) != 0) {
             if (errno == EEXIST) {
-                LOG(WARNING) << "Run base folder already exists, reusing it. ("
+                LOG(INFO) << "Run base folder already exists, reusing it. ("
                              << storage_context("runbase") << ")";
             } else {
                 throw std::runtime_error("Cannot create run base folder " +

@@ -16,12 +16,58 @@
 // You should have received a copy of the GNU General Public License
 // along with falcon-core. If not, see <http://www.gnu.org/licenses/>.
 // ---------------------------------------------------------------------
+#include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <string>
 
 #include "../utilities/zmqutil.hpp"
 #include "customsink.hpp"
+
+namespace {
+// run start/end as nanoseconds since epoch of the g3log clock (0 = unset)
+std::atomic<int64_t> run_start_ns{0};
+std::atomic<int64_t> run_end_ns{0};
+
+int64_t now_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::high_resolution_clock::now().time_since_epoch())
+        .count();
+}
+
+// Sinks format messages asynchronously, so the elapsed time is computed from the
+// message's own timestamp rather than from the current time.
+std::string ElapsedSinceRunStart(const g3::LogMessage& msg) {
+    const int64_t start = run_start_ns.load();
+    const int64_t end = run_end_ns.load();
+    const int64_t ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                           msg._timestamp.time_since_epoch())
+                           .count();
+    if (start == 0 or ts < start or (end != 0 and ts > end)) {
+        return "-";
+    }
+    return std::to_string((ts - start) / 1000000000) + "s";
+}
+
+// e.g. "2026/10/21 11:27:35.812 50s\t"
+std::string LogHeader(const g3::LogMessage& msg) {
+    return msg.timestamp("%Y/%m/%d %H:%M:%S.%f3") + " " + ElapsedSinceRunStart(msg) + "\t";
+}
+
+std::string FileLogDetails(const g3::LogMessage& msg) {
+    return LogHeader(msg) + msg.level() + " [" + msg.file() + "->" + msg.function() + ":" +
+           msg.line() + "]\t";
+}
+}  // namespace
+
+void SetRunStart() {
+    run_end_ns.store(0);
+    run_start_ns.store(now_ns());
+}
+
+void SetRunEnd() { run_end_ns.store(now_ns()); }
 
 FileSinkFixed::FileSinkFixed(const std::string& path) {
     std::filesystem::create_directories(std::filesystem::path(path).parent_path());
@@ -32,13 +78,13 @@ FileSinkFixed::FileSinkFixed(const std::string& path) {
 }
 
 void FileSinkFixed::ReceiveLogMessage(g3::LogMessageMover message) {
-    _out << message.get().toString() << std::flush;
+    _out << message.get().toString(FileLogDetails) << std::flush;
 }
 
 std::string ScreenSink::FormatMessage(const LEVELS& level, g3::LogMessage& msg) {
     if (level.value == DEBUG.value or level.value >= WARNING.value) {
         std::string out;
-        out.append("\n" + msg.timestamp() + "\t" + msg.level() + " [" + msg.file() +
+        out.append("\n" + LogHeader(msg) + msg.level() + " [" + msg.file() +
                    " L: " + msg.line() + "]\t");
         out.append(msg.message());
         return out;
@@ -46,7 +92,7 @@ std::string ScreenSink::FormatMessage(const LEVELS& level, g3::LogMessage& msg) 
         return msg.message();
     } else {
         std::string out;
-        out.append("\n" + msg.timestamp() + "\t" + msg.level() + "\t" + msg.message());
+        out.append("\n" + LogHeader(msg) + msg.level() + "\t" + msg.message());
         return out;
     }
 }

@@ -443,12 +443,12 @@ void ReplaySource::Process(ProcessingContext &context)
         ++current_record_;
         ++emitted_;
     }
-    LOG(INFO) << name() << " stopped working";
+    LOG(INFO) << name() << " stopped.";
 }
 
 void ReplaySource::Postprocess(ProcessingContext &context)
 {
-    LOG(INFO) << name() << ": Total replay packets emitted: " << emitted_;
+    LOG(INFO) << name() << " Total replay packets emitted: " << emitted_;
 }
 
 REGISTERPROCESSOR(ReplaySource)

@@ -129,7 +129,7 @@ void BenchSink::Process(ProcessingContext &context)
         }
         packet_count_++;
     }
-    LOG(INFO) << name() << " stopped working";
+    LOG(INFO) << name() << " stopped.";
 }
 
 void BenchSink::Postprocess(ProcessingContext &context)

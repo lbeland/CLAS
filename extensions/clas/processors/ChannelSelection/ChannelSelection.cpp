@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <limits>
 #include <cmath>
+#include <iomanip>
 #include <string>
 
 ChannelSelection::ChannelSelection() : IProcessor(PRIORITY_HIGH)
@@ -61,7 +62,7 @@ void ChannelSelection::Prepare(GlobalContext &context)
 {
     const auto &info = data_in_port_->streaminfo(0);
     const auto &p = info.parameters<MultiChannelType<double>::Parameters>();
-    LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate << "\n";
+    LOG(DEBUG) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
 
     fs_ = p.sample_rate;
     n_channels_ = p.nchannels;
@@ -101,7 +102,7 @@ void ChannelSelection::Preprocess(ProcessingContext &context)
     // Initialize EMA at the squared threshold so all channels start neutral
     ema_.assign(n_channels_, rms_threshold_uv_() * rms_threshold_uv_());
 
-    LOG(INFO) << name() << " RMS selector EMA tau: " << rms_window_seconds_()
+    LOG(DEBUG) << name() << " RMS selector EMA tau: " << rms_window_seconds_()
               << " s, mu: " << ema_mu_ << ".";
 
     packet_count_ = 0;
@@ -136,6 +137,8 @@ void ChannelSelection::Process(ProcessingContext &context)
 
         data_in_port_->slot(0)->ReleaseData();
 
+        const unsigned int previous_channel_index = current_channel_index_;
+
         // Compare squared EMA to squared threshold (avoids sqrt every packet)
         if (ema_[current_channel_index_] <= rms_thresh_uv * rms_thresh_uv)
         {
@@ -152,9 +155,13 @@ void ChannelSelection::Process(ProcessingContext &context)
 
         channel_state_->set(current_channel_index_);
 
-        if (packet_count_ % static_cast<int>(5 * fs_) == 0)
+        // log the initial selection, every switch, and a reminder every 10 s
+        if (packet_count_ == 0 || current_channel_index_ != previous_channel_index ||
+            packet_count_ % static_cast<int>(10 * fs_) == 0)
         {
-            LOG(INFO) << name() << ". Packet " << packet_count_ + 1 << ": Selected channel " << current_channel_index_ + 1 << " (RMS: " << std::sqrt(ema_[current_channel_index_]) << "uV)";
+            LOG(INFO) << name() << (current_channel_index_ != previous_channel_index ? " switched to" : " using")
+                      << " channel " << current_channel_index_ + 1 << " (RMS " << std::fixed << std::setprecision(0)
+                      << std::sqrt(ema_[current_channel_index_]) << " uV)";
         }
 
         idx_out = idx_out_port_->slot(0)->ClaimData(false);
@@ -166,12 +173,12 @@ void ChannelSelection::Process(ProcessingContext &context)
 
         packet_count_++;
     }
-    LOG(INFO) << name() << " stopped working";
+    LOG(INFO) << name() << " stopped.";
 }
 
 void ChannelSelection::Postprocess(ProcessingContext &context)
 {
-    LOG(INFO) << name() << ": Total messages processed: " << packet_count_ << ", last selected channel: " << current_channel_index_ + 1;
+    LOG(DEBUG) << name() << " Total messages processed: " << packet_count_ << ", last selected channel: " << current_channel_index_ + 1;
 }
 
 REGISTERPROCESSOR(ChannelSelection);

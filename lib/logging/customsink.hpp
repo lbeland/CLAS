@@ -28,6 +28,13 @@
 #include "g3log/g3log.hpp"
 #include "g3log/logmessage.hpp"
 
+/**
+ * Mark the start/end of a run. While a run is active, every log header shows
+ * the elapsed time since its start next to the date and time.
+ */
+void SetRunStart();
+void SetRunEnd();
+
 class FileSinkFixed {
    public:
     explicit FileSinkFixed(const std::string& path);

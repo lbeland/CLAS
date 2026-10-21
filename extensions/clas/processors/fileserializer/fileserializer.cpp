@@ -52,11 +52,15 @@ void FileSerializer::CreatePorts() {
 }
 
 void FileSerializer::Configure(const GlobalContext &context) {
-  LOG(INFO) << "format: " << format_.to_yaml();
-  LOG(INFO) << "encoding: " << encoding_.to_yaml();
-  LOG(INFO) << "throttle enabled: " << throttle_();
-  LOG(INFO) << "throttle threshold: " << throttle_threshold_();
-  LOG(INFO) << "throttle smooth: " << throttle_smooth_();
+  if (throttle_()) {
+    LOG(INFO) << name() << " format: " << format_.to_yaml()
+              << ", encoding: " << encoding_.to_yaml()
+              << ", throttle: on (threshold " << throttle_threshold_()
+              << ", smooth " << throttle_smooth_() << ")";
+  } else {
+    LOG(INFO) << name() << " format: " << format_.to_yaml()
+              << ", encoding: " << encoding_.to_yaml() << ", throttle: off";
+  }
 }
 
 void FileSerializer::Preprocess(ProcessingContext &context) {

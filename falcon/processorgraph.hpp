@@ -30,6 +30,7 @@
 #include "connectionparser.hpp"
 #include "graphexceptions.hpp"
 #include "iprocessor.hpp"
+#include "logging/customsink.hpp"
 #include "logging/log.hpp"
 #include "runinfo.hpp"
 #include "yaml-cpp/yaml.h"
@@ -150,6 +151,12 @@ class ProcessorGraph {
     GraphState state() const { return state_; }
     std::string state_string() const;
     void set_state(GraphState state) {
+        // the run clock in the log header covers PROCESSING and STOPPING
+        if (state == GraphState::PROCESSING) {
+            SetRunStart();
+        } else if (state != GraphState::STOPPING) {
+            SetRunEnd();
+        }
         state_ = state;
         LOG(STATE) << state_string();
     }

@@ -247,21 +247,21 @@ void PhaseEstimation::load_phase_shift(const StorageContext &context, double f0)
     }
     // Phase shift values are stored at 0.1 Hz increments, so index = round(f0 * 10)
     filter_phase_shift_ = filter_phase_shift_values_[static_cast<size_t>(std::round(f0 * 10))];
-    LOG(INFO) << name() << " Loaded phase shift of " << filter_phase_shift_ << " radians for compensation";
+    LOG(DEBUG) << name() << " Loaded phase shift of " << filter_phase_shift_ << " radians for compensation";
 }
 
 void PhaseEstimation::Prepare(GlobalContext &context)
 {
     const auto &info = data_in_port_->streaminfo(0);
     const auto &p = info.parameters<MultiChannelType<double>::Parameters>();
-    LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
+    LOG(DEBUG) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
     fs_ = p.sample_rate;
 
     window_size_ = static_cast<int>(fs_ * (1.0 / f0_) * 2.0); // 2 cycles of the current f0
     n_fft_ = static_cast<int>(good_size_real(window_size_));
     // Pre-size the circular buffer for the worst-case f0 (5 Hz, 2 cycles = 2/5 * fs samples)
     sample_window.set_capacity(static_cast<int>(fs_ * (1.0 / 5.0) * 2.0));
-    LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
+    LOG(DEBUG) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
     signal_in = fftw_alloc_real(n_fft_);
     freq_half = fftw_alloc_complex(n_fft_ / 2 + 1);
@@ -299,7 +299,6 @@ void PhaseEstimation::Preprocess(ProcessingContext &context)
     n_fft_ = static_cast<int>(good_size_real(window_size_));
     // Pre-size the circular buffer for the worst-case f0 (5 Hz, 2 cycles = 2/5 * fs samples)
     sample_window.set_capacity(static_cast<int>(fs_ * (1.0 / 5.0) * 2.0));
-    LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
     load_filter_coeffs(context, f0_);
 
@@ -493,12 +492,12 @@ void PhaseEstimation::Process(ProcessingContext &context)
 
         packet_count_++;
     }
-    LOG(INFO) << name() << " stopped working";
+    LOG(INFO) << name() << " stopped.";
 }
 
 void PhaseEstimation::Postprocess(ProcessingContext &context)
 {
-    LOG(INFO) << name() << ": Total messages processed: " << packet_count_;
+    LOG(DEBUG) << name() << " Total messages processed: " << packet_count_;
 }
 
 void PhaseEstimation::Unprepare(GlobalContext &context)

@@ -215,7 +215,7 @@ void StimControl::Prepare(GlobalContext &context)
 {
     const auto &info = data_in_port_->streaminfo(0);
     const auto &p = info.parameters<MultiChannelType<double>::Parameters>();
-    LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels
+    LOG(DEBUG) << name() << " Input Stream parameters - nchannels: " << p.nchannels
               << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
 
     fs_ = p.sample_rate;
@@ -227,7 +227,7 @@ void StimControl::Prepare(GlobalContext &context)
     fs_audio_ = std::max(1, audio_sample_rate_());
     period_ms_ = stim_period_ms_();
     period_frames_ = static_cast<int>(period_ms_ * fs_audio_ / 1000.0);
-    LOG(INFO) << name() << " Period frames: " << period_frames_ << " (period_ms=" << period_ms_ << " ms, sample_rate=" << fs_audio_ << " Hz)";
+    LOG(DEBUG) << name() << " Period frames: " << period_frames_ << " (period_ms=" << period_ms_ << " ms, sample_rate=" << fs_audio_ << " Hz)";
 
     // Set size to 5 seconds
     background_sound_buffer_ = std::make_unique<moodycamel::ReaderWriterQueue<float>>(5 * fs_audio_ * audio_channels_());
@@ -289,7 +289,7 @@ void StimControl::Preprocess(ProcessingContext &context)
         double R = std::sqrt(std::pow(10.0, background_dB_() / 10.0) * power_b / power_s_);
         gain_    = static_cast<float>(R / (R + peak_bg));
         bg_gain_ = static_cast<float>(1.0 / (R + peak_bg));
-        LOG(INFO) << name() << " Signal gain: " << gain_ << ", background gain: " << bg_gain_;
+        LOG(DEBUG) << name() << " Signal gain: " << gain_ << ", background gain: " << bg_gain_;
 
     }
     else {
@@ -485,7 +485,7 @@ bool StimControl::set_hw_params_interleaved_(snd_pcm_t *pcm,
         return fail("snd_pcm_hw_params_set_period_size_near", rc);
     else if (period != period_frames)
     {
-        LOG(WARNING) << "ALSA period size changed from requested " << period_frames << " to " << period;
+        LOG(INFO) << name() << " ALSA period size changed from requested " << period_frames << " to " << period;
         period_frames_ = period; // update to actual period size
     }
 
@@ -495,7 +495,7 @@ bool StimControl::set_hw_params_interleaved_(snd_pcm_t *pcm,
         return fail("snd_pcm_hw_params_set_buffer_size_near", rc);
     else if (bufsize != buffer_frames)
     {
-        LOG(WARNING) << "ALSA buffer size changed from requested " << buffer_frames << " to " << bufsize;
+        LOG(INFO) << name() << " ALSA buffer size changed from requested " << buffer_frames << " to " << bufsize;
     }
 
     rc = snd_pcm_hw_params(pcm, hw);
@@ -563,7 +563,7 @@ void StimControl::set_master_volume_(const std::string &card, long pct)
     {
         long readback = -1;
         snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_FRONT_LEFT, &readback);
-        LOG(INFO) << name() << " Master volume: current=" << readback << " on card=" << card;
+        LOG(DEBUG) << name() << " Master volume: current=" << readback << " on card=" << card;
 
         long min_v, max_v;
         snd_mixer_selem_get_playback_volume_range(elem, &min_v, &max_v);
@@ -741,7 +741,7 @@ snd_pcm_sframes_t StimControl::write_with_recovery_(snd_pcm_t *pcm, const void *
         if (rc < 0)
             LOG(ERROR) << name() << " Failed to prepare ALSA device after underrun: " << snd_strerror(rc);
     }
-    else if (written != static_cast<snd_pcm_sframes_t>(frames))
+    else if (written != static_cast<snd_pcm_sframes_t>(frames) && audio_running_.load())
     {
         LOG(WARNING) << name() << " ALSA write returned " << written << " frames, expected " << frames;
     }
@@ -855,7 +855,7 @@ void StimControl::Process(ProcessingContext &context)
 
     double stim_dist_sec_ = distrib_interval(gen);
 
-    LOG(INFO) << name() << " Initial stimulus distance: " << stim_dist_sec_ << " s";
+    LOG(DEBUG) << name() << " Initial stimulus distance: " << stim_dist_sec_ << " s";
 
     // Measurement phase
     while (!context.terminated())
@@ -982,9 +982,9 @@ void StimControl::Process(ProcessingContext &context)
         data_out->set_data_sample(0, 0, static_cast<double>(output_));
         data_out_port_->slot(0)->PublishData();
 
-        if (packet_count_ % static_cast<int>(10 * fs_) == 0)
+        if (packet_count_ > 0 && packet_count_ % static_cast<int>(10 * fs_) == 0)
         {
-            LOG(INFO) << name() << " processed " << packet_count_ << " packets, stimuli presented: " << stimuli_count_;
+            LOG(INFO) << name() << " stimuli presented: " << stimuli_count_;
         }
         if (max_n_stimuli_() != -1 && !in_stim_window && stimuli_count_ >= max_n_stimuli_())
         {
@@ -1028,13 +1028,13 @@ void StimControl::Process(ProcessingContext &context)
 
         }
     }
-    LOG(INFO) << name() << " stopped working";
+    LOG(INFO) << name() << " stopped.";
 }
 
 void StimControl::Postprocess(ProcessingContext &context)
 {
     stop_audio_();
-    LOG(INFO) << name() << " Total messages processed: " << packet_count_ << ", stimuli presented: " << stimuli_count_;
+    LOG(DEBUG) << name() << " Total messages processed: " << packet_count_ << ", stimuli presented: " << stimuli_count_;
 }
 
 void StimControl::Unprepare(GlobalContext &context)

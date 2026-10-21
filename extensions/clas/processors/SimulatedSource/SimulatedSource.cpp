@@ -415,12 +415,12 @@ void SimulatedSource::Process(ProcessingContext &context)
         carrier_phase = WrapPhase(carrier_phase + 2.0 * M_PI * effective_freq / fs_());
         modulation_phase = WrapPhase(modulation_phase + modulation_step);
     }
-    LOG(INFO) << name() << " stopped working";
+    LOG(INFO) << name() << " stopped.";
 }
 
 void SimulatedSource::Postprocess(ProcessingContext &context)
 {
-    LOG(INFO) << name() << ": Total messages sent: " << packet_count_;
+    LOG(INFO) << name() << " Total messages sent: " << packet_count_;
 }
 
 REGISTERPROCESSOR(SimulatedSource);

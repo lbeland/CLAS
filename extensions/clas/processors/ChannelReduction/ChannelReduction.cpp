@@ -87,7 +87,7 @@ void ChannelReduction::Prepare(GlobalContext &context)
 {
     const auto &info = data_in_port_->streaminfo(0);
     const auto &p = info.parameters<MultiChannelType<double>::Parameters>();
-    LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
+    LOG(DEBUG) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
 }
 
 void ChannelReduction::Preprocess(ProcessingContext &context)
@@ -127,12 +127,12 @@ void ChannelReduction::Process(ProcessingContext &context)
 
         packet_count_++;
     }
-    LOG(INFO) << name() << " stopped working";
+    LOG(INFO) << name() << " stopped.";
 }
 
 void ChannelReduction::Postprocess(ProcessingContext &context)
 {
-    LOG(INFO) << name() << ": Total messages processed: " << packet_count_;
+    LOG(DEBUG) << name() << " Total messages processed: " << packet_count_;
 }
 
 REGISTERPROCESSOR(ChannelReduction);

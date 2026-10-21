@@ -472,22 +472,21 @@ void UDPSource::Process(ProcessingContext &context)
         TimePoint finished = Clock::now();
         if (std::chrono::duration<double, std::micro>(finished - timestamp).count() > 100)
         {
-            LOG(INFO) << name() << " Processed packet " << packet_count_ << " - timings (us):"
-                      << ", total=" << std::chrono::duration<double, std::micro>(finished - timestamp).count();
+            LOG(INFO) << name() << " slow packet " << packet_count_ << ", took " << std::chrono::duration<double, std::micro>(finished - timestamp).count()
+                      << " us (> 100 us)";
         }
         if (packet_count_ % static_cast<int>(10 * fs_()) == 0)
         {
-            LOG(INFO) << name() << " processed packet " << packet_count_ << ", fs_eff_="
-                      << std::fixed << std::setprecision(4) << fs_eff_;
+            LOG(INFO) << name() << " effective sample rate " << std::fixed << std::setprecision(4) << fs_eff_ << " Hz";
         }
     }
-    LOG(INFO) << name() << " stopped working";
+    LOG(INFO) << name() << " stopped.";
 }
 
 void UDPSource::Postprocess(ProcessingContext &context)
 {
     close(sock_);
-    LOG(INFO) << name() << ": Socket closed. Total packets received: " << packet_count_;
+    LOG(INFO) << name() << " Socket closed. Total packets received: " << packet_count_;
 }
 
 void UDPSource::Unprepare(GlobalContext &context)

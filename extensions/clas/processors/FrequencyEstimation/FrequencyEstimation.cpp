@@ -355,12 +355,12 @@ void FrequencyEstimation::Prepare(GlobalContext &context)
 {
     const auto &info = data_in_port_->streaminfo(0);
     const auto &p = info.parameters<MultiChannelType<double>::Parameters>();
-    LOG(INFO) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
+    LOG(DEBUG) << name() << " Input Stream parameters - nchannels: " << p.nchannels << ", nsamples: " << p.nsamples << ", sample_rate: " << p.sample_rate;
     fs_ = p.sample_rate;
     window_size_ = window_size_sec_() * fs_;
     n_fft_ = static_cast<int>(good_size_real(window_size_));
     sample_window.set_capacity(n_fft_);
-    LOG(INFO) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
+    LOG(DEBUG) << name() << " Sample window size set to " << window_size_ << ", FFT size: " << n_fft_;
 
     f0_state_->set(current_f0_);
 
@@ -396,17 +396,16 @@ void FrequencyEstimation::Prepare(GlobalContext &context)
 
     invalid_threshold_ = static_cast<int>((fs_ * max_invalid_sec_()) / calc_interval_());
 
-    LOG(INFO) << name() << " Kalman filter configured:"
+    LOG(DEBUG) << name() << " Kalman filter configured:"
               << " Q=" << kf_Q_ << " R=" << kf_R_
               << " P0=" << kf_P_
               << " K_steady=" << K_steady
-              << " alpha_equivalent=" << alpha_equivalent
               << " tau_equivalent=" << tau_equivalent << "s"
               << " mode=" << (kalman_full_() ? "full KF" : "EMA-equivalent")
               << " invalid_threshold=" << invalid_threshold_ << " estimates";
 
     freq_resolution_ = fs_ / n_fft_;
-    LOG(INFO) << name() << " Frequency resolution: " << freq_resolution_ << " Hz";
+    LOG(DEBUG) << name() << " Frequency resolution: " << freq_resolution_ << " Hz";
 
     int savgol_window_length = static_cast<int>(2.5 / freq_resolution_); // 2.5 Hz smoothing window
     if (savgol_window_length % 2 == 0)
@@ -419,12 +418,12 @@ void FrequencyEstimation::Prepare(GlobalContext &context)
         savgol_window_length = savgol_polyorder + 2;
     }
     int m = savgol_window_length / 2;
-    LOG(INFO) << name() << " Savitzky-Golay filter length: " << savgol_window_length << ", polynomial order: " << savgol_polyorder << ", m: " << m;
+    LOG(DEBUG) << name() << " Savitzky-Golay filter length: " << savgol_window_length << ", polynomial order: " << savgol_polyorder << ", m: " << m;
     savgol_weights_ = gram_sg::compute_weights(m, 0, savgol_polyorder, 0);
 
     f_min_bin_ = std::floor(f_min_() / freq_resolution_);
     f_max_bin_ = std::ceil(f_max_() / freq_resolution_);
-    LOG(INFO) << name() << " f0 search range: " << f_min_() << " - " << f_max_() << " Hz (bins " << f_min_bin_ << " - " << f_max_bin_ << ")";
+    LOG(DEBUG) << name() << " f0 search range: " << f_min_() << " - " << f_max_() << " Hz (bins " << f_min_bin_ << " - " << f_max_bin_ << ")";
 
     max_analyze_bin_ = 30 / freq_resolution_ + 1; // analyze up to 30 Hz to avoid high-frequency noise
 
@@ -612,7 +611,10 @@ void FrequencyEstimation::Process(ProcessingContext &context)
             TimePoint end_time = Clock::now();
             if (packet_count_ % static_cast<int>(fs_) == 0)
             {
-                LOG(INFO) << name() << " Packet " << packet_count_ << " (" << invalid_count_ << " invalid): Estimated f0 = " << current_f0_ << " Hz (sigma: " << current_gauss_sigma_ << "), KF estimate: " << kf_x_ << " Hz (R=" << kf_R_ << ", SNR(dB)=" << 20 * std::log10(SNR_) << "), took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
+                LOG(INFO) << std::fixed << name() << " raw f0 " << std::setprecision(3) << current_f0_
+                          << " Hz, KF f0 " << kf_x_ << " Hz, SNR " << std::setprecision(1) << 20 * std::log10(SNR_) << " dB";
+                LOG(DEBUG) << name() << " sigma " << current_gauss_sigma_ << ", R " << kf_R_ << ", "
+                           << invalid_count_ << " invalid, took " << std::chrono::duration<double, std::micro>(end_time - start_time).count() << " us";
             }
         }
         data_out->set_data(kf_x_);
@@ -629,14 +631,14 @@ void FrequencyEstimation::Process(ProcessingContext &context)
         packet_count_++;
     }
 
-    LOG(INFO) << name() << " stopped working";
+    LOG(INFO) << name() << " stopped.";
 }
 
 void FrequencyEstimation::Postprocess(ProcessingContext &context)
 {
     sample_window.clear();
     f0_state_->set(std::numeric_limits<double>::quiet_NaN());
-    LOG(INFO) << name() << ": Total messages processed: " << packet_count_;
+    LOG(DEBUG) << name() << " Total messages processed: " << packet_count_;
 }
 
 void FrequencyEstimation::Unprepare(GlobalContext &context)

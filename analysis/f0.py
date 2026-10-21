@@ -164,7 +164,7 @@ def estimate_f0(raw: np.ndarray, fs: float) -> list:
         f0_windowed = []
         aperiodic_params_windowed = []
         snr_windowed = []
-        for start in tqdm(starts):
+        for start in tqdm(starts, desc="f0 windows", disable=len(starts) < 10, leave=False):
             # freqs, psd = welch(raw[start : start + window_samples], fs=fs, nperseg=int(fs * 10))
             freqs = np.fft.rfftfreq(len(raw[start : start + window_samples]), d=1/fs)
             X = np.fft.rfft(raw[start : start + window_samples])

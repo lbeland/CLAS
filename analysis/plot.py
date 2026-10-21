@@ -136,7 +136,6 @@ def _write_error_table(rows: "list[tuple[str, float, float, float]]", name: str 
     tex_path = os.path.join(PLOTS_DIR, f"{name}.tex")
     with open(tex_path, "w") as fh:
         fh.write("\n".join(tex) + "\n")
-    print(f"wrote {tex_path}")
 
 
 def write_condition_error_table(
@@ -229,7 +228,6 @@ def write_condition_error_table(
     tex_path = os.path.join(PLOTS_DIR, f"{name}.tex")
     with open(tex_path, "w") as fh:
         fh.write("\n".join(tex) + "\n")
-    print(f"wrote {tex_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -617,14 +615,14 @@ def plot_spectrum(raw: np.ndarray, samples: dict, filtered: np.ndarray, fs: floa
         ax2.set_ylabel("Magnitude")
         ax2.semilogy(freqs, np.abs(X_white), label="Whitened", alpha=0.7, color="purple")
         ax2.semilogy(freqs, np.abs(np.fft.rfft(filtered)), label="Filtered (offline)", alpha=0.7, color="green")
-        ax2.set_ylim(0, np.max(np.abs(X_white)[(freqs >= 5) & (freqs <= 10)]) * 5)
+        ax2.set_ylim(top=np.max(np.abs(X_white)[(freqs >= 5) & (freqs <= 10)]) * 5)
         ax2.legend(loc="upper right")
     else:
         ax.semilogy(freqs, np.abs(np.fft.rfft(filtered)), label="Filtered (offline)", alpha=0.7, color="green")
 
     ax.set_xlim(0, 100)
     # Use the maximum between 5-10Hz as xlim
-    ax.set_ylim(0, np.max(X[(freqs >= 5) & (freqs <= 10)]) * 5)
+    ax.set_ylim(top=np.max(X[(freqs >= 5) & (freqs <= 10)]) * 5)
     ax.set_ylabel("Magnitude")
     ax.set_title("Spectrum")
     (ax2 if X_white is not None else ax).set_xlabel("Frequency [Hz]")

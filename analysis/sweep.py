@@ -292,7 +292,6 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
     with open(tex_path, "w") as fh:
         fh.write("\n".join(tex) + "\n")
 
-    print(f"\nwrote {csv_path}\n      {tex_path}")
     return rows
 
 

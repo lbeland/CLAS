@@ -24,6 +24,7 @@ downstream code doesn't need to care whether the data came from the raw
 """
 
 import datetime
+import warnings
 
 import mne
 import numpy as np
@@ -63,9 +64,12 @@ def _write_edf(filepath: str, fs: float, start_time_us: float, channels: list[tu
     raw_mne.set_meas_date(start_dt)
     if annotations is not None:
         raw_mne.set_annotations(annotations)
-    raw_mne.export(filepath, fmt="edf", add_ch_type=False,
-                   physical_range="channelwise", overwrite=True, verbose=False)
-    print(f"EDF written: {filepath}")
+    # EDF needs equal-length data records, so mne pads the last one and warns
+    # about it; that is expected, so silence just that warning
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="EDF format requires equal-length data blocks")
+        raw_mne.export(filepath, fmt="edf", add_ch_type=False,
+                       physical_range="channelwise", overwrite=True, verbose=False)
 
 
 def _resolve_channel(raw: "mne.io.BaseRaw", name: str) -> str | None:

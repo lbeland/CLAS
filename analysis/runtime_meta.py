@@ -67,8 +67,6 @@ def write_runtime_metadata(filepath: str, fs: float, samples: dict, ground_truth
                 if ground_truth.get(field) is not None:
                     sim.create_dataset(field, data=np.asarray(ground_truth[field]))
 
-    print(f"HDF5 written: {filepath}")
-
 
 def load_runtime_metadata(filepath: str) -> dict:
     """Returns {"fs", "start_ts", "n_samples", "raw_source_class",

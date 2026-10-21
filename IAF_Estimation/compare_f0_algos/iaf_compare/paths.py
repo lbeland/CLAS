@@ -10,9 +10,9 @@ from pathlib import Path
 PKG_DIR = Path(__file__).resolve().parent          # .../compare_f0_algos/iaf_compare
 PROJECT_DIR = PKG_DIR.parent                        # .../compare_f0_algos
 
-# Shared thesis plots folder: every .pgf/.pdf plot and every .tex table lands
-# here (plot_sweep + plot_reject), so they sit next to each other.
-OUTPUTS_DIR = Path("/home/linda/Documents/MA/plots") / "outputs"
+# Shared plots folder (<repo>/analysis_output): every .pgf/.pdf plot and every
+# .tex table lands here (plot_sweep + plot_reject), so they sit next to each other.
+OUTPUTS_DIR = PROJECT_DIR.parent.parent / "analysis_output" / "outputs"
 FIGURE_DIR = OUTPUTS_DIR / "figures"                # .pgf/.pdf plots (incl. strategy_roc)
 TABLE_DIR = OUTPUTS_DIR                             # .tex tables (conditions, mae summary, reject accuracy/F1)
 

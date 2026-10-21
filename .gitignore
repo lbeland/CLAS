@@ -43,3 +43,5 @@ CMakeFiles
 
 # FetchContent download cache (Falcon upstream)
 .cache/
+
+analysis_output/

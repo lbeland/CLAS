@@ -26,7 +26,8 @@ mpl.rcParams.update({
 from .stimulus import get_edges
 from .core import _edge_trim_window
 
-PLOTS_DIR = "/home/linda/Documents/MA/plots"
+# <repo>/analysis_output, independent of the working directory
+PLOTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "analysis_output")
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
 TEXTWIDTH    = 6.30045

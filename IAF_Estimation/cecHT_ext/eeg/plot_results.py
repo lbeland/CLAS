@@ -20,7 +20,7 @@ Usage
     python plot_results.py  DIR_A DIR_B --labels fooof alpha_fast
 
 Writes ``iaf_stats_per_file.csv`` (+ ``iaf_change_rate_per_file.csv`` in single
-mode) into each run dir; figures go to ``MA/plots`` as ``.pgf`` + ``.pdf``
+mode) into each run dir; figures go to ``<repo>/analysis_output`` as ``.pgf`` + ``.pdf``
 (repo convention, cf. ``analysis/plot.py`` / ``IAF_Estimation/plot_iaf_tests.py``).
 """
 
@@ -47,7 +47,9 @@ _PARTICIPANT_RE = r"(s\w+?)(?=_)"
 # LaTeX symbol for the per-window IAF estimate (text.usetex is on).
 _F0 = r"$\tilde{f}_0$"
 
-PLOTS_DIR = "/home/linda/Documents/MA/plots"
+PLOTS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+    "analysis_output")
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
 # figure sizing, matching analysis/plot.py
@@ -79,7 +81,7 @@ def _display(label):
 
 
 def _save(fig, name):
-    """Save ``<name>.pgf`` and ``<name>.pdf`` into ``MA/plots`` (repo convention)."""
+    """Save ``<name>.pgf`` and ``<name>.pdf`` into ``<repo>/analysis_output`` (repo convention)."""
     # No bbox_inches="tight": it re-crops the canvas to the artists and the
     # saved figure ends up narrower than FIG_WIDTH, so it won't fill \linewidth
     # when \input into the thesis. Rely on fig.tight_layout() instead.

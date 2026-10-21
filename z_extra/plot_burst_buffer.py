@@ -99,8 +99,10 @@ def main():
     ax_spec.grid(True, linestyle="--", linewidth=0.5, alpha=0.9)
 
     fig.tight_layout()
-    plt.savefig("/home/linda/Documents/MA/plots/pink_noise.pgf", bbox_inches="tight")
-    plt.savefig("/home/linda/Documents/MA/plots/pink_noise.pdf", bbox_inches="tight")
+    plots_dir = Path(__file__).resolve().parent.parent / "analysis_output"
+    plots_dir.mkdir(exist_ok=True)
+    plt.savefig(plots_dir / "pink_noise.pgf", bbox_inches="tight")
+    plt.savefig(plots_dir / "pink_noise.pdf", bbox_inches="tight")
     plt.show()
 
 if __name__ == "__main__":

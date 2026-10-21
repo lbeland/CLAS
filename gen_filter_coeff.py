@@ -14,7 +14,7 @@ mpl.rcParams.update({
     'pgf.rcfonts': False,
 })
 
-PLOTS_DIR = "/home/linda/Documents/MA/plots"
+PLOTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analysis_output")
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
 TEXTWIDTH    = 6.30045

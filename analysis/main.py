@@ -22,7 +22,9 @@ from analysis.loader       import load_processor_signals, analyse_latencies, ext
                                   compute_total_latency, find_session_run_dirs
 from analysis.f0          import estimate_f0, estimate_f0_with_phase, estimate_f0_modal
 from analysis.core         import compute_hilbert_reference, compute_errors, compute_jade_errors, \
-                                  _edge_trim_window
+                                  _edge_trim_window, ONLINE_VS_TRUE, ONLINE_VS_HILBERT, \
+                                  HILBERT_VS_TRUE, STIM_ONSET_HT, STIM_OFFSET_HT, \
+                                  STIM_ONSET_HAT, STIM_OFFSET_HAT
 from analysis.edf_io       import write_raw_signals_edf, load_runtime, write_analysis_edf
 from analysis.runtime_meta import write_runtime_metadata
 from analysis.plot         import plot_errors, plot_spectrum, plot_stack, \
@@ -30,6 +32,7 @@ from analysis.plot         import plot_errors, plot_spectrum, plot_stack, \
                                   load_stim_annotations, plot_pooled_scatter, \
                                   _circ_stats, write_condition_error_table
 from analysis.spectrum_analysis import STIM_ONSET_DEGS, CONDITION_LABELS
+from analysis import report
 
 
 @dataclass
@@ -55,6 +58,10 @@ class RecordingAnalysis:
     f0_modal:         np.ndarray
     errors:           list[dict]
     stim_ref:         "np.ndarray | None"
+    from_cache:       bool = False
+    f0_windows:       "list | None" = None   # per-window offline f0 estimates
+    f0_note:          str = ""               # set when f0 was not estimated offline
+    stim_counts:      "dict | None" = None   # {"delivered", "expected"} stimulus onsets
 
 
 def load_and_analyse(f0: float, results_dir: str, f0_is_truth: bool = False,
@@ -98,9 +105,9 @@ def load_and_analyse(f0: float, results_dir: str, f0_is_truth: bool = False,
     if processors is None:
         raise ValueError("No processors found in graph config.")
 
-    if os.path.exists(raw_edf_path) and os.path.exists(meta_h5_path):
+    from_cache = os.path.exists(raw_edf_path) and os.path.exists(meta_h5_path)
+    if from_cache:
         # Cached: skip re-parsing the raw .bin files entirely.
-        print(f"Found cached {raw_edf_path} / {meta_h5_path}; skipping raw file loading.")
         samples, ground_truth, annotations = load_runtime(raw_edf_path, meta_h5_path)
     else:
         samples      = load_processor_signals(fs, results_dir, processors)
@@ -120,25 +127,25 @@ def load_and_analyse(f0: float, results_dir: str, f0_is_truth: bool = False,
             samples=samples, ground_truth=ground_truth, annotations=annotations,
             snr=None, f0=f0, aperiodic_params=None, raw=ground_truth["raw"], filtered=None,
             hilbert_phase=None, X_white=None, f0_continuous=None,
-            errors=None, stim_ref=None, f0_modal=None,
+            errors=None, stim_ref=None, f0_modal=None, from_cache=from_cache,
         )
 
     # estimate_f0() returns both f0 and the 1/f aperiodic fit; skip only if
     # neither is wanted (known carrier and whitening disabled)
     snr = None
+    f0_windows = None
+    f0_note = ""
     if f0_is_truth and not whiten:
         aperiodic_params = None
-        print(f"Using provided f0 = {f0:.2f} Hz as ground truth; skipping offline estimation.")
+        f0_note = "given as ground truth, not estimated"
     else:
         f0_windows, aperiodic_params, snr = estimate_f0(ground_truth["raw"], fs)
         if f0_is_truth:
-            print(f"Using provided f0 = {f0:.2f} Hz as ground truth "
-                  f"(offline f0 estimate ignored).")
+            f0_note = "given as ground truth, offline estimate ignored"
         elif np.all(~np.isfinite(f0_windows)):
-            print("Could not estimate f0 from ground truth; using default f0 =", f0)
+            f0_note = "offline estimation failed, using the default"
         else:
             f0 = float(np.nanmean(f0_windows))
-            print(f"Estimated f0 on 30-second windows: mean={f0:.2f} Hz, all={f0_windows}")
     if not whiten:
         aperiodic_params = None  # disable whitening in compute_hilbert_reference
 
@@ -158,25 +165,11 @@ def load_and_analyse(f0: float, results_dir: str, f0_is_truth: bool = False,
     hp_t_lo, hp_t_hi = _edge_trim_window([{"time_s": hp_time_s}])
     hilbert_phase[(hp_time_s < hp_t_lo) | (hp_time_s > hp_t_hi)] = np.nan
 
-    if ground_truth.get("true_inst_freq") is not None:
-        f0_gt = ground_truth["true_inst_freq"]
-        if samples.get("FrequencyEstimation") is not None:
-            print(f"Online f0 error: {np.nanmean(samples['FrequencyEstimation']['y'] - f0_gt):.2f} Hz +- {np.nanstd(samples['FrequencyEstimation']['y'] - f0_gt):.2f} Hz")
-            print(f"Online MAE: {np.nanmean(np.abs(samples['FrequencyEstimation']['y'] - f0_gt)):.2f} Hz")
-        print(f"Offline f0 error: {np.nanmean(f0_continuous - f0_gt):.2f} Hz +- {np.nanstd(f0_continuous - f0_gt):.2f} Hz")
-        print(f"Offline MAE: {np.nanmean(np.abs(f0_continuous - f0_gt)):.2f} Hz")
-    else:
-        if samples.get("FrequencyEstimation") is not None:
-            online_vs_offline_f0 = samples['FrequencyEstimation']['y'] - f0_continuous
-            print(f"Online vs offline f0 error: {np.nanmean(online_vs_offline_f0):.2f} Hz +- {np.nanstd(online_vs_offline_f0):.2f} Hz")
-            print(f"Online vs offline MAE: {np.nanmean(np.abs(online_vs_offline_f0)):.2f} Hz")
-
-
     # Compute errors (compute_errors also builds a per-onset ECHT phase
     # reference from `filtered` for the "Stim onset error (ECHT)" series)
     start_ts = ground_truth["time"][0]
-    errors, stim_ref = compute_errors(samples, ground_truth, hilbert_phase, start_ts, fs,
-                                      graph_config)
+    errors, stim_ref, stim_counts = compute_errors(samples, ground_truth, hilbert_phase, start_ts, fs,
+                                                   graph_config)
 
     # # SimulatedSource ground truth (true_inst_freq known) + short enough for JADE's DTW cost to be feasible
     # if ground_truth["true_inst_freq"] is not None and len(raw) / fs <= 20:
@@ -189,17 +182,22 @@ def load_and_analyse(f0: float, results_dir: str, f0_is_truth: bool = False,
         samples=samples, ground_truth=ground_truth, annotations=annotations,
         snr=snr, f0=f0, aperiodic_params=aperiodic_params, raw=raw, filtered=filtered,
         hilbert_phase=hilbert_phase, X_white=X_white, f0_continuous=f0_continuous,
-        errors=errors, stim_ref=stim_ref, f0_modal=None, 
+        errors=errors, stim_ref=stim_ref, f0_modal=None, from_cache=from_cache,
+        f0_windows=f0_windows, f0_note=f0_note, stim_counts=stim_counts,
     )
 
 
 def analyse_results(results_dir: str, f0: float=10.0, show: bool = True,
                     f0_is_truth: bool = False, whiten: bool = False, full_analysis: bool = True) -> None:
+    report.print_header(results_dir)
     analysis = load_and_analyse(f0, results_dir, f0_is_truth=f0_is_truth, whiten=whiten, full_analysis=full_analysis)
     if analysis is None:
         return
+    report.print_data_line(analysis, analysis.from_cache)
 
     if full_analysis:
+        report.print_recording_summary(analysis)
+
         # Pipeline latency analysis. Reproducible from cache too, since
         # runtime_metadata.h5 preserves source_ts exactly (unlike an EDF round-trip).
         analyse_latencies(analysis.samples, analysis.ground_truth, analysis.graph_config)
@@ -324,10 +322,8 @@ def analyse_erp_by_subject(f0: float = 10, base_dir: str = "results", session_gl
 
 # Column order for the per-condition error table
 _CONDITION_TABLE_COLUMNS = [
-    r"$\hat \theta - \theta$", r"$\hat\theta - \theta_{\mathrm{HT}}$",
-    r"$\theta_{\mathrm{HT}} - \theta$",
-    r"Stim onset ($\theta_{\mathrm{HT}}$)", r"Stim offset ($\theta_{\mathrm{HT}}$)",
-    r"Stim onset ($\hat\theta$)", r"Stim offset ($\hat\theta$)",
+    ONLINE_VS_TRUE, ONLINE_VS_HILBERT, HILBERT_VS_TRUE,
+    STIM_ONSET_HT, STIM_OFFSET_HT, STIM_ONSET_HAT, STIM_OFFSET_HAT,
 ]
 
 # Row order for the per-condition error table: the four phase-offset
@@ -370,8 +366,6 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
         run_dirs_selected = [d for d in run_dirs if any(name.lower() in d.lower() for name in names)]
         run_dirs = run_dirs_selected
     print(f"Found {len(run_dirs)} recording(s) under {base_dir}/{session_glob}/*.")
-
-    online_vs_hilbert = r"$\hat\theta - \theta_{\mathrm{HT}}$"  # matches sweep.ONLINE_VS_HILBERT
 
     pooled: dict[str, dict] = {}
     scatter_records: list[dict] = []
@@ -438,22 +432,20 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
 
         # One scatter bullet per recording per plot.py._SCATTER_METRICS metric:
         # circular mean error (y) vs offline SNR (x)
-        oh = next((e for e in errors if e["label"] == online_vs_hilbert), None)
+        oh = next((e for e in errors if e["label"] == ONLINE_VS_HILBERT), None)
         if oh is not None:
             snr_db = (10.0 * np.log10(analysis.snr)
                       if analysis.snr is not None and np.isfinite(analysis.snr) and analysis.snr > 0
                       else np.nan)
-            stim_onset_hat_label = r"Stim onset ($\hat\theta$)"
-            stim_onset_ht_label  = r"Stim onset ($\theta_{\mathrm{HT}}$)"
-            stim_onset_hat = next((e for e in errors if e["label"] == stim_onset_hat_label), None)
-            stim_onset_ht  = next((e for e in errors if e["label"] == stim_onset_ht_label), None)
+            stim_onset_hat = next((e for e in errors if e["label"] == STIM_ONSET_HAT), None)
+            stim_onset_ht  = next((e for e in errors if e["label"] == STIM_ONSET_HT), None)
             scatter_records.append({
                 "name": os.path.basename(results_dir),
                 "phase_vals": np.asarray(oh["values"], dtype=float),
-                stim_onset_hat_label: np.asarray(stim_onset_hat["values"], dtype=float)
-                                      if stim_onset_hat is not None else np.array([]),
-                stim_onset_ht_label: np.asarray(stim_onset_ht["values"], dtype=float)
-                                     if stim_onset_ht is not None else np.array([]),
+                STIM_ONSET_HAT: np.asarray(stim_onset_hat["values"], dtype=float)
+                                if stim_onset_hat is not None else np.array([]),
+                STIM_ONSET_HT: np.asarray(stim_onset_ht["values"], dtype=float)
+                               if stim_onset_ht is not None else np.array([]),
                 "snr_db": snr_db,
             })
 

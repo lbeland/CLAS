@@ -24,7 +24,7 @@ mpl.rcParams.update({
 })
 
 from .stimulus import get_edges
-from .core import _edge_trim_window
+from .core import _edge_trim_window, ONLINE_VS_HILBERT, STIM_ONSET_HAT, STIM_ONSET_HT
 
 # <repo>/analysis_output, independent of the working directory
 PLOTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "analysis_output")
@@ -314,9 +314,9 @@ def plot_errors(errors: list[dict]) -> None:
 
 # (records key, y-axis label, filename stub) per plot_pooled_scatter() metric
 _SCATTER_METRICS = [
-    ("phase_vals",                              r"$\hat\theta - \theta_{\mathrm{HT}}$ [$^\circ$]", "phaseerr"),
-    (r"Stim onset ($\hat\theta$)",              r"Stim onset ($\hat\theta$) [$^\circ$]",            "stimonset_hat"),
-    (r"Stim onset ($\theta_{\mathrm{HT}}$)",    r"Stim onset ($\theta_{\mathrm{HT}}$) [$^\circ$]",  "stimonset_ht"),
+    ("phase_vals",   ONLINE_VS_HILBERT + r" [$^\circ$]", "phaseerr"),
+    (STIM_ONSET_HAT, STIM_ONSET_HAT + r" [$^\circ$]",    "stimonset_hat"),
+    (STIM_ONSET_HT,  STIM_ONSET_HT + r" [$^\circ$]",     "stimonset_ht"),
 ]
 
 
@@ -346,7 +346,7 @@ def plot_pooled_scatter(records: list[dict]) -> None:
         stats  = np.array(stats, dtype=float)
         mu, sd = stats[:, 0], stats[:, 1]
 
-        if values_key == r"Stim onset ($\hat\theta$)" and np.isfinite(mu).any():
+        if values_key == STIM_ONSET_HAT and np.isfinite(mu).any():
             worst = int(np.nanargmax(np.abs(mu)))
             print(f"Largest |mean Stim onset ($\\hat\\theta$) error|: "
                   f"{records[worst].get('name', '?')} ({mu[worst]:.1f} deg)")

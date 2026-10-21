@@ -377,7 +377,6 @@ def _write_latency_table(pipeline_rows: "list[dict]", audio_rows: "list[dict]",
     tex_path = os.path.join(PLOTS_DIR, f"{name}.tex")
     with open(tex_path, "w") as fh:
         fh.write("\n".join(tex) + "\n")
-    print(f"wrote {tex_path}")
 
 
 def compute_total_latency(samples: dict, ground_truth: dict, graph_config: dict) -> "np.ndarray | None":
@@ -433,15 +432,21 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
     pipeline_rows: list[dict] = []
     audio_rows: list[dict] = []
 
-    col = 22
-    W   = col * 2 + 52
-    print(f"\n{'-' * W}")
-    print(f"  Pipeline latency analysis (us)")
-    print(f"{'-' * W}")
-    print(f"  {'From':<{col}} {'To':<{col}} {'Mean':>8} {'Median':>8} {'Std':>8} {'Max':>8} {'Idx':>8}")
-    print(f"{'-' * W}")
-
     source_proc = next((p for p in topo_order if p in proc_ts), None)
+    t0_us = proc_ts[source_proc][0]
+
+    label_w = 44
+    def print_row(label, lat, ts):
+        """One table row; ts are the source timestamps of lat's samples, used
+        to report when the worst case happened (seconds since the first sample)."""
+        idx = int(np.argmax(lat))
+        print(f"  {label:<{label_w}}{np.mean(lat):>9.1f}{np.median(lat):>9.1f}{np.std(lat):>9.1f}"
+              f"{np.max(lat):>9.1f}{(ts[idx] - t0_us) / 1e6:>10.1f} s")
+
+    fs = (graph_config or {}).get("graph", {}).get("defaults", {}).get("fs")
+    title = f"Pipeline latency (us, sample period {1e6 / fs:g} us)" if fs else "Pipeline latency (us)"
+    print(f"\n{title:<{label_w + 2}}{'mean':>9}{'median':>9}{'SD':>9}{'max':>9}{'max at':>12}")
+
     for proc in topo_order[1:]:
         ts_proc = proc_ts.get(proc)
         if ts_proc is None:
@@ -453,9 +458,7 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
         n   = min(len(ts_ancestor), len(ts_proc))
         lat = (ts_proc[:n] - ts_ancestor[:n])
         plt.plot(lat, alpha=0.5, linewidth=0.5, label=rf"{ancestor} $\to$ {proc}")
-        print(f"  {ancestor:<{col}} {proc:<{col}} "
-              f"{np.mean(lat):>8.2f} {np.median(lat):>8.2f} "
-              f"{np.std(lat):>8.2f} {np.max(lat):>8.2f} {np.argmax(lat):>8}")
+        print_row(f"{ancestor} -> {proc}", lat, ts_ancestor)
         pipeline_rows.append({"from": ancestor, "to": proc,
                               "mean": np.mean(lat), "median": np.median(lat),
                               "std": np.std(lat), "max": np.max(lat), "idx": np.argmax(lat)})
@@ -464,14 +467,10 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
     total = compute_total_latency(samples, ground_truth, graph_config)
     if source_proc and last_proc and last_proc != source_proc and total is not None:
         plt.plot(total, alpha=0.5, linewidth=0.5, label=rf"{source_proc} $\to$ {last_proc}", color="black")
-        print(f"{'-' * W}")
-        print(f"  {'TOTAL  ' + source_proc:<{col}} {last_proc:<{col}} "
-              f"{np.mean(total):>8.2f} {np.median(total):>8.2f} "
-              f"{np.std(total):>8.2f} {np.max(total):>8.2f} {np.argmax(total):>8}")
+        print_row(f"total {source_proc} -> {last_proc}", total, proc_ts[source_proc])
         pipeline_rows.append({"from": source_proc, "to": last_proc, "total": True,
                               "mean": np.mean(total), "median": np.median(total),
                               "std": np.std(total), "max": np.max(total), "idx": np.argmax(total)})
-    print(f"{'-' * W}\n")
 
     plt.legend(loc="upper left", fontsize=9)
     plt.xlabel("Sample Index")
@@ -522,12 +521,9 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
             save_pdf(fig, "latency_analysis")
             save_pgf(fig, "latency_analysis")
 
-            print(f" Audio onset latency (ms)")
-            print(f"{'-' * W}")
-            print(f"  {'StimControl':<{col}} {'UDPSource_TRIGGER':<{col}} "
-                  f"{np.mean(latency_ms):>8.2f} {np.median(latency_ms):>8.2f} "
-                  f"{np.std(latency_ms):>8.2f} {np.max(latency_ms):>8.2f} {np.argmax(latency_ms):>8}")
-            print(f"{'-' * W}\n")
+            print(f"\n{'Audio onset latency (ms)':<{label_w + 2}}"
+                  f"{'mean':>9}{'median':>9}{'SD':>9}{'max':>9}{'max at':>12}")
+            print_row("StimControl -> UDPSource_TRIGGER", latency_ms, trig_source_ts[trig_edges_matched])
             audio_rows.append({"from": "StimControl", "to": "UDPSource_TRIGGER",
                                "mean": np.mean(latency_ms), "median": np.median(latency_ms),
                                "std": np.std(latency_ms), "max": np.max(latency_ms),
@@ -557,9 +553,10 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
             plt.xlabel("Source timestamp [s]")
             plt.ylabel("Hardware - Source [us]")
 
-            print(f"  UDPSource hardware->source latency (us): "
-                  f"std={np.std(hw_rel - source_rel):.2f}, max_dev={np.max(np.abs(hw_rel - source_rel)):.2f} "
-                  f"(idx={np.argmax(np.abs(hw_rel - source_rel))})")
+            dev = hw_rel - source_rel
+            worst = int(np.argmax(np.abs(dev)))
+            print(f"\n  {'UDPSource hardware -> source':<{label_w}}SD {np.std(dev):.1f} us, "
+                  f"max deviation {np.max(np.abs(dev)):.1f} us at {source_rel[worst] / 1e6:.1f} s")
 
         # Independent check of fs_eff_: fit source_ts (Falcon's own receipt
         # clock) against sample index, without relying on UDPSource's own RLS
@@ -575,10 +572,10 @@ def analyse_latencies(samples: dict, ground_truth: dict, graph_config: dict) -> 
         )
         if nominal_fs:
             drift_ppm = (true_fs - nominal_fs) / nominal_fs * 1e6
-            print(f"  UDPSource true sample rate (from source_ts): {true_fs:.4f} Hz "
-                  f"(nominal {nominal_fs} Hz, drift={drift_ppm:+.2f} ppm)")
+            print(f"  {'UDPSource true sample rate':<{label_w}}{true_fs:.4f} Hz "
+                  f"(nominal {nominal_fs:g} Hz, drift {drift_ppm:+.2f} ppm)")
         else:
-            print(f"  UDPSource true sample rate (from source_ts): {true_fs:.4f} Hz")
+            print(f"  {'UDPSource true sample rate':<{label_w}}{true_fs:.4f} Hz")
 
 
 

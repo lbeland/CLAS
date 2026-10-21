@@ -33,12 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from analysis.main import compute_recording_errors, find_result_dirs
 from analysis.plot import PLOTS_DIR
-
-# Error-series labels emitted by analysis.core.compute_errors(). Kept here as
-# constants so this module tracks any rename there in one place.
-ONLINE_VS_GT      = r"$\hat \theta - \theta$"            # online estimate - ground truth
-HILBERT_VS_GT     = r"$\theta_{\mathrm{HT}} - \theta$"   # offline Hilbert - ground truth
-ONLINE_VS_HILBERT = r"$\hat\theta - \theta_{\mathrm{HT}}$"  # online estimate - offline Hilbert
+from analysis.core import ONLINE_VS_TRUE, HILBERT_VS_TRUE, ONLINE_VS_HILBERT
 
 
 def _phase_error_stats(values: np.ndarray) -> "tuple[float, float, int]":
@@ -179,9 +174,9 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
             errors = compute_recording_errors(run_f0, results_dir,
                                               f0_is_truth=f0_is_truth, whiten=whiten)
 
-            series = next((e for e in errors if e["label"] == ONLINE_VS_GT), None)
+            series = next((e for e in errors if e["label"] == ONLINE_VS_TRUE), None)
             if series is None:
-                print(f"  No {ONLINE_VS_GT!r} series; skipping.")
+                print(f"  No {ONLINE_VS_TRUE!r} series; skipping.")
                 continue
             e_mean, e_std, n = _phase_error_stats(series["values"])
             if n == 0:
@@ -190,7 +185,7 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
             cmp = next((e for e in errors if e["label"] == ONLINE_VS_HILBERT), None)
             vh_mean, vh_std, _ = (_phase_error_stats(cmp["values"])
                                   if cmp is not None else (np.nan, np.nan, 0))
-            hgt = next((e for e in errors if e["label"] == HILBERT_VS_GT), None)
+            hgt = next((e for e in errors if e["label"] == HILBERT_VS_TRUE), None)
             hgt_mean, hgt_std, _ = (_phase_error_stats(hgt["values"])
                                     if hgt is not None else (np.nan, np.nan, 0))
             # Circular correlation of the online and offline errors vs. ground truth

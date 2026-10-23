@@ -1,47 +1,20 @@
-# Ignore all
-*
-
-# Unignore all with extensions
-!*.*
-
-# Unignore all dirs
-!*/
-
-venv/*
-*/venv_iaf/*
-**/build/*
-.vscode/
+venv/
 __pycache__/
-*.egg-info/
+build/
+.cache/
+.vscode/
+CMakeFiles/
 
-*.csv
-*.bin
-*.h5
+fftw-3.3.10/
 
-fftw-3.3.10
+*.egg-info
 
-*.png
+resources/filters/
+results/
+analysis_output/
+
+**/figures/
+**/outputs/
+
 _last_run
 _last_run_group
-
-*.filter
-*.svg
-*.pgf
-*/filters/
-
-# Always commit license files (they have no extension, so "*" above ignores them)
-!LICENSE*
-
-results/
-
-CMakeFiles
-
-# Keep the committed research figures despite the repo-wide *.png ignore.
-!research/phase/figures/*.png
-
-!stim_protocol.csv
-
-# FetchContent download cache (Falcon upstream)
-.cache/
-
-analysis_output/

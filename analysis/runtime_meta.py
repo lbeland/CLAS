@@ -12,7 +12,11 @@ label from mne's writer regardless of its actual unit and is then silently
 divided by 1e6 by mne's reader, and 16-bit digital quantization perturbs
 exact integers (e.g. a constant selected-channel index) enough to break
 dict-key lookups downstream.
+
+Datasets are gzip-compressed and identical arrays are stored once (hard links).
 """
+
+import hashlib
 
 import h5py
 import numpy as np
@@ -30,9 +34,28 @@ ONLINE_FIELDS = {
 
 SIMULATION_FIELDS = ("true_amplitude", "true_phase", "true_inst_freq")
 
+_COMPRESSION = {"compression": "gzip", "compression_opts": 4, "shuffle": True}
+
+
+def _dataset_writer(f: h5py.File):
+    """Returns put(key, data): writes a compressed dataset, or hard-links an identical one."""
+    stored = {}
+
+    def put(key, data):
+        data   = np.asarray(data)
+        digest = (data.dtype.str, data.shape, hashlib.sha1(data.tobytes()).digest())
+        if digest in stored:
+            f[key] = f[stored[digest]]
+        else:
+            f.create_dataset(key, data=data, **_COMPRESSION)
+            stored[digest] = key
+
+    return put
+
 
 def write_runtime_metadata(filepath: str, fs: float, samples: dict, ground_truth: dict) -> None:
     with h5py.File(filepath, "w") as f:
+        put = _dataset_writer(f)
         f.attrs["fs"] = fs
         f.attrs["start_ts"] = int(ground_truth["time"][0])
         # True count, so load_runtime() can truncate raw_signals.edf's
@@ -48,24 +71,24 @@ def write_runtime_metadata(filepath: str, fs: float, samples: dict, ground_truth
         # hardware->source latency calc in analyse_latencies()
         udp = samples.get(first_udp_channel_key(samples), {})
         if udp.get("hw_ts") is not None:
-            f.create_dataset("hardware_ts", data=np.asarray(udp["hw_ts"]))
+            put("hardware_ts", udp["hw_ts"])
 
-        src_grp = f.create_group("source_ts")
+        f.create_group("source_ts")
         for key, entry in samples.items():
             ts = entry.get("source_ts")
             if ts is not None:
-                src_grp.create_dataset(key, data=np.asarray(ts))
+                put(f"source_ts/{key}", ts)
 
-        online = f.create_group("online")
+        f.create_group("online")
         for samples_key, field in ONLINE_FIELDS.items():
             if samples.get(samples_key) is not None:
-                online.create_dataset(field, data=samples[samples_key]["y"])
+                put(f"online/{field}", samples[samples_key]["y"])
 
         if any(ground_truth.get(k) is not None for k in SIMULATION_FIELDS):
-            sim = f.create_group("simulation")
+            f.create_group("simulation")
             for field in SIMULATION_FIELDS:
                 if ground_truth.get(field) is not None:
-                    sim.create_dataset(field, data=np.asarray(ground_truth[field]))
+                    put(f"simulation/{field}", ground_truth[field])
 
 
 def load_runtime_metadata(filepath: str) -> dict:

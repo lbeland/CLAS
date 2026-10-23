@@ -11,6 +11,7 @@
 #include <vector>
 #include <cmath>
 #include <fstream>
+#include <filesystem>
 #include <algorithm>
 #include <limits>
 #include <sys/types.h>
@@ -459,9 +460,13 @@ int main(int argc, char* argv[]) {
 
         // Save per-packet PDV for the buffered tail window (not the full
         // run) for further analysis / plotting in plotMeas.py
-        std::ofstream out("pdv_" + std::to_string((int)freq) + ".csv");
+        // outputs/ next to the executable
+        const auto out_dir = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "outputs";
+        std::filesystem::create_directories(out_dir);
+        const auto out_path = out_dir / ("pdv_" + std::to_string((int)freq) + ".csv");
+        std::ofstream out(out_path);
         if (!out.is_open()) {
-            std::cerr << "Failed to open pdv_" << (int)freq << ".csv for writing\n";
+            std::cerr << "Failed to open " << out_path << " for writing\n";
             return 1;
         }
         out << "# true_fs_hz=" << std::fixed << std::setprecision(6) << true_fs << "\n";

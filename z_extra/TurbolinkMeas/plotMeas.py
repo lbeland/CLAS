@@ -19,7 +19,7 @@ buffered Packet Delay Variation, PDV): for every pdv_*.csv found, it
 Usage:
     python3 plotMeas.py [glob]
 
-`glob` defaults to "pdv_*.csv" in this script's directory.
+`glob` defaults to "outputs/pdv_*.csv" in this script's directory.
 """
 
 import glob
@@ -172,7 +172,7 @@ def save_latex_table(rows, out_path):
 
 
 def main():
-    pattern = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "pdv_*.csv")
+    pattern = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "outputs", "pdv_*.csv")
     paths = sorted(glob.glob(pattern))
     if not paths:
         print(f"No files matched '{pattern}'")

@@ -396,9 +396,8 @@ void StimControl::build_audio_buffers_()
     }
     power_s_ /= mono.size();
 
-    // One-off debug dump for offline inspection (waveform + spectrum) in Python.
-    // See extensions/clas/processors/StimControl/plot_burst_buffer.py
-    static bool burst_buffer_dumped = false;
+    // One-off debug dump for offline inspection (currently disabled)
+    static bool burst_buffer_dumped = true;
     if (!burst_buffer_dumped)
     {
         burst_buffer_dumped = true;

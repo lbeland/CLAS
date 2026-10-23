@@ -322,8 +322,7 @@ void UDPSource::Process(ProcessingContext &context)
             sample_counter = pkt.sample_counter - first_sample_counter;
 
             LOG(INFO) << name() << " Calibration complete using " << collected
-                      << " packets. start_time_us_=" << start_time_us_
-                      << ", first_sample_counter=" << first_sample_counter;
+                      << " packets. First sample counter=" << first_sample_counter;
         }
         else
         {

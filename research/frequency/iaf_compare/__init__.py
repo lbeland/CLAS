@@ -3,7 +3,7 @@ synthetic FOOOF-model signals.
 
 Entry-point scripts live one level up: ``run_sweep.py`` (generate the sweep +
 write ``outputs/iaf_results.h5``), ``plot_sweep.py`` (figures from it),
-``reject_compare.py`` / ``plot_roc.py`` (peak-rejection strategy comparison).
+``reject_compare.py`` / ``plot_reject.py`` (peak-rejection strategy comparison).
 """
 from . import paths, config, signal_gen, spectra, algorithms, metrics, pipeline, io_hdf5
 

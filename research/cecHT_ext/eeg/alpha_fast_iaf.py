@@ -2,7 +2,7 @@
 
 ``gaussian_peak``, ``bic_peak_test_simple``, ``approve_peak`` and ``alpha_fast``
 are a verbatim copy of ``analysis/f0.py`` (itself the production version of the
-``alpha_fast`` estimator in ``IAF_Estimation/compare_f0_algos/iaf_compare/algorithms.py``,
+``alpha_fast`` estimator in ``research/frequency/iaf_compare/algorithms.py``,
 plus a linear-scale SNR matching
 ``extensions/clas/processors/FrequencyEstimation/FrequencyEstimation.cpp``). Kept as a
 local copy rather than importing ``analysis.f0`` to avoid pulling in that

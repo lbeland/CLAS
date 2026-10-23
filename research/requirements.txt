@@ -1,0 +1,7 @@
+# Extra packages for the research/ scripts, installed on top of the main CLAS
+# requirements (../requirements.txt), which already cover numpy, scipy, matplotlib,
+# pandas, mne, fooof, philistine, seaborn, joblib, tqdm, ...
+moabb==1.5.0          # Rodrigues2017 loader (cecHT EEG/helpers.py)
+multitaper==1.2.0     # multitaper PSD (frequency/iaf_compare/spectra.py)
+neurodsp==2.3.0       # bursty oscillations (frequency/iaf_compare/signal_gen.py)
+tqdm_joblib==0.0.5    # progress bar around the joblib pool (cecHT_ext/eeg/run_pipeline.py)

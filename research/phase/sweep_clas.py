@@ -15,10 +15,12 @@ phase-error table per graph via ``analysis.sweep.snr_sweep_table``.
 
 Examples
 --------
-    python sweep_clas.py
-    python sweep_clas.py --graphs ecHTtests.yaml --snr -10 0 10 20 50 --noise white pink
-    python sweep_clas.py --no-analyse          # just collect the runs
-    python sweep_clas.py --dry-run             # print the plan and exit
+Run from the repo root:
+
+    python research/phase/sweep_clas.py
+    python research/phase/sweep_clas.py --graphs ecHTtests.yaml --snr -10 0 10 20 50 --noise white pink
+    python research/phase/sweep_clas.py --no-analyse          # just collect the runs
+    python research/phase/sweep_clas.py --dry-run             # print the plan and exit
 """
 
 import argparse
@@ -33,7 +35,7 @@ from pathlib import Path
 import yaml
 import zmq
 
-REPO_ROOT     = Path(__file__).resolve().parent
+REPO_ROOT     = Path(__file__).resolve().parents[2]
 FALCON_BIN    = REPO_ROOT / "build" / "release" / "falcon" / "falcon"
 FALCON_CONFIG = REPO_ROOT / ".falcon" / "config.yaml"
 RESULTS_DIR   = "results"

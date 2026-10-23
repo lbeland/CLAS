@@ -23,7 +23,7 @@ something you run directly.
   Run with `--help` for the full flag list.
 
 [`sweep.py`](sweep.py) (SNR/noise-colour sweep tables, as produced by
-[`sweep_clas.py`](../sweep_clas.py)) has no CLI yet -- edit the call in its
+[`research/phase/sweep_clas.py`](../research/phase/sweep_clas.py)) has no CLI yet -- edit the call in its
 `if __name__ == "__main__":` block, or import and call `snr_sweep_table()` yourself.
 
 The rest of the package ([`core.py`](core.py) Hilbert reference/error computation,

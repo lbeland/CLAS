@@ -1,6 +1,6 @@
 """Put the pristine ``cecHT`` submodule on ``sys.path``.
 
-``IAF_Estimation/cecHT`` is a git submodule kept byte-identical to upstream
+``research/cecHT`` is a git submodule kept byte-identical to upstream
 (``github.com/eikeosmers/cecHT``). All shared code -- ``phase``, ``phase_track``,
 ``utils`` and the ``EEG/`` helpers -- is imported from there rather than copied.
 
@@ -21,7 +21,7 @@ _SUBMODULE = Path(__file__).resolve().parent.parent / "cecHT"
 if not (_SUBMODULE / "phase.py").exists():
     raise ImportError(
         f"cecHT submodule not found at {_SUBMODULE}. Run "
-        "`git submodule update --init IAF_Estimation/cecHT`."
+        "`git submodule update --init research/cecHT`."
     )
 
 for _p in (_SUBMODULE, _SUBMODULE / "EEG"):

@@ -46,7 +46,7 @@ def mse_optimal_calibration_gain(f0, fs, N, L, H):
     """MSE-optimal complex calibration gain for cecHT endpoint correction.
 
     Ports the closed-form derivation from ECHT._calibration in
-    IAF_Estimation/cecHT/phase.py so it can be precomputed here, offline,
+    research/cecHT/phase.py so it can be precomputed here, offline,
     instead of once per f0 update at runtime in PhaseEstimation.cpp.
 
     Parameters

@@ -21,7 +21,7 @@ Usage
 
 Writes ``iaf_stats_per_file.csv`` (+ ``iaf_change_rate_per_file.csv`` in single
 mode) into each run dir; figures go to ``<repo>/analysis_output`` as ``.pgf`` + ``.pdf``
-(repo convention, cf. ``analysis/plot.py`` / ``IAF_Estimation/plot_iaf_tests.py``).
+(repo convention, cf. ``analysis/plot.py`` / ``research/frequency/plot_sweep.py``).
 """
 
 import argparse

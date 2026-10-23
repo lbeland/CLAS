@@ -8,13 +8,22 @@ must apply to real FFT bin values (irfft).
 """
 import numpy as np
 from neurodsp.sim import sim_bursty_oscillation
-
-from . import paths  # noqa: F401  -- side effect: puts SIMparam/code on sys.path
-
-from fooof.sim.gen import gen_aperiodic, gen_periodic
-from sims import gen_power_vals_fn
+from fooof.sim.gen import gen_aperiodic, gen_periodic, gen_noise
 
 EPS = np.nextafter(0, 1)  # smallest positive float
+
+
+# Copied from SIMparam (github.com/TomDonoghue/SIMparam, code/sims.py),
+# MIT License, Copyright (c) 2020 Thomas Donoghue.
+def gen_power_vals_fn(freqs, ap_kwargs, pe_kwargs, noise_kwargs,
+                      ap_func=gen_aperiodic,
+                      pe_func=gen_periodic,
+                      noise_func=gen_noise):
+    """Simulated power spectrum: 10 ** (aperiodic + peaks + noise)."""
+    aperiodic = ap_func(freqs, **ap_kwargs)
+    peaks = pe_func(freqs, **pe_kwargs)
+    noise = noise_func(freqs, **noise_kwargs)
+    return np.power(10, aperiodic + peaks + noise)
 
 
 def _power_to_db(power):

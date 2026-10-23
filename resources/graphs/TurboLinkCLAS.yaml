@@ -10,11 +10,10 @@ graph:
       options:
         fs: *fs
         # nchannels: 32          # default
-        # nsamples: 1
         # n_messages: *n_messages  # default
         # store_aux: true        # default
         calib_packets: 30000
-        fs_tau_s: 30
+        # fs_tau_s: 30  # default
       advanced:
         buffer_sizes:
           eeg: 2048
@@ -39,7 +38,7 @@ graph:
       options:
         # n_messages: *n_messages  # default
         channel_indices: [3]   # 1-based indices of channels to select
-        rms_threshold_uv: 2
+        # rms_threshold_uv: 2  # default
       advanced:
         buffer_sizes:
           out: 2048
@@ -104,7 +103,7 @@ graph:
         # stim_dur_ms: 20         # default
         # correct_latencies: true  # default
         audio_latency_ms: 5
-        p1_latency_ms: 0 #63.1   ###### TODO #########
+        # p1_latency_ms: 0  # default  #63.1   ###### TODO #########
         stim_amplitude: 1.0
         stim_period_ms: 0.8
         # use_background_sound: false  # default

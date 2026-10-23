@@ -9,26 +9,22 @@ graph:
       options:
         fs: *fs
         nchannels: 1
-        nsamples: 1
         n_messages: *n_messages
         inter_packet_sleep: false
         carrier_amplitude: 3.0
         carrier_frequency: 4.0
-        # Signal mode (mutually exclusive):
-        #   none | amplitude | phase | phase_jump | freq_step | chirp
         modulation_type: "chirp"
-        modulation_amplitude: 2      # amplitude/phase: modulation depth
-        modulation_frequency: 0.1    # amplitude/phase: modulation rate (Hz)
-        mod_period_s: 10.0            # phase_jump/freq_step: unperturbed segment length (s)
-        phase_jump_angle: 3.14159265358979  # phase_jump: jump angle (rad)
-        freq_step_size: -2          # freq_step: frequency offset while toggled (Hz)
-        chirp_slope: 0.1             # chirp: linear frequency slope (Hz/s)
-        # Imperfections applied to every mode:
-        noise_color: "white"        # white | pink (Voss-McCartney 1/f)
-        snr_db: 20.0                 # in-band SNR (dB): carrier power vs noise power in noise_band_hz
-        noise_band_hz: 4.0          # width of the SNR reference band around carrier_frequency (Hz)
-        burst_on_s: 1.0              # bursty signal: ON duration (s)
-        burst_off_s: 0.0             # bursty signal: OFF duration (s); 0 = always on
+        modulation_amplitude: 2
+        # modulation_frequency: 0.1    # default
+        mod_period_s: 10.0
+        # phase_jump_angle: 3.14159265358979  # default
+        freq_step_size: -2
+        chirp_slope: 0.1
+        # noise_color: "white"        # default
+        # snr_db: 20.0                 # default
+        # noise_band_hz: 4.0          # default
+        # burst_on_s: 1.0              # default
+        # burst_off_s: 0.0             # default
       advanced:
         buffer_sizes:
           data: 32
@@ -37,7 +33,7 @@ graph:
       class: FrequencyEstimation
       options:
         n_messages: *n_messages
-        calc_interval: 100
+        # calc_interval: 100  # default
         window_size_sec: 10
         max_invalid_sec: 3
         kalman_f0_std: 0.1

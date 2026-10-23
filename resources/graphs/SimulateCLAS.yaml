@@ -11,7 +11,6 @@ graph:
       options:
         fs: *fs
         nchannels: 1
-        nsamples: 1
         n_messages: *n_messages
         carrier_amplitude: 3
         carrier_frequency: 10.334
@@ -80,11 +79,11 @@ graph:
       class: FrequencyEstimation
       options:
         n_messages: *n_messages
-        calc_interval: 100
+        # calc_interval: 100  # default
         window_size_sec: 10
         max_invalid_sec: 3
         kalman_f0_std: 0.1
-        kalman_full: true
+        # kalman_full: true  # default
         f_min: 7.0
         f_max: 16.0
       advanced:
@@ -99,7 +98,7 @@ graph:
         # n_fft: *window_size
         f0_read_interval: 1
         calibrate: true
-        compensate_filter: true
+        # compensate_filter: true  # default
       advanced:
         buffer_sizes:
           phase: 1024
@@ -113,26 +112,26 @@ graph:
         stim_onset_deg: 0
         stim_dur_unit: "ms"
         stim_dur_deg: 45
-        stim_dur_ms: 20
+        # stim_dur_ms: 20  # default
         correct_latencies: false
-        audio_latency_ms: 0 #4
-        p1_latency_ms: 0
+        # audio_latency_ms: 0  # default
+        # p1_latency_ms: 0  # default
         stim_period_ms: 1
         stim_amplitude: 0.5
         use_background_sound: true
-        background_dB: 18
+        # background_dB: 18  # default
       advanced:
         buffer_sizes:
           out: 1024
         thread_core: [10,22,5,17]
     Serializer(1-5):    # one serializers per output stream
       class: FileSerializer
-      options:
-        encoding: binary
-        throttle/enabled: false
-        overwrite: false 
-        format: FULL
-        n_messages: *n_messages
+      #options:
+        # encoding: binary        # default
+        # throttle/enabled: false # default
+        # overwrite: false        # default
+        # format: full            # default
+        # n_messages: *n_messages  # default
       advanced:
         thread_core: [8,20]
   connections:

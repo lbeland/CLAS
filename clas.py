@@ -75,7 +75,7 @@ def parse_args():
                         help="graph file name, looked up in <resources>/graphs/ (default: %(default)s)")
     parser.add_argument("--results_dir",
                         help="name for this run; a timestamp is appended. Asked for if omitted.")
-    parser.add_argument("--stim_protocol", default="stim_protocol.csv",
+    parser.add_argument("--stim_protocol", default="resources/stim_protocol.csv",
                         help="CSV with 'duration_s,state' rows, relative to the repo root (default: %(default)s)")
     return parser.parse_args()
 

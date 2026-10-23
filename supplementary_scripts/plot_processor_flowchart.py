@@ -3,9 +3,9 @@
 Render a processor flowchart from a YAML graph definition.
 
 Usage:
-    python z_extra/plot_processor_flowchart.py input.yaml -o flowchart.svg
-    python z_extra/plot_processor_flowchart.py input.yaml -o flowchart.png
-    python z_extra/plot_processor_flowchart.py input.yaml --format pdf
+    python supplementary_scripts/plot_processor_flowchart.py input.yaml -o flowchart.svg
+    python supplementary_scripts/plot_processor_flowchart.py input.yaml -o flowchart.png
+    python supplementary_scripts/plot_processor_flowchart.py input.yaml --format pdf
 """
 
 from __future__ import annotations

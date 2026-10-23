@@ -14,16 +14,20 @@ from .stimulus import StimulusConfig, compute_reference_stimulus, compute_stimul
 # LaTeX labels of the phase-error series from compute_errors(). They double as
 # plot titles/table headers and as the keys other modules look a series up by,
 # so import them from here instead of re-typing the strings. Notation:
-# theta = true phase, hat theta = online estimate, theta_HT = offline Hilbert phase.
-ONLINE_VS_TRUE    = r"$\hat \theta - \theta$"
-ONLINE_VS_HILBERT = r"$\hat\theta - \theta_{\mathrm{HT}}$"
-HILBERT_VS_TRUE   = r"$\theta_{\mathrm{HT}} - \theta$"
-# Phase error at the stimulus edges, vs the offline reference (true phase if
-# known, else offline Hilbert) or vs the online estimate
-STIM_ONSET_HT     = r"Stim onset ($\theta_{\mathrm{HT}}$)"
-STIM_OFFSET_HT    = r"Stim offset ($\theta_{\mathrm{HT}}$)"
-STIM_ONSET_HAT    = r"Stim onset ($\hat\theta$)"
-STIM_OFFSET_HAT   = r"Stim offset ($\hat\theta$)"
+# theta = true phase (GT), hat theta = online estimate (ONLINE),
+# theta_HT = offline Hilbert phase (HILBERT).
+# Phase tracking error, <ESTIMATE>_VS_<REFERENCE> = estimate - reference
+ONLINE_VS_GT        = r"$\hat\theta - \theta$"
+ONLINE_VS_HILBERT   = r"$\hat\theta - \theta_{\mathrm{HT}}$"
+HILBERT_VS_GT       = r"$\theta_{\mathrm{HT}} - \theta$"
+# Phase error at the stimulus edges, STIM_<EDGE>_<REFERENCE> = reference phase
+# at the trigger edge - target phase
+STIM_ONSET_GT        = r"Stim onset ($\theta$)"
+STIM_OFFSET_GT       = r"Stim offset ($\theta$)"
+STIM_ONSET_HILBERT   = r"Stim onset ($\theta_{\mathrm{HT}}$)"
+STIM_OFFSET_HILBERT  = r"Stim offset ($\theta_{\mathrm{HT}}$)"
+STIM_ONSET_ONLINE    = r"Stim onset ($\hat\theta$)"
+STIM_OFFSET_ONLINE   = r"Stim offset ($\hat\theta$)"
 
 
 def _edge_trim_window(errors: list[dict], lo_frac: float = 0.1,
@@ -209,14 +213,14 @@ def compute_errors(
         phi = samples["PhaseEstimation_phase"]["y"]
         n   = len(phi)
         ref = true_phase[:n] if true_phase is not None else hilbert_phase[:n]
-        label = ONLINE_VS_TRUE if true_phase is not None else ONLINE_VS_HILBERT
+        label = ONLINE_VS_GT if true_phase is not None else ONLINE_VS_HILBERT
         err = np.angle(np.exp(1j * (phi - ref)), deg=True)
         errors.append({"label": label, "time_s": t, "values": err,
                         "unit": "degrees", "linestyle": "-"})
 
         if true_phase is not None:
             h_err = np.angle(np.exp(1j * (hilbert_phase[:n] - true_phase[:n])), deg=True)
-            errors.append({"label": HILBERT_VS_TRUE, "time_s": t, "values": h_err,
+            errors.append({"label": HILBERT_VS_GT, "time_s": t, "values": h_err,
                            "unit": "degrees", "linestyle": "-"})
 
             # Online vs offline Hilbert estimate
@@ -242,6 +246,8 @@ def compute_errors(
             else samples["StimControl"]["y"]
         )
         ref_phase = true_phase if true_phase is not None else hilbert_phase
+        onset_label, offset_label = ((STIM_ONSET_GT, STIM_OFFSET_GT) if true_phase is not None
+                                     else (STIM_ONSET_HILBERT, STIM_OFFSET_HILBERT))
 
         if true_inst_freq is not None:
             f0_y = true_inst_freq
@@ -265,11 +271,11 @@ def compute_errors(
         onset_err, offset_err = compute_stimulus_edge_errors(
             trigger_binary, time_us, ref_phase, stim_cfg, start_ts, fs)
         if onset_err is not None:
-            errors.append({"label": STIM_ONSET_HT,
+            errors.append({"label": onset_label,
                            "time_s": onset_err["time_s"], "values": onset_err["values"],
                            "unit": "degrees"})
         if offset_err is not None:
-            errors.append({"label": STIM_OFFSET_HT,
+            errors.append({"label": offset_label,
                            "time_s": offset_err["time_s"], "values": offset_err["values"],
                            "unit": "degrees", "linestyle": "--"})
 
@@ -287,11 +293,11 @@ def compute_errors(
         echt_onset_err, echt_offset_err = compute_stimulus_edge_errors(
             trigger_binary, time_us, echt_phase, stim_cfg, start_ts, fs)
         if echt_onset_err is not None:
-            errors.append({"label": STIM_ONSET_HAT,
+            errors.append({"label": STIM_ONSET_ONLINE,
                             "time_s": echt_onset_err["time_s"], "values": echt_onset_err["values"],
                             "unit": "degrees", "linestyle": ":"})
         if echt_offset_err is not None:
-            errors.append({"label": STIM_OFFSET_HAT,
+            errors.append({"label": STIM_OFFSET_ONLINE,
                             "time_s": echt_offset_err["time_s"], "values": echt_offset_err["values"],
                             "unit": "degrees", "linestyle": ":"})
 

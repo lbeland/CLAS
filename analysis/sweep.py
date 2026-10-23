@@ -1,8 +1,7 @@
 """
 SNR / noise-colour sweep analysis: turn a folder of CLAS runs (one per
-(snr_db, noise_color) point, as produced by sweep_clas.py) into either a
-phase-error-vs-SNR figure (analyse_snr_sweep) or a summary error table
-(snr_sweep_table).
+(snr_db, noise_color) point, as produced by sweep_clas.py) into a summary
+error table (snr_sweep_table).
 
 Kept out of analysis/main.py -- which stays focused on the single-recording
 analysis pipeline -- but built on its general helpers (compute_recording_errors,
@@ -26,8 +25,8 @@ from scipy.stats import circmean, circstd
 
 from analysis.main import compute_recording_errors, find_result_dirs
 from analysis.plot import PLOTS_DIR
-from analysis.core import ONLINE_VS_TRUE, HILBERT_VS_TRUE, ONLINE_VS_HILBERT
-
+from analysis.core import ONLINE_VS_GT, HILBERT_VS_GT, ONLINE_VS_HILBERT
+from analysis.report import TERMINAL_LABELS
 
 def _phase_error_stats(values: np.ndarray) -> "tuple[float, float, int]":
     """Circular mean and circular SD (both in degrees) of a wrapped
@@ -85,69 +84,43 @@ def _run_carrier_f0(opts: dict, fallback: float) -> float:
     except (KeyError, TypeError, ValueError):
         return fallback
 
-# Per-kind table layout: (spec, plain-text header, LaTeX header, per-value format).
+# Table layout: (spec, plain-text header, LaTeX header, per-value format).
 # `spec` is a row key, or a (mean_key, std_key) pair rendered as "mean +/- std".
-_SWEEP_TABLE_COLUMNS = {
-    "echt": [
-        ("noise",                                 "noise",               "Noise",                              "{}"),
-        ("snr_db",                                "SNR (dB)",             "SNR [dB]",                           "{:g}"),
-        (("err_mean", "err_std"),                 "phase err (deg)",      r"$\hat\theta - \theta\,  [\degree]$",             "{:.2f}"),
-        (("hilb_vs_gt_mean", "hilb_vs_gt_std"),   "Hilbert-vs-GT (deg)",  r"$\theta_{\text{HT}} - \theta\,  [\degree]$",     "{:.2f}"),
-        (("vs_hilbert", "vs_hilbert_std"),        "vs-Hilbert (deg)",     r"$\hat\theta - \theta_{\text{HT}}\,  [\degree]$", "{:.2f}"),
-        ("corr_online_hilb",                      "corr(on,HT)",          r"$\rho_{JS}$",                          "{:.3f}"),
-    ],
-}
+_SWEEP_TABLE_COLUMNS = [
+    ("noise",                                             "noise",                            "Noise",                           "{}"),
+    ("snr_db",                                            "SNR (dB)",                         "SNR [dB]",                        "{:g}"),
+    (("online_vs_gt_mean", "online_vs_gt_std"),           TERMINAL_LABELS[ONLINE_VS_GT],      ONLINE_VS_GT + r" [$^\circ$]",      "{:.2f}"),
+    (("hilbert_vs_gt_mean", "hilbert_vs_gt_std"),         TERMINAL_LABELS[HILBERT_VS_GT],     HILBERT_VS_GT + r" [$^\circ$]",     "{:.2f}"),
+    (("online_vs_hilbert_mean", "online_vs_hilbert_std"), TERMINAL_LABELS[ONLINE_VS_HILBERT], ONLINE_VS_HILBERT + r" [$^\circ$]", "{:.2f}"),
+    ("corr_online_hilbert",                               "corr(online, Hilbert)",            r"$\rho_{JS}$",                    "{:.3f}"),
+]
 
-
-_SWEEP_TABLE_CAPTIONS = {
-    "echt": (r"Online cecHT phase estimation accuracy over the in-band SNR "
-             r"$\times$ noise-colour sweep. Each cell is circular mean $\pm$ "
-             r"circular SD (degrees) of the signed phase error over the run, for "
-             r"the online estimate against ground truth ($\hat\theta - \theta$), "
-             r"the online estimate against the offline Hilbert phase "
-             r"($\hat\theta - \theta_{\text{HT}}$), and the Hilbert phase "
-             r"against ground truth ($\theta_{\text{HT}} - \theta$). A non-zero "
-             r"mean indicates a systematic phase lead ($>0$) or lag ($<0$). The "
-             r"last column is the Jammalamadaka--Sarma circular correlation "
-             r"$\rho_{JS}$ between the online and offline Hilbert errors vs.\ "
-             r"ground truth, i.e.\ how much the two estimators depart from the "
-             r"true phase together. Columns involving the offline Hilbert "
-             r"phase have the first and last 10\% of each run excluded as "
-             r"filter edge transients; the online-vs-ground-truth column "
-             r"does not."),
-}
-
-
-def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
+def snr_sweep_table(sweep_dir: str, f0: float = 10,
                     out_dir: str = None,
                     f0_is_truth: bool = True, whiten: bool = False,
-                    caption: str = None, label: str = None) -> "list[dict]":
+                    label: str = None) -> "list[dict]":
     """Summarise an SNR / noise-colour sweep as a table instead of a plot.
 
     One row per run folder under sweep_dir: circular mean +/- SD (deg) of the
     online-vs-ground-truth, online-vs-Hilbert, and Hilbert-vs-GT phase
     errors, plus the circular correlation between the online and offline
     Hilbert errors vs. ground truth. Prints the table and writes
-    snr_sweep_<kind>.csv/.tex into out_dir.
+    snr_sweep_echt.csv/.tex into out_dir.
 
     Args:
         sweep_dir: Directory containing the run folders to summarise.
-        kind: Table layout, a key into _SWEEP_TABLE_COLUMNS.
         f0: Default pre-Hilbert bandpass centre frequency (Hz) when
             f0_is_truth is False.
         out_dir: Output directory for the .csv/.tex files (default: PLOTS_DIR).
         f0_is_truth: Use each run's known carrier_frequency as f0 instead of
             re-estimating it offline.
         whiten: Apply 1/f aperiodic whitening to the offline reference.
-        caption: Overrides the .tex table's default caption.
         label: Overrides the .tex table's default \\ref label
-            (tab:snr_sweep_<kind>).
+            (tab:snr_sweep_echt).
 
     Returns:
         The row dicts.
     """
-    if kind not in _SWEEP_TABLE_COLUMNS:
-        raise ValueError(f"kind must be one of {list(_SWEEP_TABLE_COLUMNS)}, got {kind!r}")
     out_dir  = out_dir or PLOTS_DIR
     run_dirs = find_result_dirs(sweep_dir)
     print(f"Found {len(run_dirs)} run folder(s) under {sweep_dir!r}.")
@@ -167,9 +140,9 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
             errors = compute_recording_errors(run_f0, results_dir,
                                               f0_is_truth=f0_is_truth, whiten=whiten)
 
-            series = next((e for e in errors if e["label"] == ONLINE_VS_TRUE), None)
+            series = next((e for e in errors if e["label"] == ONLINE_VS_GT), None)
             if series is None:
-                print(f"  No {ONLINE_VS_TRUE!r} series; skipping.")
+                print(f"  No {TERMINAL_LABELS[ONLINE_VS_GT]!r} series; skipping.")
                 continue
             e_mean, e_std, n = _phase_error_stats(series["values"])
             if n == 0:
@@ -178,7 +151,7 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
             cmp = next((e for e in errors if e["label"] == ONLINE_VS_HILBERT), None)
             vh_mean, vh_std, _ = (_phase_error_stats(cmp["values"])
                                   if cmp is not None else (np.nan, np.nan, 0))
-            hgt = next((e for e in errors if e["label"] == HILBERT_VS_TRUE), None)
+            hgt = next((e for e in errors if e["label"] == HILBERT_VS_GT), None)
             hgt_mean, hgt_std, _ = (_phase_error_stats(hgt["values"])
                                     if hgt is not None else (np.nan, np.nan, 0))
             # Circular correlation of the online and offline errors vs. ground truth
@@ -187,15 +160,15 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
             # compute_errors() already uses the (estimate - reference) sign,
             # i.e. these means are circmean(theta_hat - theta) directly.
             rows.append({"noise": noise_type, "snr_db": snr_db,
-                         "err_mean": e_mean, "err_std": e_std,
-                         "vs_hilbert": vh_mean, "vs_hilbert_std": vh_std,
-                         "hilb_vs_gt_mean": hgt_mean, "hilb_vs_gt_std": hgt_std,
-                         "corr_online_hilb": corr_oh})
-            print(f"  {noise_type}, SNR {snr_db:g} dB: phase err "
-                  f"{e_mean:.2f} +/- {e_std:.2f} deg; "
-                  f"online-vs-Hilbert {vh_mean:.2f} +/- {vh_std:.2f} deg; "
-                  f"Hilbert-vs-GT {hgt_mean:.2f} +/- {hgt_std:.2f} deg; "
-                  f"corr(online,Hilbert) {corr_oh:.3f}")
+                         "online_vs_gt_mean": e_mean, "online_vs_gt_std": e_std,
+                         "hilbert_vs_gt_mean": hgt_mean, "hilbert_vs_gt_std": hgt_std,
+                         "online_vs_hilbert_mean": vh_mean, "online_vs_hilbert_std": vh_std,
+                         "corr_online_hilbert": corr_oh})
+            print(f"  {noise_type}, SNR {snr_db:g} dB: "
+                  f"{TERMINAL_LABELS[ONLINE_VS_GT]} {e_mean:.2f} +/- {e_std:.2f} deg; "
+                  f"{TERMINAL_LABELS[HILBERT_VS_GT]} {hgt_mean:.2f} +/- {hgt_std:.2f} deg; "
+                  f"{TERMINAL_LABELS[ONLINE_VS_HILBERT]} {vh_mean:.2f} +/- {vh_std:.2f} deg; "
+                  f"corr(online, Hilbert) {corr_oh:.3f}")
         except Exception:
             print(f"FAILED: {results_dir}")
             traceback.print_exc()
@@ -205,7 +178,7 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
         return []
 
     rows.sort(key=lambda r: (r["noise"], r["snr_db"]))
-    cols = _SWEEP_TABLE_COLUMNS[kind]
+    cols = _SWEEP_TABLE_COLUMNS
 
     def _num(fmt, val):
         if isinstance(val, float) and not np.isfinite(val):
@@ -237,14 +210,14 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
         return "  ".join(cell.ljust(widths[j]) if j == 0 else cell.rjust(widths[j])
                          for j, cell in enumerate(cells))
 
-    print(f"\nSNR sweep summary ({kind}) -- {sweep_dir}")
+    print(f"\nSNR sweep summary -- {sweep_dir}")
     print(_line([c[1] for c in cols]))
     print("  ".join("-" * w for w in widths))
     for tc in text_cells:
         print(_line(tc))
 
     os.makedirs(out_dir, exist_ok=True)
-    stem = f"snr_sweep_{kind}"
+    stem = "snr_sweep_echt"
 
     csv_path = os.path.join(out_dir, f"{stem}.csv")
     with open(csv_path, "w", newline="") as fh:
@@ -273,11 +246,9 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
         i = j
     body += [r"\bottomrule", r"\end{tabular}"]
 
-    caption = caption or _SWEEP_TABLE_CAPTIONS[kind]
-    label   = label or f"tab:snr_sweep_{kind}"
+    label   = label or f"tab:{stem}"
     tex = [r"\begin{table}[htbp]",
            r"  \centering",
-           rf"  \caption{{{caption}}}",
            rf"  \label{{{label}}}",
            *("  " + ln for ln in body),
            r"\end{table}"]
@@ -289,4 +260,4 @@ def snr_sweep_table(sweep_dir: str, kind: str = "echt", f0: float = 10,
 
 
 if __name__ == "__main__":
-    snr_sweep_table("results/snr_sweep/ecHTtests", kind="echt")
+    snr_sweep_table("results/snr_sweep")

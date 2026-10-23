@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Automated SNR / noise-type sweep for the ecHT phase- and f0-estimation graphs.
+Automated SNR / noise-type sweep for the ecHT phase-estimation graph.
 
 For every graph and every (snr_db, noise_color) combination on the grid this
 script:
@@ -11,13 +11,12 @@ script:
   3. moves that run's ``results/<run>`` folder into ``results/<name>/<graph stem>/``.
 
 When every run is done it prints -- and writes as CSV + LaTeX -- one summary
-error table per graph via ``analysis.sweep.snr_sweep_table``: a phase-error
-table for the ecHT graph, an f0-error table for the frequency-estimation graph.
+phase-error table per graph via ``analysis.sweep.snr_sweep_table``.
 
 Examples
 --------
     python sweep_clas.py
-    python sweep_clas.py --graphs ecHTtests.yaml f0tests.yaml --snr -10 0 10 20 50 --noise white pink
+    python sweep_clas.py --graphs ecHTtests.yaml --snr -10 0 10 20 50 --noise white pink
     python sweep_clas.py --no-analyse          # just collect the runs
     python sweep_clas.py --dry-run             # print the plan and exit
 """
@@ -81,19 +80,6 @@ def patch_graph(base_graph_path: Path, out_graph_path: Path,
     fs        = cfg["graph"].get("defaults", {}).get("fs") or opts.get("fs", 10000)
     nsamples  = opts.get("nsamples", 1)
     return opts["n_messages"] * nsamples / float(fs)
-
-
-def graph_kind(graph_path: Path) -> str:
-    """Which summary table a graph's runs feed: 'echt' if it runs
-    PhaseEstimation, 'f0' if it runs FrequencyEstimation."""
-    with open(graph_path) as f:
-        procs = yaml.safe_load(f)["graph"]["processors"]
-    if "PhaseEstimation" in procs:
-        return "echt"
-    if "FrequencyEstimation" in procs:
-        return "f0"
-    raise ValueError(f"{graph_path.name}: no PhaseEstimation / FrequencyEstimation "
-                     "processor -- don't know which summary table to build.")
 
 
 def set_falcon_log_path(log_path: Path) -> None:
@@ -184,9 +170,8 @@ def run_one(ctx: zmq.Context, port: int, graph_name: str, out_graph_path: Path,
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--graphs", nargs="+", default=["ecHTtests.yaml", "f0tests.yaml"],
-                   help="base graphs in resources/graphs/ "
-                        "(default: ecHTtests.yaml f0tests.yaml)")
+    p.add_argument("--graphs", nargs="+", default=["ecHTtests.yaml"],
+                   help="base graphs in resources/graphs/ (default: ecHTtests.yaml)")
     p.add_argument("--snr", type=float, nargs="+", default=[-10, 0, 10, 20, 50],
                    help="SNR levels in dB (default: -10 0 10 20 50)")
     p.add_argument("--noise", nargs="+", default=["white", "pink"],
@@ -219,15 +204,14 @@ def main() -> None:
         {"name": g,
          "base": resources_folder / "graphs" / g,
          "out":  resources_folder / "graphs" / f"_sweep_{g}",
-         "dir":  sweep_dir / Path(g).stem,
-         "kind": graph_kind(resources_folder / "graphs" / g)}
+         "dir":  sweep_dir / Path(g).stem}
         for g in args.graphs
     ]
 
     grid = [(snr, noise) for noise in args.noise for snr in args.snr]
     print(f"Sweep dir  : {sweep_dir}")
     for g in graphs:
-        print(f"Graph      : {g['name']}  ->  {g['dir']}  ({g['kind']} table)")
+        print(f"Graph      : {g['name']}  ->  {g['dir']}")
     print(f"Runs/graph ({len(grid)}): " +
           ", ".join(f"{s:g}dB/{n}" for s, n in grid))
     if args.dry_run:
@@ -268,8 +252,8 @@ def main() -> None:
         for g in graphs:
             if g["name"] not in completed:
                 continue
-            print(f"\n{'=' * 80}\n# summary table: {g['name']} ({g['kind']})\n{'=' * 80}")
-            snr_sweep_table(str(g["dir"]), kind=g["kind"])
+            print(f"\n{'=' * 80}\n# summary table: {g['name']}\n{'=' * 80}")
+            snr_sweep_table(str(g["dir"]))
 
 
 if __name__ == "__main__":

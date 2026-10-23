@@ -7,20 +7,23 @@ import os
 
 import numpy as np
 
-from .core import ONLINE_VS_TRUE, ONLINE_VS_HILBERT, HILBERT_VS_TRUE, \
-    STIM_ONSET_HT, STIM_OFFSET_HT, STIM_ONSET_HAT, STIM_OFFSET_HAT
+from .core import ONLINE_VS_GT, ONLINE_VS_HILBERT, HILBERT_VS_GT, \
+    STIM_ONSET_GT, STIM_OFFSET_GT, STIM_ONSET_HILBERT, STIM_OFFSET_HILBERT, \
+    STIM_ONSET_ONLINE, STIM_OFFSET_ONLINE
 
-# Terminal names for the (LaTeX) error-series labels from core.compute_errors()
-_PHASE_TRACKING_LABELS = {
-    ONLINE_VS_TRUE:    "online vs true",
-    ONLINE_VS_HILBERT: "online vs offline (Hilbert)",
-    HILBERT_VS_TRUE:   "offline (Hilbert) vs true",
-}
-_STIM_EDGE_LABELS = {
-    STIM_ONSET_HT:   "onset vs {ref}",
-    STIM_OFFSET_HT:  "offset vs {ref}",
-    STIM_ONSET_HAT:  "onset vs online phase",
-    STIM_OFFSET_HAT: "offset vs online phase",
+# Terminal names for the LaTeX labels (error series and conditions)
+TERMINAL_LABELS = {
+    ONLINE_VS_GT:             "online vs GT",
+    ONLINE_VS_HILBERT:        "online vs Hilbert",
+    HILBERT_VS_GT:            "Hilbert vs GT",
+    STIM_ONSET_GT:            "stim onset vs GT",
+    STIM_OFFSET_GT:           "stim offset vs GT",
+    STIM_ONSET_HILBERT:       "stim onset vs Hilbert",
+    STIM_OFFSET_HILBERT:      "stim offset vs Hilbert",
+    STIM_ONSET_ONLINE:        "stim onset vs online",
+    STIM_OFFSET_ONLINE:       "stim offset vs online",
+    r"$\mathrm{P}_1$-Peak":   "P1-Peak",
+    r"$\mathrm{P}_1$-Trough": "P1-Trough",
 }
 
 LABEL_W = 34  # width of the row-label column in every section
@@ -102,20 +105,20 @@ def print_recording_summary(analysis) -> None:
         _table_header("Frequency tracking (Hz)", ["mean", "SD", "MAE"])
         if true_f0 is not None:
             if online_f0 is not None:
-                _linear_row("online vs true", online_f0 - true_f0)
-            _linear_row("offline (Hilbert) vs true", analysis.f0_continuous - true_f0)
+                _linear_row("online vs GT", online_f0 - true_f0)
+            _linear_row("Hilbert vs GT", analysis.f0_continuous - true_f0)
         else:
-            _linear_row("online vs offline (Hilbert)", online_f0 - analysis.f0_continuous)
+            _linear_row("online vs Hilbert", online_f0 - analysis.f0_continuous)
 
     errors_by_label = {e["label"]: e for e in analysis.errors or []}
 
     # Phase tracking
-    tracking = [(name, errors_by_label[lbl]) for lbl, name in _PHASE_TRACKING_LABELS.items()
+    tracking = [lbl for lbl in (ONLINE_VS_GT, ONLINE_VS_HILBERT, HILBERT_VS_GT)
                 if lbl in errors_by_label]
     if tracking:
         _table_header("Phase tracking (deg)", ["mean", "circ. SD", "PLV"])
-        for name, err in tracking:
-            _circ_row(name, err["values"])
+        for lbl in tracking:
+            _circ_row(TERMINAL_LABELS[lbl], errors_by_label[lbl]["values"])
 
     # Stimulation
     if "StimControl" not in samples:
@@ -128,10 +131,10 @@ def print_recording_summary(analysis) -> None:
     # if counts is not None:
     #     n_actual, n_expected = counts["delivered"], counts["expected"]
 
-    ref = "true phase" if gt.get("true_phase") is not None else "offline Hilbert phase"
-    for lbl, name in _STIM_EDGE_LABELS.items():
+    for lbl in (STIM_ONSET_GT, STIM_OFFSET_GT, STIM_ONSET_HILBERT, STIM_OFFSET_HILBERT,
+                STIM_ONSET_ONLINE, STIM_OFFSET_ONLINE):
         if lbl in errors_by_label:
-            _circ_row(name.format(ref=ref), errors_by_label[lbl]["values"])
+            _circ_row(TERMINAL_LABELS[lbl], errors_by_label[lbl]["values"])
 
     dur = errors_by_label.get("Stim duration error")
     if dur is not None:

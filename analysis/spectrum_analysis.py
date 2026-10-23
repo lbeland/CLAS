@@ -38,6 +38,7 @@ from scipy.stats import ttest_ind, ttest_1samp
 from analysis.loader import find_session_run_dirs
 from analysis.plot import FIGSIZE, FIG_WIDTH, FIG_HEIGHT, save_pgf, save_pdf, CHANNEL_NAMES, EOG_CHANNEL_NAMES
 from analysis.runtime_meta import load_runtime_metadata
+from analysis.report import TERMINAL_LABELS
 
 CONDITIONS      = ("stim_on", "stim_off")
 STIM_ONSET_DEGS = (0, 60, 150, 180, 240, 330)
@@ -729,12 +730,15 @@ def analyse_all(
 
     # --- Plot 2: opposite-phase time-frequency t-maps ---
     for deg_a, deg_b in comparisons:
-        title  = f"{CONDITION_LABELS.get(deg_a, deg_a)} vs {CONDITION_LABELS.get(deg_b, deg_b)}"
+        name_a = CONDITION_LABELS.get(deg_a, deg_a)
+        name_b = CONDITION_LABELS.get(deg_b, deg_b)
+        title  = f"{name_a} vs {name_b}"
         result = compute_condition_tf_maps(
             (deg_a, deg_b), recordings_by_condition, loaded_recordings,
             win_s=win_s, step_s=step_s, smooth_window_s=smooth_window_s)
         if result is None:
-            print(f"Skipping {title}: not enough data.")
+            print(f"Skipping {TERMINAL_LABELS.get(name_a, name_a)} vs "
+                  f"{TERMINAL_LABELS.get(name_b, name_b)}: not enough data.")
             continue
 
         freqs_tf, times_tf, maps_a, maps_b = result
@@ -749,7 +753,8 @@ def analyse_all(
             loaded_recordings, recordings_by_condition=recordings_by_condition, conditions=(deg,),
             win_s=win_s, step_s=step_s, smooth_window_s=smooth_window_s)
         if result is None:
-            print(f"Skipping pooled Stim On vs Stim Off plot for {CONDITION_LABELS.get(deg, deg)}: not enough data.")
+            name = CONDITION_LABELS.get(deg, deg)
+            print(f"Skipping pooled Stim On vs Stim Off plot for {TERMINAL_LABELS.get(name, name)}: not enough data.")
         else:
             pooled_by_condition[f"{CONDITION_LABELS.get(deg, deg)} ({deg} deg)"] = result
 

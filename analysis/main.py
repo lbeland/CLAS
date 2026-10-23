@@ -18,9 +18,10 @@ from analysis.loader       import load_processor_signals, analyse_latencies, ext
                                   compute_total_latency, find_session_run_dirs
 from analysis.f0          import estimate_f0, estimate_f0_with_phase, estimate_f0_modal
 from analysis.core         import compute_hilbert_reference, compute_errors, compute_jade_errors, \
-                                  _edge_trim_window, ONLINE_VS_TRUE, ONLINE_VS_HILBERT, \
-                                  HILBERT_VS_TRUE, STIM_ONSET_HT, STIM_OFFSET_HT, \
-                                  STIM_ONSET_HAT, STIM_OFFSET_HAT
+                                  _edge_trim_window, ONLINE_VS_GT, ONLINE_VS_HILBERT, \
+                                  HILBERT_VS_GT, STIM_ONSET_GT, STIM_OFFSET_GT, \
+                                  STIM_ONSET_HILBERT, STIM_OFFSET_HILBERT, \
+                                  STIM_ONSET_ONLINE, STIM_OFFSET_ONLINE
 from analysis.edf_io       import write_raw_signals_edf, load_runtime, write_analysis_edf
 from analysis.runtime_meta import write_runtime_metadata
 from analysis.plot         import plot_errors, plot_spectrum, plot_stack, \
@@ -318,8 +319,9 @@ def analyse_erp_by_subject(f0: float = 10, base_dir: str = "results", session_gl
 
 # Column order for the per-condition error table
 _CONDITION_TABLE_COLUMNS = [
-    ONLINE_VS_TRUE, ONLINE_VS_HILBERT, HILBERT_VS_TRUE,
-    STIM_ONSET_HT, STIM_OFFSET_HT, STIM_ONSET_HAT, STIM_OFFSET_HAT,
+    ONLINE_VS_GT, ONLINE_VS_HILBERT, HILBERT_VS_GT,
+    STIM_ONSET_GT, STIM_OFFSET_GT, STIM_ONSET_HILBERT, STIM_OFFSET_HILBERT,
+    STIM_ONSET_ONLINE, STIM_OFFSET_ONLINE,
 ]
 
 # Row order for the per-condition error table: the four phase-offset
@@ -433,15 +435,15 @@ def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str
             snr_db = (10.0 * np.log10(analysis.snr)
                       if analysis.snr is not None and np.isfinite(analysis.snr) and analysis.snr > 0
                       else np.nan)
-            stim_onset_hat = next((e for e in errors if e["label"] == STIM_ONSET_HAT), None)
-            stim_onset_ht  = next((e for e in errors if e["label"] == STIM_ONSET_HT), None)
+            stim_onset_online  = next((e for e in errors if e["label"] == STIM_ONSET_ONLINE), None)
+            stim_onset_hilbert = next((e for e in errors if e["label"] == STIM_ONSET_HILBERT), None)
             scatter_records.append({
                 "name": os.path.basename(results_dir),
                 "phase_vals": np.asarray(oh["values"], dtype=float),
-                STIM_ONSET_HAT: np.asarray(stim_onset_hat["values"], dtype=float)
-                                if stim_onset_hat is not None else np.array([]),
-                STIM_ONSET_HT: np.asarray(stim_onset_ht["values"], dtype=float)
-                               if stim_onset_ht is not None else np.array([]),
+                STIM_ONSET_ONLINE: np.asarray(stim_onset_online["values"], dtype=float)
+                                   if stim_onset_online is not None else np.array([]),
+                STIM_ONSET_HILBERT: np.asarray(stim_onset_hilbert["values"], dtype=float)
+                                    if stim_onset_hilbert is not None else np.array([]),
                 "snr_db": snr_db,
             })
 

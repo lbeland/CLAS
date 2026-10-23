@@ -24,7 +24,8 @@ mpl.rcParams.update({
 })
 
 from .stimulus import get_edges
-from .core import _edge_trim_window, ONLINE_VS_HILBERT, STIM_ONSET_HAT, STIM_ONSET_HT
+from .core import _edge_trim_window, ONLINE_VS_HILBERT, STIM_ONSET_ONLINE, STIM_ONSET_HILBERT
+from .report import TERMINAL_LABELS
 
 # <repo>/analysis_output, independent of the working directory
 PLOTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "analysis_output")
@@ -177,8 +178,9 @@ def write_condition_error_table(
         plv = stat[2] if stat is not None else np.nan
         return f"{plv:.2f}" if np.isfinite(plv) else "--"
 
-    def row_name(condition: int) -> str:
-        return f"{condition_labels.get(condition, str(condition))} ({condition} deg)"
+    def row_name(condition: int, tex: bool = False) -> str:
+        name = condition_labels.get(condition, str(condition))
+        return f"{name if tex else TERMINAL_LABELS.get(name, name)} ({condition} deg)"
 
     condition_order = [c for group in condition_groups for c in group]
     # Row index (into condition_order) right before which a rule is drawn --
@@ -191,7 +193,7 @@ def write_condition_error_table(
 
     # Console table: each error label spans two columns (Mean +/- SD, PLV),
     # label printed once over its Mean +/- SD subcolumn
-    header_row1 = ["", *(v for col in columns for v in (col, ""))]
+    header_row1 = ["", *(v for col in columns for v in (TERMINAL_LABELS.get(col, col), ""))]
     header_row2 = ["Condition", *(v for _ in columns for v in ("Mean +/- SD", "PLV"))]
     data_rows   = [[row_name(c), *(v for col in columns for v in (mean_sd_cell(c, col), plv_cell(c, col)))]
                    for c in condition_order]
@@ -218,7 +220,7 @@ def write_condition_error_table(
     for i, condition in enumerate(condition_order):
         if i in rule_before:
             body.append(r"\midrule")
-        tex_cells = [row_name(condition),
+        tex_cells = [row_name(condition, tex=True),
                      *(v for col in columns for v in (mean_sd_cell(condition, col, tex=True), plv_cell(condition, col)))]
         body.append(" & ".join(tex_cells) + r" \\")
     body += [r"\bottomrule", r"\end{tabular}"]
@@ -312,9 +314,9 @@ def plot_errors(errors: list[dict]) -> None:
 
 # (records key, y-axis label, filename stub) per plot_pooled_scatter() metric
 _SCATTER_METRICS = [
-    ("phase_vals",   ONLINE_VS_HILBERT + r" [$^\circ$]", "phaseerr"),
-    (STIM_ONSET_HAT, STIM_ONSET_HAT + r" [$^\circ$]",    "stimonset_hat"),
-    (STIM_ONSET_HT,  STIM_ONSET_HT + r" [$^\circ$]",     "stimonset_ht"),
+    ("phase_vals",       ONLINE_VS_HILBERT + r" [$^\circ$]",  "phaseerr"),
+    (STIM_ONSET_ONLINE,  STIM_ONSET_ONLINE + r" [$^\circ$]",  "stimonset_hat"),
+    (STIM_ONSET_HILBERT, STIM_ONSET_HILBERT + r" [$^\circ$]", "stimonset_ht"),
 ]
 
 
@@ -344,14 +346,15 @@ def plot_pooled_scatter(records: list[dict]) -> None:
         stats  = np.array(stats, dtype=float)
         mu, sd = stats[:, 0], stats[:, 1]
 
-        if values_key == STIM_ONSET_HAT and np.isfinite(mu).any():
+        if values_key == STIM_ONSET_ONLINE and np.isfinite(mu).any():
             worst = int(np.nanargmax(np.abs(mu)))
-            print(f"Largest |mean Stim onset ($\\hat\\theta$) error|: "
+            print(f"Largest |mean {TERMINAL_LABELS[STIM_ONSET_ONLINE]} error|: "
                   f"{records[worst].get('name', '?')} ({mu[worst]:.1f} deg)")
 
         ok = np.isfinite(mu) & np.isfinite(snr_db)
         if not ok.any():
-            print(f"plot_pooled_scatter: no finite points for {ylabel!r} vs SNR; skipping.")
+            print(f"plot_pooled_scatter: no finite points for "
+                  f"{TERMINAL_LABELS.get(values_key, values_key)!r} vs SNR; skipping.")
             continue
         fig, ax = plt.subplots(figsize=FIGSIZE)
         ax.errorbar(snr_db[ok], mu[ok], yerr=sd[ok], fmt="o", markersize=4,

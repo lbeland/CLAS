@@ -25,9 +25,6 @@ amplification at high frequencies, spectral leakage / edge effects), not to
 fitting inaccuracy.
 """
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import hilbert, butter, sosfiltfilt
@@ -41,10 +38,8 @@ mpl.rcParams.update({
     'pgf.rcfonts': False,
 })
 
-import extended_HT as ht
-from jade import jade_v3
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import PHASE_estimation.extended_HT as ht
+from PHASE_estimation.jade import jade_v3
 from analysis.plot import _circ_stats, _style_polar_axis, COMMON_BBOX
 
 rng = np.random.default_rng(0)

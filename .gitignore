@@ -12,6 +12,7 @@ venv/*
 **/build/*
 .vscode/
 __pycache__/
+*.egg-info/
 
 *.csv
 *.bin

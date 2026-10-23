@@ -74,6 +74,7 @@ graph before merging into `master`. Always merge, never rebase onto Falcon.
 ### Install requirements
 ```bash
 pip install -r requirements.txt
+pip install -e .                 # makes analysis/ and PHASE_estimation/ importable from anywhere
 sudo apt-get install libzmq3-dev
 sudo apt install libboost-dev    # for boost ringbuffer support
 sudo apt install libasound2-dev  # ALSA headers, needed to link StimControl's audio output

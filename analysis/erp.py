@@ -7,15 +7,11 @@ Run with:
 """
 
 import os
-import sys
 import glob
 import yaml
 import matplotlib.pyplot as plt
-from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from analysis.loader       import load_processor_signals, extract_ground_truth
 from analysis.edf_io       import write_raw_signals_edf, load_runtime

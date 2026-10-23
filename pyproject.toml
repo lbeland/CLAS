@@ -1,0 +1,16 @@
+# Makes the repo's Python packages importable from anywhere in the venv.
+# Install once (editable, so code changes apply immediately):
+#   pip install -e .
+# Dependencies stay in requirements.txt.
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clas"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["analysis", "analysis.*", "PHASE_estimation", "PHASE_estimation.*"]

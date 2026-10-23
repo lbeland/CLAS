@@ -25,7 +25,6 @@ doesn't dominate the pooled result. Produces:
 
 import argparse
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,8 +34,6 @@ import numpy as np
 import yaml
 from scipy.signal import welch
 from scipy.stats import ttest_ind, ttest_1samp
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from analysis.loader import find_session_run_dirs
 from analysis.plot import FIGSIZE, FIG_WIDTH, FIG_HEIGHT, save_pgf, save_pdf, CHANNEL_NAMES, EOG_CHANNEL_NAMES

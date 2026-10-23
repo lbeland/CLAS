@@ -2,18 +2,14 @@
 Signal analysis: Hilbert reference and error computation.
 """
 
-import sys
-from pathlib import Path
-
 import numpy as np
 from scipy.signal import butter, sosfiltfilt, hilbert, windows
 from tqdm import tqdm
 
+from PHASE_estimation.jade import jade_v3
+
 from .stimulus import StimulusConfig, compute_reference_stimulus, compute_stimulus_edge_errors, \
     compute_stimulus_duration_error, get_edges
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from PHASE_estimation.jade import jade_v3
 
 # LaTeX labels of the phase-error series from compute_errors(). They double as
 # plot titles/table headers and as the keys other modules look a series up by,

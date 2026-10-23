@@ -7,16 +7,12 @@ Main analysis entry point. Run with:
 import argparse
 import glob
 import os
-import sys
 import traceback
 import mne
 import yaml
 import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from analysis.loader       import load_processor_signals, analyse_latencies, extract_ground_truth, \
                                   compute_total_latency, find_session_run_dirs

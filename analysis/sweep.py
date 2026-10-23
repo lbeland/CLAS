@@ -8,7 +8,7 @@ Kept out of analysis/main.py -- which stays focused on the single-recording
 analysis pipeline -- but built on its general helpers (compute_recording_errors,
 find_result_dirs).
 
-Run from the repo root, either as a module or as a script:
+Run either as a module or as a script:
 
     python -m analysis.sweep
     python analysis/sweep.py
@@ -18,18 +18,11 @@ Run from the repo root, either as a module or as a script:
 import csv
 import glob
 import os
-import sys
 import traceback
-from pathlib import Path
 
 import numpy as np
 import yaml
-import matplotlib.pyplot as plt
 from scipy.stats import circmean, circstd
-
-# Allow `python analysis/sweep.py` (not just `python -m analysis.sweep`): put
-# the repo root on sys.path so `import analysis.*` resolves. Same hack as main.py.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from analysis.main import compute_recording_errors, find_result_dirs
 from analysis.plot import PLOTS_DIR

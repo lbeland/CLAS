@@ -39,8 +39,6 @@ FALCON_BIN    = REPO_ROOT / "build" / "release" / "falcon" / "falcon"
 FALCON_CONFIG = REPO_ROOT / ".falcon" / "config.yaml"
 RESULTS_DIR   = "results"
 
-sys.path.insert(0, str(REPO_ROOT))
-
 
 def terminate(proc: subprocess.Popen) -> None:
     """SIGTERM (then SIGKILL) the Falcon process group. Each run is started

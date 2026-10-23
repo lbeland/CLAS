@@ -16,18 +16,13 @@ numba).
 """
 
 import os
-import sys
 import contextlib
 
 import numpy as np
 import matplotlib.pyplot as plt
 
-# FIF lives in a sub-package next to this script; make it importable no matter
-# what the current working directory is.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-import FIF  # noqa: E402
-from jade import jade_v3  # noqa: E402
+from PHASE_estimation import FIF
+from PHASE_estimation.jade import jade_v3
 
 
 @contextlib.contextmanager

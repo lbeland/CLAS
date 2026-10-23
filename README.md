@@ -1,16 +1,16 @@
 # CLAS - Closed-Loop Auditory Stimulation
 
-This repository contains two related but distinct things:
-
-1. **CLAS core** — a closed-loop auditory stimulation system (CLAS) built on **Falcon** (https://github.com/falcon-neuro/falcon), a real-time processing-graph engine. This is the actual experiment/recording pipeline
-2. **Side analysis / research** — standalone explorations of signal-processing algorithms that CLAS uses or could use (alpha-frequency estimation, phase estimation, sliding-DFT, TurboLink hardware latency), kept alongside the core system but developed and run independently of it.
+A closed-loop auditory stimulation (CLAS) system built on **Falcon**
+(https://github.com/falcon-neuro/falcon), a real-time processing-graph engine. CLAS estimates the
+instantaneous phase of an ongoing EEG oscillation in real time and plays auditory stimuli locked
+to a target phase.
 
 ![CLAS system overview](CLAS_overview_white.png)
 ## Table of contents
 
 - [Repository structure](#repository-structure)
-  - [CLAS core (Falcon)](#clas-core-falcon)
-  - [Side analysis / research](#side-analysis--research)
+  - [Syncing with upstream Falcon](#syncing-with-upstream-falcon)
+  - [Side research and extras](#side-research-and-extras)
 - [Installation](#installation)
   - [Install requirements](#install-requirements)
   - [FFTW Installation](#fftw-installation)
@@ -30,8 +30,6 @@ This repository contains two related but distinct things:
 
 ## Repository structure
 
-### CLAS core (Falcon)
-
 CLAS is built on [**Falcon**](https://github.com/falcon-neuro/falcon), a soft real-time
 framework for closed-loop neural applications developed at Neuro-Electronics Research Flanders
 (NERF) and licensed under the GNU GPL v3; CLAS is distributed under the same license
@@ -43,16 +41,15 @@ upstream history; CLAS's own processors and data types live in the Falcon extens
 
 - [**`falcon/`**](falcon/) — Falcon engine source, merged from upstream (see [Syncing with upstream Falcon](#syncing-with-upstream-falcon)).
 - [**`extensions/clas/processors/`**](extensions/clas/processors/) — the CLAS Falcon extension's processors (e.g. [`PhaseEstimation`](extensions/clas/processors/PhaseEstimation/), [`FrequencyEstimation`](extensions/clas/processors/FrequencyEstimation/), [`StimControl`](extensions/clas/processors/StimControl/), [`UDPSource`](extensions/clas/processors/UDPSource/), [`MultiChannelFilter`](extensions/clas/processors/multichannelfilter/)); each has its own `doc.yaml` documenting its ports and parameters.
-- [**`resources/`**](resources/) — shared assets used by processors and graphs: [**`graphs/`**](resources/graphs/) holds the Falcon graph YAMLs that wire processors together into a pipeline, [**`filters/`**](resources/filters/) and [**`fft_wisdom/`**](resources/fft_wisdom/) hold precomputed filter coefficients and cached FFTW wisdom that processors load at startup, and [**`sounds/`**](resources/sounds/) holds the auditory stimuli (wav files) played during stimulation.
+- [**`resources/`**](resources/) — shared assets used by processors and graphs: [**`graphs/`**](resources/graphs/) holds the Falcon graph YAMLs that wire processors together into a pipeline, [**`filters/`**](resources/filters/) and [**`fft_wisdom/`**](resources/fft_wisdom/) hold precomputed filter coefficients and cached FFTW wisdom that processors load at startup, [**`sounds/`**](resources/sounds/) holds the auditory stimuli (wav files) played during stimulation, and [**`stim_protocol.csv`**](resources/stim_protocol.csv) is the example stimulation on/off schedule for `clas.py`.
 - [**`analysis/`**](analysis/) — the shared Python package that `clas.py` runs automatically after a recording finishes to score/plot the result; also runnable standalone. See [analysis/README.md](analysis/README.md).
 - [**`lib/`**](lib/) — vendored C++ dependencies used by Falcon/extensions.
+- [**`scripts/`**](scripts/) — build and maintenance helpers (e.g. [`sync_falcon.sh`](scripts/sync_falcon.sh), see below).
 - [**`clas.py`**](clas.py) — main entry point: drives Falcon end-to-end for a recording (see "Running a graph" below).
-- [**`sweep_clas.py`**](sweep_clas.py) — runs `clas.py` across a sweep of parameters/graphs.
-- [**`plot_processor_flowchart.py`**](plot_processor_flowchart.py) — renders a Falcon graph yaml as a flowchart.
-- [**`stim_protocol.csv`**](stim_protocol.csv) — example stimulation on/off schedule for `clas.py`.
+- [**`gen_filter_coeff.py`**](gen_filter_coeff.py) — filter-coefficient generation that `clas.py` runs before starting Falcon.
 - [**`results/`**](results/) — timestamped output directories from `clas.py` runs.
 
-#### Syncing with upstream Falcon
+### Syncing with upstream Falcon
 
 ```bash
 scripts/sync_falcon.sh            # merges falcon/develop into the current branch
@@ -62,19 +59,19 @@ scripts/sync_falcon.sh            # merges falcon/develop into the current branc
 anything else (usually CLAS patches in `falcon/`) is left for you to resolve. Rebuild and run a
 graph before merging into `master`. Always merge, never rebase onto Falcon.
 
-### Side analysis / research
+### Side research and extras
 
-- **`IAF_Estimation/`** — comparisons of algorithms for estimating individual alpha frequency, plus the `cecHT` calibrated end-corrected Hilbert transform reference implementation as a git submodule.
-- **`SlidingDFT/`** — a vendored sliding-DFT library with its own error-growth benchmarks, used to evaluate this technique as an alternative to the FFTW used in CLAS core. See [SlidingDFT/Readme.md](SlidingDFT/Readme.md).
-- **`PHASE_estimation/`** — exploration of phase-estimation approaches (JADE, extended Hilbert transform) package and evaluation for different kind of pre-filter.
-- **`TurbolinkMeas/`** — standalone tooling to measure TurboLink packet timing/jitter. See [TurbolinkMeas/meas.md](TurbolinkMeas/meas.md).
+These folders are not needed to run CLAS. Each has its own README:
+
+- [**`research/`**](research/README.md) — offline studies of frequency (IAF) and phase estimation, including an automated SNR / noise sweep of the CLAS graphs.
+- [**`z_extra/`**](z_extra/README.md) — helper scripts from developing CLAS (EEG simulator, FFTW wisdom precompute, graph flowcharts, TurboLink timing measurements, hardware test signals).
 
 ## Installation
 
 ### Install requirements
 ```bash
 pip install -r requirements.txt
-pip install -e .                 # makes analysis/ and PHASE_estimation/ importable from anywhere
+pip install -e .                 # makes analysis/ importable from anywhere
 sudo apt-get install libzmq3-dev
 sudo apt install libboost-dev    # for boost ringbuffer support
 sudo apt install libasound2-dev  # ALSA headers, needed to link StimControl's audio output
@@ -83,7 +80,7 @@ sudo apt install gcc-14 g++-14
 mkdir build
 
 cmake -B build/debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
-cmake --build build/debug -- -j$(nproc) 
+cmake --build build/debug -- -j$(nproc)
 
 # or for release:
 cmake -B build/release -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
@@ -184,8 +181,8 @@ pipeline. Top-level keys under `graph:`:
 To adapt an existing graph (e.g. for a new experiment), copy one under
 [`resources/graphs/`](resources/graphs/), change `options`/`connections` as needed, and point
 `clas.py --graph` at the new file. Use
-[`plot_processor_flowchart.py`](plot_processor_flowchart.py) (see below) to sanity-check the
-wiring visually.
+[`z_extra/plot_processor_flowchart.py`](z_extra/plot_processor_flowchart.py) (see below) to
+sanity-check the wiring visually.
 
 ## Execution
 
@@ -218,7 +215,7 @@ Requires:
 - the `falcon_clients` package (not on PyPI — clone and install it separately):
   ```bash
   git clone https://bitbucket.org/kloostermannerflab/falcon-client.git
-  pip install -e falcon-client
+  pip install falcon-client
   ```
 - `PyQt5`, which the GUI imports but which `falcon_clients` does not declare as a dependency:
   ```bash
@@ -265,7 +262,7 @@ See [analysis/README.md](analysis/README.md) for the CLI entry points and packag
 
 ### Generate Flowchart of graph
 ```bash
-python3 plot_processor_flowchart.py resources/graphs/SimulateCLAS.yaml
+python3 z_extra/plot_processor_flowchart.py resources/graphs/SimulateCLAS.yaml
 ```
 
 ## Troubleshooting
@@ -277,7 +274,7 @@ systemctl --user restart pipewire.service
 ```
 
 ### Connection of TurboLink via an USB Ethernet adapter
-- Symptom: samples arrive in bursts rather than with the nominal inter-sample interval (you can check this by executing the script [measurement.cpp](TurbolinkMeas/measurement.cpp) followed by [plotMeas.py](TurbolinkMeas/plotMeas.py) -> the PDV histogram shall show a single uniform distribution instead of having multiple maxima)
+- Symptom: samples arrive in bursts rather than with the nominal inter-sample interval (you can check this by executing the script [measurement.cpp](z_extra/TurbolinkMeas/measurement.cpp) followed by [plotMeas.py](z_extra/TurbolinkMeas/plotMeas.py) -> the PDV histogram shall show a single uniform distribution instead of having multiple maxima)
 - Cause: USB Ethernet adapters (interface names like `enx<mac>`) can have NIC interrupt coalescing (`rx-usecs`) set very high by default, so incoming packets are batched and delivered to the kernel/app in bursts instead of individually.
 - Check current setting (replace `<iface>` with your adapter, e.g. from `ip -brief link show`):
 ```bash

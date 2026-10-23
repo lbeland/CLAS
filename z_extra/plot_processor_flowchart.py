@@ -3,23 +3,15 @@
 Render a processor flowchart from a YAML graph definition.
 
 Usage:
-    python render_flowchart.py input.yaml -o flowchart.svg
-    python render_flowchart.py input.yaml -o flowchart.png
-    python render_flowchart.py input.yaml --format pdf
-
-Requirements:
-    pip install pyyaml graphviz
-
-Also requires Graphviz installed on the system:
-    Ubuntu/Debian: sudo apt install graphviz
-    macOS (brew):  brew install graphviz
+    python z_extra/plot_processor_flowchart.py input.yaml -o flowchart.svg
+    python z_extra/plot_processor_flowchart.py input.yaml -o flowchart.png
+    python z_extra/plot_processor_flowchart.py input.yaml --format pdf
 """
 
 from __future__ import annotations
 
 import argparse
 import re
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 

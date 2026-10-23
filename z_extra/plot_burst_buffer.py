@@ -1,14 +1,10 @@
 """
 One-off test: plot the precomputed burst buffer (waveform + spectrum).
 
-Reads the debug dump written once by StimControl::build_audio_buffers_()
-at results/burst_buffer_debug.txt (first line: "# fs_audio=<Hz> num_octaves=<n>",
-followed by one mono sample per line, normalized to peak amplitude 1).
+Reads the debug dump written by StimControl::build_audio_buffers_()
+at results/burst_buffer_debug.txt
+(if enabled in line 440: static bool burst_buffer_dumped = false;)
 
-Run from the repo root after the falcon graph has run StimControl at
-least once:
-
-    python extensions/clas/processors/StimControl/plot_burst_buffer.py
 """
 import sys
 from pathlib import Path

@@ -1,3 +1,15 @@
+"""
+Simulated EEG source for testing the CLAS pipeline without an amplifier.
+
+Streams a synthetic cosine (optionally amplitude- or phase-modulated) as UDP
+packets to 127.0.0.1:25000, the port UDPSource listens on. Each packet holds one
+sample: token, sample counter, trigger bits, 8 AUX and 32 EEG floats (same value
+on all channels). Signal and modulation parameters are set in EEG_simulate().
+
+On exit (Ctrl+C), the ground truth (amplitude, phase, instantaneous frequency)
+is saved to simulated_signal.npy for comparison with the pipeline output.
+"""
+
 import math
 import socket
 import struct
@@ -43,7 +55,7 @@ def EEG_simulate(n_samples=-1):
     # Signal parameters
     carrier_signal = {'amplitude': 3.0, 'frequency': 8}
 
-    sample_rate = 1000.0
+    sample_rate = 10000.0   # must match fs in the graph
     dt = 1.0 / sample_rate
     t = 0.0
 

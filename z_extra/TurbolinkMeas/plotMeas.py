@@ -13,7 +13,7 @@ buffered Packet Delay Variation, PDV): for every pdv_*.csv found, it
   1. plots PDV over time in its own figure, saved as .pdf and .pgf under
      <repo>/analysis_output,
   2. plots a combined PDV histogram across all sample rates, and
-  3. writes one combined LaTeX table (pdv_stats.tex) with one row per
+  3. writes one combined LaTeX table (timing_stats.tex) with one row per
      nominal sample rate: estimated true fs, PDV mean/std/max.
 
 Usage:
@@ -40,7 +40,8 @@ mpl.rcParams.update({
 })
 
 ROOT = sys.path[0]  # directory of this script
-PLOTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "analysis_output")
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+PLOTS_DIR = os.path.join(REPO_ROOT, "analysis_output")
 
 TEXTWIDTH = 6.30045
 ASPECT_RATIO = 9 / 16

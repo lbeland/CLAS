@@ -1,10 +1,11 @@
-// generate_fftw_wisdom.cpp
+// precompute_wisdom.cpp
 //
 // Pre-generates FFTW wisdom for all FFT sizes required by PhaseEstimation and
 // FrequencyEstimation, so that neither processor ever falls back to planning
 // (FFTW_PATIENT/FFTW_ESTIMATE) at runtime.
 //
-// PhaseEstimation: covers f0 values from 5.0 Hz to 16.0 Hz in 0.1 Hz steps.
+// PhaseEstimation: covers f0 values from 5.0 Hz to 18.0 Hz in 0.1 Hz steps,
+// the full f0 range PhaseEstimation accepts (it rounds f0 to 0.1 Hz).
 // The sizing logic mirrors PhaseEstimation exactly:
 //   window_size = static_cast<int>(2.0 * fs / f0)
 //   n_fft       = good_size_real(window_size)
@@ -22,8 +23,8 @@
 // Build (both processors use double-precision FFTW):
 //   g++ -O2 -o precompute_wisdom precompute_wisdom.cpp -lfftw3
 //
-// Usage:
-//   ./precompute_wisdom
+// Usage (from the repo root):
+//   ./z_extra/precompute_wisdom
 //   (wisdom file path, sample rate, and window_size_sec are hardcoded below
 //   to match TurboLinkCLAS/ERPCLAS/ReplayCLAS.yaml; update them if those
 //   graphs' fs/window_size_sec change)
@@ -36,15 +37,16 @@
 
 // ── USER CONFIGURATION ───────────────────────────────────────────────────────
 
-// Full path to the FFTW wisdom file (loaded first, then updated in-place).
+// FFTW wisdom file, relative to the repo root (loaded first, then updated in-place).
 static const char* WISDOM_PATH = "resources/fft_wisdom/fftw_wisdom.txt";
 
-// Sample rate used by PhaseEstimation (Hz).
+// Sample rate used by PhaseEstimation and FrequencyEstimation (Hz).
 static const double FS = 10000.0;
 
-// f0 sweep parameters (Hz), for PhaseEstimation.
+// f0 sweep parameters (Hz), for PhaseEstimation. Matches the f0 range
+// PhaseEstimation accepts (5-18 Hz) and its 0.1 Hz rounding of f0.
 static const double F0_MIN  =  5.0;
-static const double F0_MAX  = 16.0;
+static const double F0_MAX  = 18.0;
 static const double F0_STEP =  0.1;
 
 // window_size_sec used by FrequencyEstimation (see TurboLinkCLAS/ERPCLAS/ReplayCLAS.yaml).

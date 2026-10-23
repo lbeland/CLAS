@@ -1,3 +1,15 @@
+"""
+Early draft: live plot of CLAS signals over ZeroMQ.
+
+Subscribes to Falcon binary packets from a ZMQSerializer (default
+tcp://localhost:7777) and plots one channel of streams 0 and 1 (raw signal and
+estimated phase). Optionally compares the estimated phase with the true phase
+published by simulate_EEG.py (tcp://localhost:5555), showing the mean phase
+error in the status bar.
+
+Not maintained and may no longer work: no current graph includes a ZMQSerializer,
+and the phase publisher in simulate_EEG.py is commented out.
+"""
 
 import argparse
 import struct

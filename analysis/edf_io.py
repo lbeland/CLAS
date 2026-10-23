@@ -63,7 +63,11 @@ def _write_edf(filepath: str, fs: float, start_time_us: float, channels: list[tu
     ).replace(tzinfo=datetime.timezone.utc)
     raw_mne.set_meas_date(start_dt)
     if annotations is not None:
-        raw_mne.set_annotations(annotations)
+        # Drop orig_time so onsets stay relative to the first sample, not shifted by start_dt's sub-second part.
+        # Drop BAD_ACQ_SKIP (read back from a previous export's padding); export re-adds it.
+        keep = annotations.description != "BAD_ACQ_SKIP"
+        raw_mne.set_annotations(mne.Annotations(annotations.onset[keep], annotations.duration[keep],
+                                                annotations.description[keep]))
     # EDF needs equal-length data records, so mne pads the last one and warns
     # about it; that is expected, so silence just that warning
     with warnings.catch_warnings():

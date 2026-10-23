@@ -21,7 +21,7 @@ to a target phase.
   - [Running a graph](#running-a-graph)
     - [Using clas.py (recommended for experiments)](#using-claspy-recommended-for-experiments)
     - [Using the GUI directly (simple_client)](#using-the-gui-directly-simple_client)
-  - [Simulate a UDP sender (z_extra/simulate_EEG.py)](#simulate-a-udp-sender-z_extrasimulate_eegpy)
+  - [Simulate a UDP sender (supplementary_scripts/simulate_EEG.py)](#simulate-a-udp-sender-supplementary_scriptssimulate_eegpy)
   - [Offline analysis (analysis/)](#offline-analysis-analysis)
   - [Generate Flowchart of graph](#generate-flowchart-of-graph)
 - [Troubleshooting](#troubleshooting)
@@ -64,7 +64,7 @@ graph before merging into `master`. Always merge, never rebase onto Falcon.
 These folders are not needed to run CLAS. Each has its own README:
 
 - [**`research/`**](research/README.md) — offline studies of frequency (IAF) and phase estimation, including an automated SNR / noise sweep of the CLAS graphs.
-- [**`z_extra/`**](z_extra/README.md) — helper scripts from developing CLAS (EEG simulator, FFTW wisdom precompute, graph flowcharts, TurboLink timing measurements, hardware test signals).
+- [**`supplementary_scripts/`**](supplementary_scripts/README.md) — helper scripts from developing CLAS (EEG simulator, FFTW wisdom precompute, graph flowcharts, TurboLink timing measurements, hardware test signals).
 
 ## Installation
 
@@ -120,8 +120,8 @@ mode (logged as a warning) when the FFT size hasn't been planned before, writing
 to [`fftw_wisdom.txt`](resources/fft_wisdom/fftw_wisdom.txt) on shutdown so the next run with the
 same size starts up fast. Wisdom for the sizes both processors use
 can also be precomputed ahead of time with
-[`z_extra/precompute_wisdom.cpp`](z_extra/precompute_wisdom.cpp) (build with `g++ -O2 -o
-z_extra/precompute_wisdom z_extra/precompute_wisdom.cpp -lfftw3`, then run from the repo root).
+[`supplementary_scripts/precompute_wisdom.cpp`](supplementary_scripts/precompute_wisdom.cpp) (build with `g++ -O2 -o
+supplementary_scripts/precompute_wisdom supplementary_scripts/precompute_wisdom.cpp -lfftw3`, then run from the repo root).
 
 ### Isolate CPU cores
 
@@ -181,7 +181,7 @@ pipeline. Top-level keys under `graph:`:
 To adapt an existing graph (e.g. for a new experiment), copy one under
 [`resources/graphs/`](resources/graphs/), change `options`/`connections` as needed, and point
 `clas.py --graph` at the new file. Use
-[`z_extra/plot_processor_flowchart.py`](z_extra/plot_processor_flowchart.py) (see below) to
+[`supplementary_scripts/plot_processor_flowchart.py`](supplementary_scripts/plot_processor_flowchart.py) (see below) to
 sanity-check the wiring visually.
 
 ## Execution
@@ -235,8 +235,8 @@ Usage:
    Remote Graph** to load a graph, then use the Start/Stop/
    Quit controls.
 
-### Simulate a UDP sender (z_extra/simulate_EEG.py)
-[`z_extra/simulate_EEG.py`](z_extra/simulate_EEG.py) sends synthetic EEG packets over UDP to a
+### Simulate a UDP sender (supplementary_scripts/simulate_EEG.py)
+[`supplementary_scripts/simulate_EEG.py`](supplementary_scripts/simulate_EEG.py) sends synthetic EEG packets over UDP to a
 running `UDPSource` processor node (port 25000) and, on exit (Ctrl-C), writes the exact signal
 it sent to `simulated_signal.npy` in the current directory.
 [`analysis/main.py`](analysis/main.py) uses this file as ground truth when scoring a recording
@@ -245,7 +245,7 @@ against the true phase/frequency.
 Start it only *after* Falcon is already running in a second terminal/process:
 ```bash
 python3 clas.py --graph TurboLinkCLAS.yaml               # terminal 1
-python3 z_extra/simulate_EEG.py                          # terminal 2, once Falcon is ready
+python3 supplementary_scripts/simulate_EEG.py                          # terminal 2, once Falcon is ready
 ```
 `UDPSource` discards the first `calib_packets` packets it receives for start-time calibration
 before publishing anything (see the `calib_packets` option in the graph yaml). If the client is
@@ -262,7 +262,7 @@ See [analysis/README.md](analysis/README.md) for the CLI entry points and packag
 
 ### Generate Flowchart of graph
 ```bash
-python3 z_extra/plot_processor_flowchart.py resources/graphs/SimulateCLAS.yaml
+python3 supplementary_scripts/plot_processor_flowchart.py resources/graphs/SimulateCLAS.yaml
 ```
 
 ## Troubleshooting
@@ -274,7 +274,7 @@ systemctl --user restart pipewire.service
 ```
 
 ### Connection of TurboLink via an USB Ethernet adapter
-- Symptom: samples arrive in bursts rather than with the nominal inter-sample interval (you can check this by executing the script [measurement.cpp](z_extra/TurbolinkMeas/measurement.cpp) followed by [plotMeas.py](z_extra/TurbolinkMeas/plotMeas.py) -> the PDV histogram shall show a single uniform distribution instead of having multiple maxima)
+- Symptom: samples arrive in bursts rather than with the nominal inter-sample interval (you can check this by executing the script [measurement.cpp](supplementary_scripts/TurbolinkMeas/measurement.cpp) followed by [plotMeas.py](supplementary_scripts/TurbolinkMeas/plotMeas.py) -> the PDV histogram shall show a single uniform distribution instead of having multiple maxima)
 - Cause: USB Ethernet adapters (interface names like `enx<mac>`) can have NIC interrupt coalescing (`rx-usecs`) set very high by default, so incoming packets are batched and delivered to the kernel/app in bursts instead of individually.
 - Check current setting (replace `<iface>` with your adapter, e.g. from `ip -brief link show`):
 ```bash

@@ -1,4 +1,4 @@
-# z_extra — helper scripts
+# supplementary_scripts — helper scripts
 
 Small tools written while developing and testing CLAS. None of them are part of a normal CLAS
 run. Run everything from the repo root.
@@ -18,10 +18,10 @@ run. Run everything from the repo root.
 | [`precompute_wisdom.cpp`](precompute_wisdom.cpp) | precomputes FFTW wisdom for all FFT sizes used by `PhaseEstimation` (f0 5–18 Hz) and `FrequencyEstimation`, so they never plan at runtime. Settings are hardcoded to match the graphs (fs = 10 kHz, `window_size_sec` = 10) |
 
 ```bash
-python3 z_extra/plot_processor_flowchart.py resources/graphs/TurboLinkCLAS.yaml
+python3 supplementary_scripts/plot_processor_flowchart.py resources/graphs/TurboLinkCLAS.yaml
 
-g++ -O2 -o z_extra/precompute_wisdom z_extra/precompute_wisdom.cpp -lfftw3
-./z_extra/precompute_wisdom      # updates resources/fft_wisdom/fftw_wisdom.txt
+g++ -O2 -o supplementary_scripts/precompute_wisdom supplementary_scripts/precompute_wisdom.cpp -lfftw3
+./supplementary_scripts/precompute_wisdom      # updates resources/fft_wisdom/fftw_wisdom.txt
 ```
 
 ## Hardware tests
@@ -34,8 +34,8 @@ g++ -O2 -o z_extra/precompute_wisdom z_extra/precompute_wisdom.cpp -lfftw3
 | [`plot_burst_buffer.py`](plot_burst_buffer.py) | plots waveform and spectrum of StimControl's precomputed noise burst. Needs the debug dump `results/burst_buffer_debug.txt`, enabled in `StimControl.cpp` by setting `burst_buffer_dumped = false` |
 
 ```bash
-python3 z_extra/generate_arb_NGU411.py 10.5 -a 0.01 -o 10mV_10.5Hz.csv   # frequency (Hz), amplitude (V), output
+python3 supplementary_scripts/generate_arb_NGU411.py 10.5 -a 0.01 -o 10mV_10.5Hz.csv   # frequency (Hz), amplitude (V), output
 
-g++ -O2 -I. -o audio_gen z_extra/audio_gen.cpp -lasound -lpthread
+g++ -O2 -I. -o audio_gen supplementary_scripts/audio_gen.cpp -lasound -lpthread
 ./audio_gen
 ```

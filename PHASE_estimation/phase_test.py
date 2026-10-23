@@ -11,13 +11,10 @@ random phase, then `irfft`) and `tone` is a single sinusoid at `tone_freq`
 with a random start phase. The ground-truth instantaneous phase is just the
 tone's own analytic phase, known exactly in closed form.
 
-Four pipelines are compared (all zero-phase / offline, for a fair comparison
-with FFT-whitening, which is inherently zero-phase):
+Two pipelines are compared:
 
   1. bandpass          : hilbert(bandpass(x))
   2. whiten+bandpass    : hilbert(bandpass(whiten(x)))
-  3. extendedHT         : phase_reconst(bandpass(x))              (see extended_HT.py)
-  4. bandpass+JADE      : JADE(bandpass(x))                       (see jade.py)
 
 Whitening uses the *exact* known aperiodic (1/f) parameters, so any phase
 error it introduces is attributable to the whitening operation itself (noise
@@ -31,16 +28,14 @@ from scipy.signal import hilbert, butter, sosfiltfilt
 from scipy.signal.windows import tukey
 import matplotlib as mpl
 
+from analysis.plot import _circ_stats, _style_polar_axis, COMMON_BBOX
+
 mpl.rcParams.update({
     "pgf.texsystem": "pdflatex",
     'font.family': 'serif',
     'text.usetex': True,
     'pgf.rcfonts': False,
 })
-
-import PHASE_estimation.extended_HT as ht
-from PHASE_estimation.jade import jade_v3
-from analysis.plot import _circ_stats, _style_polar_axis, COMMON_BBOX
 
 rng = np.random.default_rng(0)
 
@@ -49,14 +44,14 @@ rng = np.random.default_rng(0)
 # ---------------------------------------------------------------------------
 config = {
     "fs": 10000,
-    "signal_length_sec": 10.0,
+    "signal_length_sec": 30.0,
 
     # Pink-noise background: PSD(f) = 10**offset * f**-exponent
     "aperiodic_params": [1.0, 2.0],   # [offset, exponent]
 
     # Single-tone oscillation
     "tone_freq": 11.0,   # Hz
-    "tone_amp": 1.0,     # signal amplitude (not PSD)
+    "tone_amp": 3.0,     # signal amplitude (not PSD)
 
     # Processing
     "band": (6.0, 15.0),                # bandpass range
@@ -177,62 +172,6 @@ for name, sig in pipelines.items():
         "mae_deg": np.degrees(np.mean(np.abs(err[valid]))),
         "max_abs_deg": np.degrees(np.max(np.abs(err[valid]))),
     }
-# # phase_reconst assumes the input wraps around smoothly (it takes a single
-# # whole-signal FFT internally); sig_bp's raw start/end values don't match
-# # (~0.5x the signal's own std), so taper the edges toward zero first. Keep
-# # the tapered region inside edge_margin_sec, which is already excluded from
-# # the error stats, so it doesn't affect the scored samples.
-# taper_alpha = min(1.0, 2 * config["edge_margin_sec"] / config["signal_length_sec"])
-# sig_bp_tapered = sig_bp * tukey(len(sig_bp), alpha=taper_alpha)
-# phase_extHT_cut, _, extHT_initindx = ht.phase_reconst(sig_bp_tapered.reshape(1, -1), 1/fs)
-# phase_extHT = np.full(n, np.nan)
-# phase_extHT[extHT_initindx:extHT_initindx + phase_extHT_cut.shape[1]] = phase_extHT_cut[0]
-# err = circular_error(phase_extHT, true_phase)
-# mu, sd, _, _ = _circ_stats(circular_error(phase_extHT, true_phase)[valid])
-# results["3. extendedHT"] = {
-#     "phase": phase_extHT,
-#     "error": err,
-#     "circ_mean_deg": np.degrees(mu),
-#     "circ_std_deg": np.degrees(sd),
-#     "mae_deg": np.degrees(np.mean(np.abs(err[valid]))),
-#     "max_abs_deg": np.degrees(np.max(np.abs(err[valid]))),
-# }
-
-# # JADE (DTW-based phase/frequency estimation, see jade.py) applied directly
-# # to the bandpassed signal. JADE only produces phase samples from its first
-# # to its last detected zero crossing (near the very start/end of sig_bp), so
-# # fill the rest with NaN the same way phase_extHT does above.
-# #
-# # `phasevals` is a continuous phase in *cycles*, anchored to JADE's own
-# # zero-crossing convention: x(t) ~ sign * amplitude(t) * sin(2*pi*phasevals),
-# # phase 0 at a zero crossing, where `sign` (+-1, constant) depends on whether
-# # the very first detected zero crossing is rising or falling. `true_phase`
-# # (and the Hilbert-based pipelines) instead use the analytic-signal
-# # convention x(t) ~ amplitude(t) * cos(Phi(t)), phase 0 at a peak. Since
-# # sin(a) = cos(a - pi/2), converting with plain 2*pi*phasevals leaves a
-# # constant +-90 deg quadrature offset relative to the other pipelines.
-# # Convert properly (Phi = 2*pi*phasevals - sign*pi/2), determining `sign`
-# # straight from JADE's own output (correlate its zero-crossing-convention
-# # reconstruction against the actual bandpassed signal) rather than assuming
-# # a fixed sign, since it flips depending on the data.
-# jade_IFvals, jade_phasevals, jade_zc, jade_amplitudegram = jade_v3(
-#     sig_bp, t, 1 / fs, smooth=0, normalize=0)
-# jade_start = int(jade_zc[0]) - 1
-# jade_recon = jade_amplitudegram * np.sin(2 * np.pi * jade_phasevals)
-# jade_sign = 1.0 if np.dot(jade_recon, sig_bp[jade_start:jade_start + jade_recon.size]) >= 0 else -1.0
-# phase_jade = np.full(n, np.nan)
-# phase_jade[jade_start:jade_start + jade_phasevals.size] = (
-#     2 * np.pi * jade_phasevals - jade_sign * np.pi / 2)
-# err = circular_error(phase_jade, true_phase)
-# mu, sd, _, _ = _circ_stats(err[valid])
-# results["4. bandpass+JADE"] = {
-#     "phase": phase_jade,
-#     "error": err,
-#     "circ_mean_deg": np.degrees(mu),
-#     "circ_std_deg": np.degrees(sd),
-#     "mae_deg": np.degrees(np.mean(np.abs(err[valid]))),
-#     "max_abs_deg": np.degrees(np.max(np.abs(err[valid]))),
-# }
 
 print(f"\n{'Pipeline':<22} {'circ. mean (deg)':>18} {'circ. std (deg)':>18} {'MAE (deg)':>12} {'max |err| (deg)':>18}")
 print("-" * 90)
@@ -277,7 +216,7 @@ ax.semilogy(freqs_nz[mask_nz], ap_only[mask_nz], "k--", label=r"aperiodic model 
 ax.semilogy(freqs_rfft[mask], psd_white[mask], label="whitened PSD", alpha=0.7)
 ax.semilogy(freqs_rfft[mask], psd_bp[mask], label="bandpass PSD", alpha=0.7)
 ax.semilogy(freqs_rfft[mask], psd_white_bp[mask], label="whitened+bandpass PSD", alpha=0.7)
-ax.axvline(center_freq, color="g", alpha=0.4, label=f"f0={center_freq} Hz")
+ax.axvline(center_freq, color="black", alpha=0.4, label=f"f0={center_freq} Hz")
 ax.set_xlabel("Frequency (Hz)")
 ax.set_ylabel("PSD")
 ax.legend(fontsize=8)

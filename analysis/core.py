@@ -4,9 +4,6 @@ Signal analysis: Hilbert reference and error computation.
 
 import numpy as np
 from scipy.signal import butter, sosfiltfilt, hilbert, windows
-from tqdm import tqdm
-
-from PHASE_estimation.jade import jade_v3
 
 from .stimulus import StimulusConfig, compute_reference_stimulus, compute_stimulus_edge_errors, \
     compute_stimulus_duration_error, get_edges
@@ -98,93 +95,6 @@ def compute_hilbert_reference(
     filtered = sosfiltfilt(sos, raw)
 
     return filtered, np.angle(hilbert(filtered)), X_white
-
-
-def _fif_isolate_component(
-    raw: np.ndarray, fs: float, target_hz: float,
-    alpha: int = 90, ext_points: int = 30,
-) -> np.ndarray | None:
-    """Decompose `raw` with Fast Iterative Filtering and return the IMC whose
-    mean frequency is closest to `target_hz`.
-
-    Adaptive alternative to the linear bandpass used elsewhere for JADE
-    conditioning: FIF splits the signal into intrinsic mode components that
-    are mono-component by construction, rather than merely band-limited.
-
-    Returns:
-        The matching IMC, or None if FIF is unavailable or fails (caller
-        falls back to the bandpassed signal).
-    """
-    try:
-        from PHASE_estimation.FIF import FIF as FIFClass
-    except Exception as exc:  # numba / package missing
-        print(f"FIF unavailable ({exc}); JADE will use the bandpassed signal.")
-        return None
-
-    try:
-        fif = FIFClass(alpha=alpha, ExtPoints=ext_points)
-        fif.run(np.asarray(raw, dtype=float))
-        imc = fif.data["IMC"]
-        imc_freqs, _ = fif.get_freq_amplitudes(dt=1 / fs, as_output=True)
-    except Exception as exc:
-        print(f"FIF decomposition failed ({exc}); JADE will use the bandpassed signal.")
-        return None
-
-    if imc is None or imc.shape[0] < 2:
-        return None
-
-    # Ignore the trend (last row) when matching to the target frequency.
-    idx = int(np.argmin(np.abs(imc_freqs[:-1] - target_hz)))
-    print(f"FIF: {imc.shape[0]} IMCs at {np.array2string(imc_freqs, precision=2)} Hz; "
-          f"JADE on IMC #{idx} (mean {imc_freqs[idx]:.2f} Hz, target {target_hz:.2f} Hz)")
-    return imc[idx]
-
-
-def compute_jade_errors(
-    filtered: np.ndarray, time_us: np.ndarray, start_ts: float, fs: float,
-    true_phase: np.ndarray, true_inst_freq: np.ndarray,
-    raw: np.ndarray | None = None, f0: float | None = None, use_fif: bool = True,
-) -> list[dict]:
-    """JADE-based phase/IF estimate (see PHASE_estimation/jade.py) and its
-    error against ground truth, in the same format as compute_errors().
-
-    JADE's zero-crossing detector has no noise rejection, so it always runs
-    on a conditioned, mono-component signal rather than a wideband one:
-    Fast Iterative Filtering picks the IMC nearest the target frequency when
-    `use_fif` and `raw` are given, else `filtered` is used directly (must
-    already be bandpass-filtered, e.g. compute_hilbert_reference's output).
-    """
-    jade_input = None
-    if use_fif and raw is not None:
-        target_hz = (
-            float(f0) if (f0 is not None and np.isfinite(f0))
-            else float(np.nanmean(true_inst_freq))
-        )
-        jade_input = _fif_isolate_component(raw, fs, target_hz)
-    if jade_input is None:
-        jade_input = filtered
-
-    t = np.arange(len(jade_input)) / fs
-    IF, phase, zc, amp = jade_v3(jade_input, t, 1 / fs, smooth=0, normalize=0)
-
-    # Convert JADE's zero-crossing-referenced phase to true_phase's peak-referenced
-    # convention, resolving the sign from JADE's own reconstruction
-    start = int(zc[0]) - 1
-    recon = amp * np.sin(2 * np.pi * phase)
-    sign  = 1.0 if np.dot(recon, jade_input[start:start + recon.size]) >= 0 else -1.0
-    est_phase = 2 * np.pi * phase - sign * np.pi / 2
-
-    n   = len(est_phase)
-    t_s = (time_us[start:start + n] - start_ts) / 1e6
-    # Sign convention: estimate - reference (matches compute_errors()).
-    phase_err = np.angle(np.exp(1j * (est_phase - true_phase[start:start + n])), deg=True)
-    if_err    = IF[:n - 1] - true_inst_freq[start:start + n - 1]
-
-    return [
-        {"label": "JADE phase error", "time_s": t_s, "values": phase_err, "unit": "degrees"},
-        {"label": "JADE IF error", "time_s": t_s[:-1], "values": if_err, "unit": "Hz"},
-    ]
-
 
 def compute_errors(
     samples: dict,

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from analysis.loader       import load_processor_signals, analyse_latencies, extract_ground_truth, \
                                   compute_total_latency, find_session_run_dirs
 from analysis.f0          import estimate_f0, estimate_f0_with_phase, estimate_f0_modal
-from analysis.core         import compute_hilbert_reference, compute_errors, compute_jade_errors, \
+from analysis.core         import compute_hilbert_reference, compute_errors, \
                                   _edge_trim_window, ONLINE_VS_GT, ONLINE_VS_HILBERT, \
                                   HILBERT_VS_GT, STIM_ONSET_GT, STIM_OFFSET_GT, \
                                   STIM_ONSET_HILBERT, STIM_OFFSET_HILBERT, \
@@ -167,12 +167,6 @@ def load_and_analyse(f0: float, results_dir: str, f0_is_truth: bool = False,
     start_ts = ground_truth["time"][0]
     errors, stim_ref, stim_counts = compute_errors(samples, ground_truth, hilbert_phase, start_ts, fs,
                                                    graph_config)
-
-    # # SimulatedSource ground truth (true_inst_freq known) + short enough for JADE's DTW cost to be feasible
-    # if ground_truth["true_inst_freq"] is not None and len(raw) / fs <= 20:
-    #     errors += compute_jade_errors(filtered, ground_truth["time"], start_ts, fs,
-    #                                    ground_truth["true_phase"], ground_truth["true_inst_freq"],
-    #                                    raw=raw, f0=f0)
 
     return RecordingAnalysis(
         graph_file=graph_file, graph_config=graph_config, fs=fs,

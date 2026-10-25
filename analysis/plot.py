@@ -1,18 +1,19 @@
 """
-Plotting and EDF export.
+Figures and LaTeX tables.
 """
 
-import csv
-import datetime
-import glob
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import circmean, circstd, linregress
-from scipy.signal import spectrogram, butter, sosfiltfilt, welch, periodogram, windows
-import mne
+from scipy.stats import linregress
+from scipy.signal import windows
 import matplotlib as mpl
 from matplotlib.ticker import MaxNLocator
+
+from .clas_file_reader import CHANNEL_NAMES
+from .estimation_errors import _edge_trim_window, _circ_stats, ONLINE_VS_HILBERT, STIM_ONSET_ONLINE, \
+    STIM_ONSET_HILBERT
+from .report import TERMINAL_LABELS
 
 # Saving to a ".pgf" filename invokes the pgf backend automatically, so the
 # default (interactive) backend stays active and plt.show() keeps working.
@@ -23,9 +24,6 @@ mpl.rcParams.update({
     'pgf.rcfonts': False,
 })
 
-from .stimulus import get_edges
-from .core import _edge_trim_window, ONLINE_VS_HILBERT, STIM_ONSET_ONLINE, STIM_ONSET_HILBERT
-from .report import TERMINAL_LABELS
 
 # <repo>/analysis_output, independent of the working directory
 PLOTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "analysis_output")
@@ -56,29 +54,6 @@ COMMON_BBOX = dict(
     alpha=0.85,
 )
 
-CHANNEL_NAMES = {
-    1: "Fp1",
-    2: "Fpz",
-    3: "Fz",
-    4: "F3",
-    5: "F7",
-    27: "F4",
-    29: "Fp2",
-    28: "F8",
-    9: "C3",
-    25: "C4",
-    6: "E1",
-    30: "E2",
-    10: "Cz",
-    26: "FCz",
-    12: "M1",
-    23: "M2",
-}
-
-# E1/E2 are EOG (eye) channels, not scalp positions -- excluded from CSD/
-# surface-Laplacian computations even though they're in CHANNEL_NAMES.
-EOG_CHANNEL_NAMES = ("E1", "E2")
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -100,17 +75,6 @@ def _style_polar_axis(ax, r_max, radial_ticks):
     r0 = r_max * 1.15
     ax.text(np.deg2rad(45),  r0, r"$+45^\circ$", ha="center", va="center")
     ax.text(np.deg2rad(-45), r0, r"$-45^\circ$", ha="center", va="center")
-
-
-def _circ_stats(phi_rad):
-    phi = np.asarray(phi_rad, float)
-    if phi.size == 0:
-        return np.nan, np.nan, np.nan, np.nan
-    mu  = float(circmean(phi, high=np.pi, low=-np.pi))
-    sd  = float(circstd(phi,  high=np.pi, low=-np.pi))
-    plv = float(np.abs(np.mean(np.exp(1j * phi))))
-    pli = float(np.abs(np.mean(np.sign(np.sin(phi)))))
-    return mu, sd, plv, pli
 
 
 def _write_error_table(rows: "list[tuple[str, float, float, float]]", name: str = "error_distributions",
@@ -241,7 +205,7 @@ def plot_errors(errors: list[dict]) -> None:
     with the circular mean +/- SD annotated.
 
     Series derived from hilbert_phase/f0_continuous already exclude their
-    edge-transient samples (NaN-masked in analysis.main.load_and_analyse), so
+    edge-transient samples (NaN-masked in offline_estimation.estimate_offline()), so
     plain NaN-dropping below is enough for both single-recording and pooled
     (analyse_pooled_errors()) `errors` lists.
     """
@@ -383,7 +347,7 @@ def plot_pooled_scatter(records: list[dict]) -> None:
 # Stackable time-domain panels
 # ---------------------------------------------------------------------------
 # Each _panel_* draws one view onto a supplied Axes from a RecordingAnalysis
-# (analysis/main.py), sharing a "seconds since start_ts" x-axis so any subset
+# (analysis/pipeline.py), sharing a "seconds since start_ts" x-axis so any subset
 # can be stacked by plot_stack(). Panel names:
 #   "f0"          - f0 over time: true / offline-Hilbert / MODAL / raw / smoothed
 #   "phase"       - offline Hilbert / online / true phase estimates
@@ -393,32 +357,26 @@ def plot_pooled_scatter(records: list[dict]) -> None:
 
 def _panel_f0(ax, a, start_ts: float, time_range: tuple = None) -> None:
     """f0 over time: true, offline-Hilbert, MODAL, raw peak estimate, smoothed estimate."""
-    gt, samples = a.ground_truth, a.samples
-    time_s      = (gt["time"] - start_ts) / 1e6
+    gt, samples = a.recording.ground_truth, a.recording.samples
+    time_s      = (a.recording.time - start_ts) / 1e6
 
     if gt.get("true_inst_freq") is not None:
         y = gt["true_inst_freq"]
         m = min(len(time_s), len(y))
         ax.plot(time_s[:m], y[:m], linewidth=1.5, alpha=0.8, label=r"$f_0$", rasterized=True)
 
-    if a.f0_continuous is not None:
-        y = a.f0_continuous
+    if a.offline.f0_continuous is not None:
+        y = a.offline.f0_continuous
         m = min(len(time_s), len(y))
         ax.plot(time_s[:m], y[:m], linewidth=1.2, alpha=0.7,
                 label=r"$\hat f_0$ from $\theta_{\mathrm{HT}}$", rasterized=True)
-
-    if a.f0_modal is not None:
-        y = a.f0_modal
-        m = min(len(time_s), len(y))
-        ax.plot(time_s[:m], y[:m], linewidth=1.2, alpha=0.7, linestyle="--",
-                label=r"$\hat f_0$ MODAL", rasterized=True)
 
     if samples.get("FrequencyEstimation_raw") is not None:
         x_raw = (samples["FrequencyEstimation_raw"]["x"] - start_ts) / 1e6
         ax.plot(x_raw, samples["FrequencyEstimation_raw"]["y"], "o", markersize=1.5,
                 color="tab:red", alpha=0.5, label=r"$\tilde f_0$", rasterized=True)
 
-    if samples.get("FrequencyEstimation") is not None:
+    if "FrequencyEstimation" in a.graph.processors:
         x_est = (samples["FrequencyEstimation"]["x"] - start_ts) / 1e6
         ax.plot(x_est, samples["FrequencyEstimation"]["y"], linewidth=1.3,
                 label=r"$\hat f_0$", rasterized=True)
@@ -435,7 +393,7 @@ def _panel_phase_error(ax, a, start_ts: float, time_range: tuple = None) -> None
     """Angular (degree) error time series: phase errors and stimulus-edge errors.
     The dashed markers come from the shared _edge_trim_window() and mark where
     hilbert_phase/f0_continuous become NaN at their own edges (see
-    analysis.main.load_and_analyse) -- i.e. where Hilbert-derived series in
+    offline_estimation.estimate_offline()) -- i.e. where Hilbert-derived series in
     this panel start/stop being defined, not a trim applied to every series."""
     if not any(err["unit"] == "degrees" for err in a.errors):
         return
@@ -460,15 +418,15 @@ def _panel_phase_error(ax, a, start_ts: float, time_range: tuple = None) -> None
 
 def _panel_signals(ax, a, start_ts: float, time_range: tuple = None) -> None:
     """Raw & online-filtered EEG with target-stim / trigger / stimulus shading."""
-    gt, samples = a.ground_truth, a.samples
-    time_s = (gt["time"] - start_ts) / 1e6
-    n      = len(time_s)
+    samples = a.recording.samples
+    time_s  = (a.recording.time - start_ts) / 1e6
+    n       = len(time_s)
 
     def _pick(label):
         d = samples.get(label)
         return d["y"] if d else None
 
-    raw_eeg     = gt["raw"] - np.mean(gt["raw"])
+    raw_eeg     = a.recording.raw - np.mean(a.recording.raw)
     filt_online = _pick("ecHTFilter")
     stimulus    = _pick("StimControl")
     trigger     = _pick("UDPSource_TRIGGER")
@@ -493,10 +451,10 @@ def _panel_signals(ax, a, start_ts: float, time_range: tuple = None) -> None:
 
 def _panel_phase(ax, a, start_ts: float, time_range: tuple = None) -> None:
     """Offline Hilbert / online / true phase estimates."""
-    gt, samples   = a.ground_truth, a.samples
-    time_s        = (gt["time"] - start_ts) / 1e6
+    gt, samples   = a.recording.ground_truth, a.recording.samples
+    time_s        = (a.recording.time - start_ts) / 1e6
     n             = len(time_s)
-    hilbert_phase = a.hilbert_phase
+    hilbert_phase = a.offline.hilbert_phase
     online_phase  = samples.get("PhaseEstimation_phase")
     online_phase  = online_phase["y"] if online_phase else None
     true_phase    = gt.get("true_phase")
@@ -532,10 +490,10 @@ def plot_stack(analysis, panels: list[str], *, start_ts: float = None,
     sharing a common time axis.
 
     Args:
-        analysis: A RecordingAnalysis (see analysis/main.py).
+        analysis: A RecordingAnalysis (see analysis/pipeline.py).
         panels: Ordered panel names, top to bottom: "f0", "phase",
             "phase_error", "signals".
-        start_ts: x-axis origin in ground_truth["time"] units; defaults to
+        start_ts: x-axis origin in recording.time units [us]; defaults to
             the recording start.
         height_ratios: Per-panel vertical weights; defaults to an even split.
         save_as: Basename for the PDF under PLOTS_DIR; skipped when None.
@@ -550,7 +508,7 @@ def plot_stack(analysis, panels: list[str], *, start_ts: float = None,
         raise ValueError("plot_stack() needs at least one panel.")
 
     if start_ts is None:
-        start_ts = analysis.ground_truth["time"][0]
+        start_ts = analysis.recording.time[0]
     if height_ratios is None:
         height_ratios = [1.0] * len(panels)
 
@@ -642,168 +600,122 @@ def plot_spectrum(raw: np.ndarray, samples: dict, filtered: np.ndarray, fs: floa
 
     # save_pgf(fig, "spectrum")
 
+
 # ---------------------------------------------------------------------------
-# EDF export
+# Latency
 # ---------------------------------------------------------------------------
 
-def load_stim_annotations(results_dir: str, start_ts: float) -> "mne.Annotations | None":
-    """Load stim event markers from a stim protocol log CSV in results_dir, if present.
+def plot_latencies(latencies) -> None:
+    """Pipeline-stage, audio onset and UDPSource hardware/source latency
+    figures of a latency.Latencies, plus the combined LaTeX table."""
+    def row(series, total=False):
+        lat = series.values
+        return {"from": series.source, "to": series.target, "total": total,
+                "mean": np.mean(lat), "median": np.median(lat),
+                "std": np.std(lat), "max": np.max(lat), "idx": np.argmax(lat)}
 
-    Each "on" or "off" row opens a segment that runs until the next logged row
-    (whichever state that is), producing a "stim_on"/"stim_off" duration
-    annotation. Non on/off rows (protocol_start/end/stopped) additionally get
-    their own zero-duration marker.
+    total = latencies.total
+    plot_pipeline_latency([(rf"{s.source} $\to$ {s.target}", s.values) for s in latencies.stages],
+                          (rf"{total.source} $\to$ {total.target}", total.values) if total is not None else None)
+    if latencies.audio is not None:
+        plot_audio_latency(latencies.audio.values)
 
-    start_ts is the recording start time in the same units as ground_truth["time"]
-    (microseconds since epoch), used to align log timestamps to the EDF timeline.
+    pipeline_rows = [row(s) for s in latencies.stages] + ([row(total, total=True)] if total is not None else [])
+    audio_rows    = [row(latencies.audio)] if latencies.audio is not None else []
+    if pipeline_rows or audio_rows:
+        write_latency_table(pipeline_rows, audio_rows)
+
+    if latencies.hw_source is not None:
+        plot_hw_source_latency(*latencies.hw_source)
+
+
+def plot_pipeline_latency(stages: "list[tuple[str, np.ndarray]]",
+                          total: "tuple[str, np.ndarray] | None") -> None:
+    """Per-sample latency [us] of each pipeline stage, as (label, latency)
+    pairs, plus the end-to-end total in black."""
+    plt.figure(figsize=(15, 4))
+    for label, lat in stages:
+        plt.plot(lat, alpha=0.5, linewidth=0.5, label=label)
+    if total is not None:
+        plt.plot(total[1], alpha=0.5, linewidth=0.5, label=total[0], color="black")
+
+    plt.legend(loc="upper left", fontsize=9)
+    plt.xlabel("Sample Index")
+    plt.ylabel(r"Latency [$\mu$s]")
+    plt.ylim(0, 1000)
+    # plt.savefig("latency_analysis.png", dpi=300, bbox_inches="tight")
+
+
+def plot_audio_latency(latency_ms: np.ndarray) -> None:
+    """StimControl -> recorded trigger onset latency [ms] per stimulus."""
+    fig = plt.figure(figsize=FIGSIZE)
+    plt.plot(latency_ms)
+    plt.axhline(np.median(latency_ms), color="red", linestyle="--", label=f"Median: {np.median(latency_ms):.2f} ms")
+    plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.9)
+    plt.xlabel("Stimulus index")
+    plt.ylabel("Latency [ms]")
+    plt.legend(loc="upper right")
+
+    save_pdf(fig, "latency_analysis")
+    save_pgf(fig, "latency_analysis")
+
+
+def plot_hw_source_latency(source_rel: np.ndarray, hw_rel: np.ndarray) -> None:
+    """UDPSource hardware_ts - source_ts gap [us] over the recording."""
+    plt.figure(figsize=FIGSIZE)
+    plt.plot(source_rel / 1e6, hw_rel - source_rel, linestyle="none", marker=".")
+
+    plt.xlabel("Source timestamp [s]")
+    plt.ylabel("Hardware - Source [us]")
+
+
+def write_latency_table(pipeline_rows: "list[dict]", audio_rows: "list[dict]",
+                        name: str = "graph_latency_table",
+                        caption: str = "Pipeline-stage latency [$\\mu$s] and audio onset "
+                                       "latency [ms], mean/median/std across samples plus "
+                                       "the single worst case (its index in brackets).",
+                        label: str = "tab:graph_latency_table") -> None:
+    """Write pipeline-stage + audio-onset latency to one combined LaTeX table
+    at PLOTS_DIR/<name>.tex, matching the other table writers here.
+
+    Each row dict is {"from", "to", "mean", "median", "std", "max", "idx"}; a
+    "total"=True row (source->last_proc) is set off with a \\midrule and
+    bolded. The two row groups are separated by an empty row, not a
+    \\midrule, since they're in different units (see caption).
     """
-    log_files = sorted(glob.glob(os.path.join(results_dir, "stim_protocol_log_*.csv")))
-    if not log_files:
-        return None
+    def _esc(text):
+        return str(text).replace("_", r"\_")
 
-    with open(log_files[-1], newline="") as f:
-        reader = csv.DictReader(f)
-        rows = [(datetime.datetime.fromisoformat(row["timestamp"]).timestamp() - start_ts / 1e6,
-                 row["state"]) for row in reader]
+    def _cell(row):
+        max_cell = f"{row['max']:.2f} (idx={row['idx']})" if np.isfinite(row['max']) else "--"
+        stage_cell = rf"{_esc(row['from'])} $\to$ {_esc(row['to'])}"
+        if row.get("total"):
+            stage_cell = rf"\textbf{{Total: {stage_cell}}}"
+        return [stage_cell,
+                f"{row['mean']:.2f}", f"{row['median']:.2f}", f"{row['std']:.2f}", max_cell]
 
-    onsets, durations, descriptions = [], [], []
-    prev_time, prev_state = None, None
-    for t, state in rows:
-        if prev_state in ("on", "off"):
-            onsets.append(prev_time)
-            durations.append(t - prev_time)
-            descriptions.append("stim_on" if prev_state == "on" else "stim_off")
-        if state not in ("on", "off"):
-            onsets.append(t)
-            durations.append(0.0)
-            descriptions.append(state)
-        prev_time, prev_state = t, state
+    body = [r"\begin{tabular}{lrrrr}", r"\toprule",
+            r"From $\to$ To & Mean & Median & Std & Max (idx) \\", r"\midrule"]
+    for row in pipeline_rows:
+        body.append(" & ".join(_cell(row)) + r" \\")
+        if row.get("total"):
+            body.append(r"\midrule")
+    if pipeline_rows and audio_rows:
+        body.append(r" & & & & \\")  # empty row: visual gap between the two (differently-unitted) groups
+    for row in audio_rows:
+        body.append(" & ".join(_cell(row)) + r" \\")
+    body += [r"\bottomrule", r"\end{tabular}"]
 
-    return mne.Annotations(onset=onsets, duration=durations, description=descriptions)
-
-
-# EDF/HDF5 export lives in analysis/edf_io.py (write_raw_signals_edf/load_runtime/
-# write_analysis_edf) and analysis/runtime_meta.py (write_runtime_metadata/load_runtime_metadata).
+    tex = [r"\begin{table}[htbp]", r"  \centering", rf"  \caption{{{caption}}}",
+           rf"  \label{{{label}}}", *("  " + ln for ln in body), r"\end{table}"]
+    tex_path = os.path.join(PLOTS_DIR, f"{name}.tex")
+    with open(tex_path, "w") as fh:
+        fh.write("\n".join(tex) + "\n")
 
 
 # ---------------------------------------------------------------------------
 # ERP
 # ---------------------------------------------------------------------------
-
-def apply_csd_transform(fs: float, samples: dict, channel: list[int]) -> dict[int, np.ndarray]:
-    """Jointly re-reference every requested channel with a known scalp
-    position (see CHANNEL_NAMES) using the CSD (surface Laplacian)
-    transform, returning {channel: csd_y}.
-
-    Channels without a known position, and EOG channels (E1/E2), are
-    omitted -- callers should fall back to the as-recorded signal for those.
-    """
-    scalp_channels = [ch for ch in channel
-                       if ch in CHANNEL_NAMES and CHANNEL_NAMES[ch] not in EOG_CHANNEL_NAMES]
-    if not scalp_channels:
-        return {}
-
-    ys = []
-    for ch in scalp_channels:
-        ch0   = ch - 1
-        entry = samples.get(f"UDPSource_{ch0}") or samples.get(f"SimulatedSource_{ch0}")
-        ys.append(entry["y"])
-
-    min_len = min(len(y) for y in ys)
-    data    = np.array([y[:min_len] for y in ys]) * 1e-6  # uV -> V, mne's expected EEG unit
-
-    info = mne.create_info([CHANNEL_NAMES[ch] for ch in scalp_channels], sfreq=fs,
-                            ch_types="eeg", verbose=False)
-    raw  = mne.io.RawArray(data, info, verbose=False)
-    raw.set_montage("standard_1020")
-    raw  = mne.preprocessing.compute_current_source_density(raw, copy=False)
-
-    csd_data = raw.get_data() * 1e6  # back to uV, matching the untransformed samples
-    return {ch: csd_data[i] for i, ch in enumerate(scalp_channels)}
-
-
-def get_erp_windows(fs: float, samples: dict, channel: list[int] = [1],
-                     bandpass: tuple[float, float] = (2.0, 30.0),
-                     reject_uv: float = 10000.0,
-                     average: bool = False) -> list[dict]:
-    """Extract EEG epochs around each trigger onset (-250 ms to +500 ms) for each channel.
-
-    The EEG is bandpass-filtered (default 2-30 Hz) before epoching, and any
-    epoch whose peak amplitude exceeds ``reject_uv`` (default +/-100 uV) is
-    discarded. Each returned window carries a 1-based "channel" key so
-    callers can group windows by channel.
-
-    If ``average`` is True, each channel's per-trial epochs are collapsed
-    into a single mean window (carrying an added "n_epochs" key) before
-    returning, instead of one window per trial -- much lighter to keep
-    around when only the averaged ERP is needed (e.g. one curve per subject
-    pooled across many recordings).
-    """
-    all_windows    = []
-
-    for ch in channel:
-        ch0 = ch - 1  # zero-based
-
-        # if samples.get("ecHTFilter") is not None:
-        #     eeg_y, eeg_t = samples["ecHTFilter"]["y"], samples["ecHTFilter"]["x"]
-        if samples.get(f"UDPSource_{ch0}") is not None:
-            eeg_y, eeg_t = samples[f"UDPSource_{ch0}"]["y"], samples[f"UDPSource_{ch0}"]["x"]
-        elif samples.get(f"SimulatedSource_{ch0}") is not None:
-            eeg_y, eeg_t = samples[f"SimulatedSource_{ch0}"]["y"], samples[f"SimulatedSource_{ch0}"]["x"]
-        else:
-            print(f"Error: no EEG signal found for channel {ch}.")
-            continue
-
-        if samples.get("UDPSource_TRIGGER") is not None:
-            trigger_y = samples["UDPSource_TRIGGER"]["y"]
-        elif samples.get("StimControl") is not None:
-            trigger_y = samples["StimControl"]["y"]
-        else:
-            print("Error: no trigger signal found.")
-            return []
-
-        time_s         = (eeg_t - eeg_t[0]) / 1e6
-        trigger_binary = (trigger_y > 0.5).astype(float)
-        onsets         = get_edges(trigger_binary, "rising")
-        offsets        = get_edges(trigger_binary, "falling")
-
-        # Bandpass-filter the continuous EEG before epoching, so filter edge
-        # artifacts don't contaminate the epoch boundaries.
-        sos   = butter(1, bandpass, btype="band", fs=fs, output="sos")
-        eeg_y = sosfiltfilt(sos, eeg_y)
-
-        ch_windows = []
-        n_rejected = 0
-        for idx in onsets:
-            start_idx = idx - int(0.25 * fs)
-            end_idx   = idx + int(0.5  * fs)
-            if start_idx >= 0 and end_idx < len(eeg_y):
-                epoch = eeg_y[start_idx:end_idx]
-                if np.max(np.abs(epoch)) > reject_uv:
-                    n_rejected += 1
-                    continue
-                later_offsets = offsets[offsets > idx]
-                stim_dur_s    = (time_s[later_offsets[0]] - time_s[idx]) if len(later_offsets) else None
-                ch_windows.append({"channel":    ch,
-                                   "time_s":     time_s[start_idx:end_idx],
-                                   "eeg_y":       epoch,
-                                   "stim_dur_s":  stim_dur_s})
-
-        if n_rejected:
-            print(f"Channel {ch}: rejected {n_rejected} epoch(s) with peak amplitude > +/-{reject_uv:.0f} uV.")
-
-        if average and ch_windows:
-            stim_durs = [w["stim_dur_s"] for w in ch_windows if w["stim_dur_s"] is not None]
-            all_windows.append({"channel":   ch,
-                                "time_s":     ch_windows[0]["time_s"],
-                                "eeg_y":      np.mean([w["eeg_y"] for w in ch_windows], axis=0),
-                                "stim_dur_s": float(np.mean(stim_durs)) if stim_durs else None,
-                                "n_epochs":   len(ch_windows)})
-        else:
-            all_windows.extend(ch_windows)
-
-    return all_windows
-
 
 def plot_erp_latency(windows: list[dict], fs: float) -> float | None:
     """Plot per-channel averaged ERPs stacked vertically on a shared x-axis.

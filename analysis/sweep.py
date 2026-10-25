@@ -2,30 +2,20 @@
 SNR / noise-colour sweep analysis: turn a folder of CLAS runs (one per
 (snr_db, noise_color) point, as produced by sweep_clas.py) into a summary
 error table (snr_sweep_table).
-
-Kept out of analysis/main.py -- which stays focused on the single-recording
-analysis pipeline -- but built on its general helpers (compute_recording_errors,
-find_result_dirs).
-
-Run either as a module or as a script:
-
-    python -m analysis.sweep
-    python analysis/sweep.py
-
+    python -m analysis.main sweep [sweep_dir]   (from CLAS/)
 """
 
 import csv
-import glob
 import os
 import traceback
 
 import numpy as np
-import yaml
 from scipy.stats import circmean, circstd
 
-from analysis.main import compute_recording_errors, find_result_dirs
+from analysis.pipeline import load_and_analyse
+from analysis.clas_file_reader import find_result_dirs, load_graph_config
 from analysis.plot import PLOTS_DIR
-from analysis.core import ONLINE_VS_GT, HILBERT_VS_GT, ONLINE_VS_HILBERT
+from analysis.estimation_errors import ONLINE_VS_GT, HILBERT_VS_GT, ONLINE_VS_HILBERT
 from analysis.report import TERMINAL_LABELS
 
 def _phase_error_stats(values: np.ndarray) -> "tuple[float, float, int]":
@@ -129,16 +119,13 @@ def snr_sweep_table(sweep_dir: str, f0: float = 10,
     for i, results_dir in enumerate(run_dirs, 1):
         print(f"\n{'=' * 80}\n[{i}/{len(run_dirs)}] {results_dir}\n{'=' * 80}")
         try:
-            graph_file = glob.glob(os.path.join(results_dir, "*.yaml"))[0]
-            with open(graph_file) as fh:
-                procs = yaml.safe_load(fh)["graph"]["processors"]
-            opts       = procs["SimulatedSource"]["options"]
+            opts       = load_graph_config(results_dir).options("SimulatedSource")
             snr_db     = float(opts["snr_db"])
             noise_type = str(opts.get("noise_color", "white"))
 
-            run_f0 = _run_carrier_f0(opts, f0) if f0_is_truth else f0
-            errors = compute_recording_errors(run_f0, results_dir,
-                                              f0_is_truth=f0_is_truth, whiten=whiten)
+            run_f0   = _run_carrier_f0(opts, f0) if f0_is_truth else f0
+            analysis = load_and_analyse(run_f0, results_dir, f0_is_truth=f0_is_truth, whiten=whiten)
+            errors   = analysis.errors if analysis is not None else []
 
             series = next((e for e in errors if e["label"] == ONLINE_VS_GT), None)
             if series is None:
@@ -257,7 +244,3 @@ def snr_sweep_table(sweep_dir: str, f0: float = 10,
         fh.write("\n".join(tex) + "\n")
 
     return rows
-
-
-if __name__ == "__main__":
-    snr_sweep_table("results/snr_sweep")

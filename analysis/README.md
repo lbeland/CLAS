@@ -1,44 +1,55 @@
 # Offline analysis
 
 `clas.py` runs a full analysis automatically after a recording finishes, but this package can
-also be run standalone against any `results/` folder. It has two CLI entry points; everything
-else in the package is a supporting library imported by these (and by `clas.py`) rather than
-something you run directly.
+also be run standalone against any `results/` folder. Everything runs through one CLI;
+the rest of the package is a supporting library imported by it (and by `clas.py`).
 
-- **[`python -m analysis.main <command>`](main.py)** -- the main CLI, with subcommands:
-  - `single [results_dir] [--f0 HZ] [--f0-is-truth] [--whiten] [--no-show] [--no-full-analysis]`
-    -- full analysis + plots for one results folder (default: `_last_run`).
-  - `all [--base-dir DIR] [--f0 HZ] [--no-full-analysis]` -- analyse every results folder under
-    `DIR` (default: `results`).
-  - `pooled [--f0 HZ] [--base-dir DIR] [--session-glob GLOB] [--names SUBSTR ...]` -- pool
-    phase/f0/stimulus-edge errors across every recording in a session and plot/print the
-    combined statistics.
-  - `erp [--f0 HZ] [--base-dir DIR] [--session-glob GLOB] [--channel IDX]` -- plot one averaged
-    ERP curve per subject.
-  - Run `python -m analysis.main <command> --help` for the full flag list.
-- **[`python -m analysis.spectrum_analysis`](spectrum_analysis.py) [--base-dir DIR]
-  [--channel NAME] [--win-s S] [--step-s S] [--smooth-window-s S] [--no-csd]
-  [--stim-onset-degs DEG ...] [--comparisons A,B ...]** -- time-frequency / power-change
-  analysis across stimulus-onset conditions (Stim On vs Stim Off), pooled across recordings.
-  Run with `--help` for the full flag list.
+**[`python -m analysis.main <command>`](main.py)** (from `CLAS/`), with commands:
 
-[`sweep.py`](sweep.py) (SNR/noise-colour sweep tables, as produced by
-[`research/phase/sweep_clas.py`](../research/phase/sweep_clas.py)) has no CLI yet -- edit the call in its
-`if __name__ == "__main__":` block, or import and call `snr_sweep_table()` yourself.
+- `single [results_dir] [--f0 HZ] [--f0-is-truth] [--whiten] [--no-show] [--no-full-analysis]`
+  -- full analysis + plots for one results folder (default: `_last_run`).
+- `all [--base-dir DIR] [--f0 HZ] [--no-full-analysis]` -- analyse every results folder under
+  `DIR` (default: `results`).
+- `pooled [--f0 HZ] [--base-dir DIR] [--session-glob GLOB] [--names SUBSTR ...]` -- pool
+  phase/f0/stimulus-edge errors across every recording in the session folders and plot/print
+  the combined statistics ([`pooled.py`](pooled.py)).
+- `erp [--base-dir DIR] [--session-glob GLOB] [--channel IDX]` -- plot one averaged
+  ERP curve per subject ([`erp.py`](erp.py)).
+- `spectrum [--base-dir DIR] [--channel NAME] [--win-s S] [--step-s S] [--smooth-window-s S]
+  [--no-csd] [--stim-onset-degs DEG ...] [--comparisons A,B ...]` -- time-frequency /
+  power-change analysis across stimulus-onset conditions (Stim On vs Stim Off), pooled across
+  recordings ([`spectrum_analysis.py`](spectrum_analysis.py)).
+- `sweep [sweep_dir] [--f0 HZ] [--no-f0-is-truth] [--whiten] [--out-dir DIR] [--label LABEL]`
+  -- error table of an SNR/noise-colour sweep, as produced by
+  [`research/phase/sweep_clas.py`](../research/phase/sweep_clas.py) ([`sweep.py`](sweep.py)).
 
-The rest of the package ([`core.py`](core.py) Hilbert reference/error computation,
-[`f0.py`](f0.py) f0 estimation, [`modal.py`](modal.py) the MODAL algorithm,
-[`loader.py`](loader.py) raw `.bin` loading,
-[`edf_io.py`](edf_io.py)/[`runtime_meta.py`](runtime_meta.py) EDF+HDF5
-caching, [`plot.py`](plot.py) plotting/tables,
-[`stimulus.py`](stimulus.py) stimulus reconstruction) is imported by the entry points
-above. Notably, the first analysis of a results folder writes `raw_signals.edf` +
-`runtime_metadata.h5` into it; later runs against the same folder load those instead of
-re-parsing the raw `.bin` files, which is much faster.
+Run `python -m analysis.main <command> --help` for the full flag list.
+`python -m analysis.erp` additionally opens a folder picker to average the ERP of hand-picked runs.
 
-Two things to be aware of before running any of this:
-- [`plot.py`](plot.py) renders all plot text through a real LaTeX installation
-  (`text.usetex`/`pgf.texsystem: pdflatex`), so a working `pdflatex` (e.g. `texlive`) needs to be
-  on `PATH`.
-- [`plot.py`](plot.py)'s `PLOTS_DIR` is currently a hardcoded absolute path -- edit it to your own
-  output directory before running anything that saves a figure or table.
+The rest of the package:
+
+- Reading and writing files:
+  - [`clas_file_reader.py`](clas_file_reader.py) -- reads what a CLAS session writes (processor
+    `.bin` output, stim protocol log, graph `.yaml`).
+  - [`results_io.py`](results_io.py) -- reads/writes results files of analysis.
+  - [`cache.py`](cache.py) -- `load_signals()`: the first analysis of a results folder parses
+    the `.bin` files and writes `raw_signals.edf` + `runtime_metadata.h5` into it; later runs
+    load those instead, which is much faster.
+- Analysis:
+  - [`pipeline.py`](pipeline.py) -- `load_and_analyse()`: the full offline analysis of one
+    results folder, which every command builds on.
+  - [`offline_estimation.py`](offline_estimation.py) -- offline f0 and Hilbert phase reference
+    via `estimate_offline()` ([`modal.py`](modal.py): the MODAL algorithm).
+  - [`estimation_errors.py`](estimation_errors.py) -- phase/f0/stimulus-edge errors of the
+    online estimates.
+  - [`stimulus.py`](stimulus.py) -- stimulus reconstruction and the study's stimulation
+    conditions.
+  - [`latency.py`](latency.py) -- pipeline and audio onset latency.
+  - [`erp.py`](erp.py) -- ERP epoching.
+- Output:
+  - [`plot.py`](plot.py) -- figures and LaTeX tables, saved to `CLAS/analysis_output/`.
+  - [`report.py`](report.py) -- terminal report.
+
+[`plot.py`](plot.py) renders all plot text through a real LaTeX installation
+(`text.usetex`/`pgf.texsystem: pdflatex`), so a working `pdflatex` (e.g. `texlive`) needs to be
+on `PATH`.

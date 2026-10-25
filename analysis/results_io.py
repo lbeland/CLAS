@@ -1,27 +1,28 @@
 """
-Raw/metadata/analysis EDF+HDF5 split.
+Results-folder files: two EDFs for viewing and one HDF5 file for pipeline data.
 
-Each results folder gets three files:
-
+EDF files
+---------
 - raw_signals.edf: a generic, tool-agnostic recording (EEG channels, AUX,
   Trigger, stim-log annotations) that any EDF reader can open -- no
   CLAS-pipeline-specific data. Written once from the processors' .bin
-  output.
-- runtime_metadata.h5: everything pipeline-internal that doesn't belong in
-  a generic EDF (raw hardware timestamps, online f0/phase/filter,
-  selected-channel index, simulation-only ground truth). See
-  analysis/runtime_meta.py. Written alongside raw_signals.edf.
+  output, together with runtime_metadata.h5 (see cache.py).
 - analysis.edf: the offline-analysis outputs (selected-channel raw,
   offline+online filter/phase/f0, target+trigger stimulus), for visually
   comparing online vs. offline estimates in an EDF viewer. Cheap to
   rebuild every run from the cached raw_signals.edf + runtime_metadata.h5.
 
-load_runtime() recombines raw_signals.edf + runtime_metadata.h5 into the
-same `samples`/`ground_truth` shapes produced by
-analysis.loader.load_processor_signals()/extract_ground_truth(), so
-downstream code doesn't need to care whether the data came from the raw
-.bin files or the cached files.
+HDF5 metadata
+-------------
+- runtime_metadata.h5: pipeline-internal data (raw hardware timestamps,
+  the selected-channel index, simulation-only ground truth).
+  Written once alongside raw_signals.edf (see cache.py) and
+  read back on every later run.
+
+  Datasets are gzip-compressed and identical arrays are stored once (hard
+  links).
 """
+
 
 import datetime
 import warnings
@@ -29,13 +30,26 @@ import warnings
 import mne
 import numpy as np
 import pytz
+import hashlib
+import h5py
 
-from .loader import extract_ground_truth
-from .plot import CHANNEL_NAMES
-from .runtime_meta import load_runtime_metadata
+from .clas_file_reader import CHANNEL_NAMES, first_udp_channel_key
 
 _INDEX_TO_NAME = CHANNEL_NAMES  # {1-based channel index: electrode name, e.g. 3: "Fz"}
 _NAME_TO_INDEX = {name: idx for idx, name in CHANNEL_NAMES.items()}
+
+ONLINE_FIELDS = {
+    "StimControl":  "stimulus",
+    "FrequencyEstimation":        "f0",
+    "FrequencyEstimation_raw":    "f0_raw",  # optional: raw pre-Kalman peak f0 (debug_output=true)
+    "PhaseEstimation_phase": "phase",
+    "ecHTFilter":           "filt",
+    "ChannelSelection":      "channel_idx",
+}
+
+SIMULATION_FIELDS = ("true_amplitude", "true_phase", "true_inst_freq")
+
+_COMPRESSION = {"compression": "gzip", "compression_opts": 4, "shuffle": True}
 
 
 def _write_edf(filepath: str, fs: float, start_time_us: float, channels: list[tuple],
@@ -90,20 +104,21 @@ def write_raw_signals_edf(
     filepath: str,
     fs: float,
     samples: dict,
-    ground_truth: dict,
+    time: np.ndarray,
     annotations: "mne.Annotations | None" = None,
 ) -> None:
     """Write the generic, tool-agnostic recording (EEG channels, AUX, Trigger)
-    to raw_signals.edf. No pipeline-internal data -- see runtime_meta.py.
+    to raw_signals.edf.
 
-    Channels with a known 10-20 electrode (analysis.plot.CHANNEL_NAMES, e.g.
+    `time` is the recording's time axis [us]; channels are trimmed to its length.
+
+    Channels with a known 10-20 electrode (clas_file_reader.CHANNEL_NAMES, e.g.
     index 3 -> "Fz") are labelled with that name; others get "EEG_{index}".
     Only real "UDPSource_*" channels get an electrode name -- synthetic
-    "SimulatedSource_*" channels always get "EEG_{idx+1}", since load_runtime()
+    "SimulatedSource_*" channels always get "EEG_{idx+1}", since load_cache()
     reconstructs either as "UDPSource_{idx}" on reload regardless.
     """
-    time = ground_truth["time"]
-    n    = len(time)
+    n = len(time)
 
     channels = []
     eeg_keys = sorted(
@@ -137,7 +152,7 @@ def load_raw_signals_edf(filepath: str) -> dict:
 
     No time axis is reconstructed here: EDF's header only stores the
     recording start time to 1-second resolution, so runtime_metadata.h5's
-    start_ts attribute (exact, see load_runtime()) is the authoritative one."""
+    start_ts attribute (exact, see cache.load_cache()) is the authoritative one."""
     raw_mne = mne.io.read_raw_edf(filepath, preload=True, verbose=False)
     n = len(raw_mne.times)
 
@@ -157,61 +172,6 @@ def load_raw_signals_edf(filepath: str) -> dict:
     return {"eeg": eeg, "trigger": trigger, "n": n, "annotations": raw_mne.annotations}
 
 
-def load_runtime(raw_edf_path: str, meta_h5_path: str) -> tuple[dict, dict, "mne.Annotations"]:
-    """Combine raw_signals.edf + runtime_metadata.h5 back into (samples,
-    ground_truth, annotations), matching the shapes of
-    load_processor_signals()/extract_ground_truth()."""
-    meta      = load_runtime_metadata(meta_h5_path)
-    recording = load_raw_signals_edf(raw_edf_path)
-
-    fs   = meta["fs"]
-    # Authoritative over recording["n"]: EDF pads the final record to a whole second
-    n    = meta["n_samples"]
-    time = meta["start_ts"] + np.round(np.arange(n) / fs * 1e6).astype(np.int64)
-
-    def source_ts(key):
-        return meta["source_ts"].get(key)
-
-    # Only the lowest-indexed recorded channel carries hardware_ts (see write_runtime_metadata)
-    hw_ts = meta.get("hardware_ts")
-    hw_ts = hw_ts[:n] if hw_ts is not None else None
-    first_idx = min(recording["eeg"], default=None)
-
-    raw_prefix = meta["raw_source_class"]
-    samples = {}
-    for idx, y in recording["eeg"].items():
-        samples[f"{raw_prefix}_{idx}"] = {"x": time, "y": y[:n], "source_ts": source_ts(f"{raw_prefix}_{idx}")}
-        if idx == first_idx and hw_ts is not None:
-            samples[f"{raw_prefix}_{idx}"]["hw_ts"] = hw_ts
-    if recording["trigger"] is not None:
-        samples["UDPSource_TRIGGER"] = {"x": time, "y": recording["trigger"][:n], "source_ts": source_ts("UDPSource_TRIGGER")}
-
-    online = meta["online"]
-    if "stimulus" in online:
-        samples["StimControl"] = {"x": time, "y": online["stimulus"], "source_ts": source_ts("StimControl")}
-    if "f0" in online:
-        samples["FrequencyEstimation"] = {"x": time, "y": online["f0"], "source_ts": source_ts("FrequencyEstimation")}
-    if "f0_raw" in online:
-        samples["FrequencyEstimation_raw"] = {"x": time, "y": online["f0_raw"], "source_ts": source_ts("FrequencyEstimation_raw")}
-    if "phase" in online:
-        samples["PhaseEstimation_phase"] = {"x": time, "y": online["phase"], "source_ts": source_ts("PhaseEstimation_phase")}
-    if "filt" in online:
-        samples["ecHTFilter"] = {"x": time, "y": online["filt"], "source_ts": source_ts("ecHTFilter")}
-    if "channel_idx" in online:
-        samples["ChannelSelection"] = {"x": time, "y": online["channel_idx"], "source_ts": source_ts("ChannelSelection")}
-
-    ground_truth = extract_ground_truth(samples)
-    if ground_truth is None:
-        raise ValueError(f"{raw_edf_path}: could not reconstruct ground truth (no EEG_* channels found).")
-
-    sim = meta["simulation"]
-    for field in ("true_amplitude", "true_phase", "true_inst_freq"):
-        if field in sim:
-            ground_truth[field] = sim[field]
-
-    return samples, ground_truth, recording["annotations"]
-
-
 # ---------------------------------------------------------------------------
 # analysis.edf
 # ---------------------------------------------------------------------------
@@ -219,7 +179,8 @@ def load_runtime(raw_edf_path: str, meta_h5_path: str) -> tuple[dict, dict, "mne
 def write_analysis_edf(
     filepath: str,
     fs: float,
-    ground_truth: dict,
+    raw: np.ndarray,
+    time: np.ndarray,
     samples: dict,
     filtered: np.ndarray = None,
     hilbert_phase: np.ndarray = None,
@@ -233,13 +194,12 @@ def write_analysis_edf(
     comparing online vs. offline estimates in an EDF viewer.
 
     Args:
+        raw: Selected-channel signal; time: its time axis [us].
         whitened: Whether `filtered` was spectrally whitened (see
             compute_hilbert_reference); if so, it's on a different scale than
             Raw's uV and is stored as "stim" instead of "eeg".
     """
-    raw  = ground_truth["raw"]
-    time = ground_truth["time"]
-    n    = len(raw)
+    n = len(raw)
 
     channels = [("Raw", "eeg", raw)]
 
@@ -268,3 +228,86 @@ def write_analysis_edf(
         channels.append(("Trigger_sw", "stim", trigger_sw["y"][:n]))
 
     _write_edf(filepath, fs, time[0], channels, annotations)
+
+
+def _dataset_writer(f: h5py.File):
+    """Returns put(key, data): writes a compressed dataset, or hard-links an identical one."""
+    stored = {}
+
+    def put(key, data):
+        data   = np.asarray(data)
+        digest = (data.dtype.str, data.shape, hashlib.sha1(data.tobytes()).digest())
+        if digest in stored:
+            f[key] = f[stored[digest]]
+        else:
+            f.create_dataset(key, data=data, **_COMPRESSION)
+            stored[digest] = key
+
+    return put
+
+
+def write_runtime_metadata(filepath: str, fs: float, samples: dict, time: np.ndarray,
+                           ground_truth: dict) -> None:
+    """`time` is the recording's time axis [us], ground_truth its true_* fields."""
+    with h5py.File(filepath, "w") as f:
+        put = _dataset_writer(f)
+        f.attrs["fs"] = fs
+        f.attrs["start_ts"] = int(time[0])
+        # True count, so load_cache() can truncate raw_signals.edf's
+        # record-padded channels back to match the exact arrays below
+        f.attrs["n_samples"] = len(time)
+        # Raw per-channel key prefix actually used ("UDPSource" or
+        # "SimulatedSource"), so load_cache() can reconstruct the same keys
+        f.attrs["raw_source_class"] = (
+            "SimulatedSource" if any(k.startswith("SimulatedSource_") for k in samples)
+            else "UDPSource"
+        )
+        # UDPSource's reconstructed ADC sampling times, needed only for its
+        # hardware->source latency calc in latency.compute_latencies()
+        udp = samples.get(first_udp_channel_key(samples), {})
+        if udp.get("hw_ts") is not None:
+            put("hardware_ts", udp["hw_ts"])
+
+        f.create_group("source_ts")
+        for key, entry in samples.items():
+            ts = entry.get("source_ts")
+            if ts is not None:
+                put(f"source_ts/{key}", ts)
+
+        f.create_group("online")
+        for samples_key, field in ONLINE_FIELDS.items():
+            if samples.get(samples_key) is not None:
+                put(f"online/{field}", samples[samples_key]["y"])
+
+        if any(ground_truth.get(k) is not None for k in SIMULATION_FIELDS):
+            f.create_group("simulation")
+            for field in SIMULATION_FIELDS:
+                if ground_truth.get(field) is not None:
+                    put(f"simulation/{field}", ground_truth[field])
+
+
+def load_runtime_metadata(filepath: str) -> dict:
+    """Returns {"fs", "start_ts", "n_samples", "raw_source_class",
+    "hardware_ts": array | absent, "source_ts": {key: array},
+    "online": {field: array}, "simulation": {field: array}}.
+
+    "hardware_ts" is absent for caches written before it started being saved;
+    "raw_source_class" defaults to "UDPSource" for caches written before it
+    was added. The last three dicts only contain keys actually present at
+    write time.
+    """
+    meta = {"source_ts": {}, "online": {}, "simulation": {}}
+    with h5py.File(filepath, "r") as f:
+        meta["fs"] = float(f.attrs["fs"])
+        meta["start_ts"] = int(f.attrs["start_ts"])
+        meta["n_samples"] = int(f.attrs["n_samples"])
+        meta["raw_source_class"] = f.attrs.get("raw_source_class", "UDPSource")
+        if "hardware_ts" in f:
+            meta["hardware_ts"] = f["hardware_ts"][()]
+        for key in f.get("source_ts", {}):
+            meta["source_ts"][key] = f["source_ts"][key][()]
+        for key in f.get("online", {}):
+            meta["online"][key] = f["online"][key][()]
+        for key in f.get("simulation", {}):
+            meta["simulation"][key] = f["simulation"][key][()]
+    return meta

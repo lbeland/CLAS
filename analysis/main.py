@@ -1,238 +1,97 @@
 """
 Main analysis entry point. Run with:
-    python -m analysis.main          (from CLAS/)
-    python postprocess_results.py    (via the root launcher)
+    python -m analysis.main <command>   (from CLAS/)
+
+Commands (see --help of each for its flags):
+    single    full analysis + plots for one results folder
+    all       analyse every results folder (batch smoke test / cache building)
+    pooled    pool errors across every session's recordings (pooled.py)
+    erp       one ERP curve per subject (erp.py)
+    spectrum  Stim On vs Stim Off power change per condition (spectrum_analysis.py)
+    sweep     SNR / noise-colour sweep error table (sweep.py)
 """
 
 import argparse
-import glob
 import os
 import traceback
-import mne
-import yaml
-import numpy as np
+
 import matplotlib.pyplot as plt
-from dataclasses import dataclass
 
-from analysis.loader       import load_processor_signals, analyse_latencies, extract_ground_truth, \
-                                  compute_total_latency, find_session_run_dirs
-from analysis.f0          import estimate_f0, estimate_f0_with_phase, estimate_f0_modal
-from analysis.core         import compute_hilbert_reference, compute_errors, \
-                                  _edge_trim_window, ONLINE_VS_GT, ONLINE_VS_HILBERT, \
-                                  HILBERT_VS_GT, STIM_ONSET_GT, STIM_OFFSET_GT, \
-                                  STIM_ONSET_HILBERT, STIM_OFFSET_HILBERT, \
-                                  STIM_ONSET_ONLINE, STIM_OFFSET_ONLINE
-from analysis.edf_io       import write_raw_signals_edf, load_runtime, write_analysis_edf
-from analysis.runtime_meta import write_runtime_metadata
-from analysis.plot         import plot_errors, plot_spectrum, plot_stack, \
-                                  get_erp_windows, plot_erp_latency, plot_erp_by_subject, \
-                                  load_stim_annotations, plot_pooled_scatter, \
-                                  _circ_stats, write_condition_error_table
-from analysis.spectrum_analysis import STIM_ONSET_DEGS, CONDITION_LABELS
+from analysis.clas_file_reader  import find_result_dirs
+from analysis.pipeline          import RecordingAnalysis, load_recording, analyse_recording
+from analysis.results_io            import write_analysis_edf
+from analysis.erp               import get_erp_windows, analyse_erp_by_subject
+from analysis.plot              import plot_errors, plot_spectrum, plot_stack, plot_erp_latency, plot_latencies
+from analysis.pooled            import analyse_pooled_errors
+from analysis.spectrum_analysis import analyse_all as analyse_spectrum, TF_COMPARISONS
+from analysis.stimulus          import STIM_ONSET_DEGS
+from analysis.sweep             import snr_sweep_table
 from analysis import report
-
-
-@dataclass
-class RecordingAnalysis:
-    """Everything derived from one results folder: the loaded (or cached)
-    recording plus the offline f0/Hilbert/error analysis of it. Shared by
-    analyse_results() (which additionally plots/exports it) and
-    compute_recording_errors() (which just wants .errors)."""
-    graph_file:       str
-    graph_config:     dict
-    fs:               float
-    samples:          dict
-    ground_truth:     dict
-    annotations:      "mne.Annotations | None"
-    f0:               float
-    snr:              float
-    aperiodic_params: np.ndarray
-    raw:              np.ndarray
-    filtered:         np.ndarray
-    hilbert_phase:    np.ndarray
-    X_white:          "np.ndarray | None"
-    f0_continuous:   np.ndarray
-    f0_modal:         np.ndarray
-    errors:           list[dict]
-    stim_ref:         "np.ndarray | None"
-    from_cache:       bool = False
-    f0_windows:       "list | None" = None   # per-window offline f0 estimates
-    f0_note:          str = ""               # set when f0 was not estimated offline
-    stim_counts:      "dict | None" = None   # {"delivered", "expected"} stimulus onsets
-
-
-def load_and_analyse(f0: float, results_dir: str, f0_is_truth: bool = False,
-                     whiten: bool = False, full_analysis: bool = True) -> "RecordingAnalysis | None":
-    """Load one results folder and run the offline analysis on it.
-
-    Loads from cache if available, else the raw .bin files, then computes
-    the f0 estimate, Hilbert reference, and phase/f0/stimulus-edge errors.
-
-    Args:
-        f0: Centre frequency (Hz) for the pre-Hilbert bandpass; used as a
-            fallback unless f0_is_truth is set.
-        results_dir: Path to the results folder to load.
-        f0_is_truth: Use f0 directly instead of the offline estimate, for
-            synthetic runs with a known carrier frequency.
-        whiten: Fit the 1/f aperiodic component and use it for spectral
-            whitening in compute_hilbert_reference(). Skipped entirely when
-            f0_is_truth is also set.
-        full_analysis: Run f0 estimation, Hilbert reference and error
-            computation. If False, return right after loading (e.g. for ERP
-            epoching, which only needs .samples/.fs), leaving those fields
-            None.
-
-    Returns:
-        A RecordingAnalysis, or None if the folder can't be loaded.
-    """
-    graph_files = glob.glob(os.path.join(results_dir, "*.yaml"))
-    if not graph_files:
-        print(f"Error: no graph config (.yaml) found in {results_dir}")
-        return None
-
-    graph_file   = graph_files[0]
-    raw_edf_path = os.path.join(results_dir, "raw_signals.edf")
-    meta_h5_path = os.path.join(results_dir, "runtime_metadata.h5")
-
-    with open(graph_file) as f:
-        graph_config = yaml.safe_load(f)
-
-    fs         = graph_config.get("graph", {}).get("defaults", {}).get("fs")
-    processors = graph_config.get("graph", {}).get("processors", [])
-    if processors is None:
-        raise ValueError("No processors found in graph config.")
-
-    from_cache = os.path.exists(raw_edf_path) and os.path.exists(meta_h5_path)
-    if from_cache:
-        # Cached: skip re-parsing the raw .bin files entirely.
-        samples, ground_truth, annotations = load_runtime(raw_edf_path, meta_h5_path)
-    else:
-        samples      = load_processor_signals(fs, results_dir, processors)
-        ground_truth = extract_ground_truth(samples, graph_config)
-        if ground_truth is None:
-            print("Error: no source signal found (UDPSource or SimulatedSource). Aborting.")
-            return None
-
-        # Persist the raw/runtime signals so future runs can skip this branch
-        annotations = load_stim_annotations(results_dir, ground_truth["time"][0])
-        write_raw_signals_edf(raw_edf_path, fs, samples, ground_truth, annotations=annotations)
-        write_runtime_metadata(meta_h5_path, fs, samples, ground_truth)
-
-    if not full_analysis:
-        return RecordingAnalysis(
-            graph_file=graph_file, graph_config=graph_config, fs=fs,
-            samples=samples, ground_truth=ground_truth, annotations=annotations,
-            snr=None, f0=f0, aperiodic_params=None, raw=ground_truth["raw"], filtered=None,
-            hilbert_phase=None, X_white=None, f0_continuous=None,
-            errors=None, stim_ref=None, f0_modal=None, from_cache=from_cache,
-        )
-
-    # estimate_f0() returns both f0 and the 1/f aperiodic fit; skip only if
-    # neither is wanted (known carrier and whitening disabled)
-    snr = None
-    f0_windows = None
-    f0_note = ""
-    if f0_is_truth and not whiten:
-        aperiodic_params = None
-        f0_note = "given as ground truth, not estimated"
-    else:
-        f0_windows, aperiodic_params, snr = estimate_f0(ground_truth["raw"], fs)
-        if f0_is_truth:
-            f0_note = "given as ground truth, offline estimate ignored"
-        elif np.all(~np.isfinite(f0_windows)):
-            f0_note = "offline estimation failed, using the default"
-        else:
-            f0 = float(np.nanmean(f0_windows))
-    if not whiten:
-        aperiodic_params = None  # disable whitening in compute_hilbert_reference
-
-
-    # Offline Hilbert reference
-    raw = ground_truth["raw"]
-    filtered, hilbert_phase, X_white = compute_hilbert_reference(raw, fs, f0, aperiodic_params=aperiodic_params)
-    # Needs the raw (unmasked) phase first: NaN edges would propagate through
-    # np.unwrap()/cumsum. NaNs its own output's edges internally (see f0.py).
-    f0_continuous = estimate_f0_with_phase(hilbert_phase, fs, f0)
-    # f0_modal = estimate_f0_modal(raw, fs)
-
-    # NaN hilbert_phase's own edges now, so every series derived from it
-    # excludes the filter's edge transients via plain NaN-dropping
-    hilbert_phase = hilbert_phase.copy()
-    hp_time_s = np.arange(len(hilbert_phase)) / fs
-    hp_t_lo, hp_t_hi = _edge_trim_window([{"time_s": hp_time_s}])
-    hilbert_phase[(hp_time_s < hp_t_lo) | (hp_time_s > hp_t_hi)] = np.nan
-
-    # Compute errors (compute_errors also builds a per-onset ECHT phase
-    # reference from `filtered` for the "Stim onset error (ECHT)" series)
-    start_ts = ground_truth["time"][0]
-    errors, stim_ref, stim_counts = compute_errors(samples, ground_truth, hilbert_phase, start_ts, fs,
-                                                   graph_config)
-
-    return RecordingAnalysis(
-        graph_file=graph_file, graph_config=graph_config, fs=fs,
-        samples=samples, ground_truth=ground_truth, annotations=annotations,
-        snr=snr, f0=f0, aperiodic_params=aperiodic_params, raw=raw, filtered=filtered,
-        hilbert_phase=hilbert_phase, X_white=X_white, f0_continuous=f0_continuous,
-        errors=errors, stim_ref=stim_ref, f0_modal=None, from_cache=from_cache,
-        f0_windows=f0_windows, f0_note=f0_note, stim_counts=stim_counts,
-    )
 
 
 def analyse_results(results_dir: str, f0: float=10.0, show: bool = True,
                     f0_is_truth: bool = False, whiten: bool = False, full_analysis: bool = True) -> None:
+    """Analyse one results folder: print the report, write analysis.edf and
+    plot the latency, error distributions, spectrum and time series. With
+    full_analysis=False, only load it (building the cache)."""
     report.print_header(results_dir)
-    analysis = load_and_analyse(f0, results_dir, f0_is_truth=f0_is_truth, whiten=whiten, full_analysis=full_analysis)
-    if analysis is None:
+    loaded = load_recording(results_dir)
+    if loaded is None:
         return
-    report.print_data_line(analysis, analysis.from_cache)
+    graph, recording = loaded
+    report.print_data_line(graph, recording)
 
     if full_analysis:
+        analysis = analyse_recording(graph, recording, f0, f0_is_truth=f0_is_truth, whiten=whiten)
         report.print_recording_summary(analysis)
-
-        # Pipeline latency analysis. Reproducible from cache too, since
-        # runtime_metadata.h5 preserves source_ts exactly (unlike an EDF round-trip).
-        analyse_latencies(analysis.samples, analysis.ground_truth, analysis.graph_config)
-
-
-        # ERPCLAS-specific: ERP average plot
-        if os.path.basename(analysis.graph_file) == "ERPCLAS.yaml":
-            windows = get_erp_windows(analysis.fs, analysis.samples, channel=[4,3,27,26])
-            plot_erp_latency(windows, analysis.fs)
-
-        # Export analysis outputs to EDF (cheap; rebuilt every run from the cached runtime signals)
-        analysis_path = os.path.join(results_dir, "analysis.edf")
-        write_analysis_edf(analysis_path, analysis.fs, analysis.ground_truth, analysis.samples,
-                            analysis.filtered, analysis.hilbert_phase, analysis.f0_continuous,
-                            analysis.stim_ref, annotations=analysis.annotations,
-                            whitened=analysis.X_white is not None)
-
-        # Polar error distributions
-        plot_errors(analysis.errors)
-
-        # Plot spectrum
-        plot_spectrum(analysis.raw, analysis.samples, analysis.filtered, analysis.fs,
-                      analysis.aperiodic_params, analysis.X_white)
-
-        # Time-domain panels: stack any subset of "f0"/"phase"/"phase_error"/"signals"
-        # e.g. plot_stack(analysis, ["signals", "phase_error"], save_as="sig_vs_err")
-        time_range = None # (20.5, 23.5)  # e.g. (17, 18) to zoom in on a few seconds
-        # plot_stack(analysis, ["signals", "f0", "phase", "phase_error"], time_range=time_range,
-        #            save_as="time_series")
-        plot_stack(analysis, ["f0"], time_range=time_range,
-                save_as="time_series")
+        _export_analysis_edf(analysis, results_dir)
+        _plot_recording(analysis)
 
     if show:
         plt.show()
     else:
         plt.close("all")
 
-def find_result_dirs(base_dir: str = "results") -> list[str]:
-    """Every directory under base_dir that directly contains a *.yaml graph
-    config, i.e. every valid analyse_results() target."""
-    return sorted({
-        os.path.dirname(p) for p in glob.glob(os.path.join(base_dir, "**", "*.yaml"), recursive=True)
-    })
 
+def _export_analysis_edf(analysis: RecordingAnalysis, results_dir: str) -> None:
+    """Write the analysis outputs to results_dir/analysis.edf (cheap; rebuilt
+    every run from the cached runtime signals)."""
+    recording, offline = analysis.recording, analysis.offline
+    write_analysis_edf(os.path.join(results_dir, "analysis.edf"), analysis.graph.fs,
+                       recording.raw, recording.time, recording.samples,
+                       offline.filtered, offline.hilbert_phase, offline.f0_continuous,
+                       analysis.stim_ref, annotations=recording.annotations,
+                       whitened=offline.X_white is not None)
+
+
+def _plot_recording(analysis: RecordingAnalysis) -> None:
+    """Latency, ERP (ERPCLAS runs only), error distribution, spectrum and time-series figures."""
+    recording, offline, fs = analysis.recording, analysis.offline, analysis.graph.fs
+
+    # Pipeline latency. Reproducible from cache too, since runtime_metadata.h5
+    # preserves source_ts exactly (unlike an EDF round-trip).
+    if analysis.latency is not None:
+        plot_latencies(analysis.latency)
+
+    # ERPCLAS-specific: ERP average plot
+    if os.path.basename(analysis.graph.path) == "ERPCLAS.yaml":
+        windows = get_erp_windows(fs, recording.samples, channel=[4,3,27,26])
+        plot_erp_latency(windows, fs)
+
+    # Polar error distributions
+    plot_errors(analysis.errors)
+
+    # Plot spectrum
+    plot_spectrum(recording.raw, recording.samples, offline.filtered, fs,
+                  offline.aperiodic_params, offline.X_white)
+
+    # Time-domain panels: stack any subset of "f0"/"phase"/"phase_error"/"signals"
+    # e.g. plot_stack(analysis, ["signals", "phase_error"], save_as="sig_vs_err")
+    time_range = None # (20.5, 23.5)  # e.g. (17, 18) to zoom in on a few seconds
+    # plot_stack(analysis, ["signals", "f0", "phase", "phase_error"], time_range=time_range,
+    #            save_as="time_series")
+    plot_stack(analysis, ["f0"], time_range=time_range,
+            save_as="time_series")
 
 def analyse_all_results(f0: float = 10, base_dir: str = "results", full_analysis: bool = True) -> None:
     """Batch smoke-test: run analyse_results() non-interactively (no
@@ -260,223 +119,9 @@ def analyse_all_results(f0: float = 10, base_dir: str = "results", full_analysis
     print("=" * 80)
 
 
-def compute_recording_errors(f0: float, results_dir: str, f0_is_truth: bool = False,
-                             whiten: bool = True) -> list[dict]:
-    """Load one results folder and compute its phase/f0/stimulus-edge
-    errors, without writing files or plotting. Returns [] if the folder
-    can't be loaded or has no source signal. See load_and_analyse() for
-    f0_is_truth (take the passed f0 as the known carrier vs. fall back to it)
-    and whiten (spectral whitening before the offline bandpass)."""
-    analysis = load_and_analyse(f0, results_dir, f0_is_truth=f0_is_truth, whiten=whiten)
-    return analysis.errors if analysis is not None else []
-
-
-def analyse_erp_by_subject(f0: float = 10, base_dir: str = "results", session_glob: str = "CLAS_*",
-                           channel: int = 3) -> None:
-    """Plot the ERP (default channel 3 = Fz) as one curve per subject, all
-    centred on stimulus onset, so per-subject ERP shape/latency can be
-    compared at a glance. Subjects are discovered the same way as
-    analyse_pooled_errors() (every results/CLAS_* session folder); within
-    each, every ERPCLAS.yaml run (normally just the "*_erp_meas_*" one) is
-    pooled into that subject's curve."""
-    grouped: dict[str, list[str]] = {}
-    for run_dir in find_session_run_dirs(base_dir, session_glob, graph_name="ERPCLAS.yaml"):
-        grouped.setdefault(os.path.dirname(run_dir), []).append(run_dir)
-    print(f"Found {len(grouped)} subject(s) with an ERP measurement under {base_dir}/{session_glob}/*.")
-
-    subject_curves = []
-    for session_dir, run_dirs in grouped.items():
-        windows = []
-        fs = None
-        for results_dir in run_dirs:
-            print(f"[{os.path.basename(session_dir)}] {results_dir}")
-            try:
-                analysis = load_and_analyse(f0, results_dir, full_analysis=False)
-            except Exception:
-                print(f"  FAILED: {results_dir}")
-                traceback.print_exc()
-                continue
-            if analysis is None:
-                continue
-            fs = analysis.fs
-            windows += get_erp_windows(fs, analysis.samples, channel=[channel], average=True)
-        if windows:
-            subject_curves.append({"name": os.path.basename(session_dir), "windows": windows, "fs": fs})
-
-    if not subject_curves:
-        print("No ERP windows collected; nothing to plot.")
-        return
-
-    plot_erp_by_subject(subject_curves)
-    plt.show()
-
-
-# Column order for the per-condition error table
-_CONDITION_TABLE_COLUMNS = [
-    ONLINE_VS_GT, ONLINE_VS_HILBERT, HILBERT_VS_GT,
-    STIM_ONSET_GT, STIM_OFFSET_GT, STIM_ONSET_HILBERT, STIM_OFFSET_HILBERT,
-    STIM_ONSET_ONLINE, STIM_OFFSET_ONLINE,
-]
-
-# Row order for the per-condition error table: the four phase-offset
-# conditions first, then a rule, then the two P1 (peak/trough) conditions.
-_CONDITION_ROW_GROUPS = [[60, 150, 240, 330], [0, 180]]
-
-# Non-circular metrics printed as a single pooled mean +/- SD, not split by condition
-_GLOBAL_METRIC_LABELS = ("f0 error", "Stim duration error", "Online vs offline f0 error", "Total latency")
-
-
-def analyse_pooled_errors(f0: float = 10, names: list[str] = None, base_dir: str = "results", session_glob: str = "CLAS_*") -> None:
-    """Pool phase/f0/stimulus-edge errors across every recording and plot/print results.
-
-    Combines every recording under every session folder matching
-    session_glob (e.g. results/CLAS_*/<run>) and:
-      - Plots pooled polar error-distribution histograms, as
-        analyse_results() does per-recording, but combined across all runs.
-        No time-window trim is applied: Hilbert-derived series are already
-        NaN-masked at their own edges (see load_and_analyse()).
-      - Plots per-recording scatter (plot_pooled_scatter) of each
-        recording's circular mean +/- SD phase error against its online
-        f0-estimate variance and offline alpha-peak SNR.
-      - Prints/writes a table of circular mean +/- SD per degree-unit error
-        label, one row per stim_onset_deg condition (see
-        spectrum_analysis.STIM_ONSET_DEGS/CONDITION_LABELS) and one column
-        per label.
-      - Prints a plain (non-circular) pooled mean +/- SD for the metrics in
-        _GLOBAL_METRIC_LABELS.
-
-    Args:
-        f0: Fallback centre frequency (Hz) passed to load_and_analyse() for
-            each recording.
-        names: If given, only include recordings whose path contains one of
-            these strings (case-insensitive).
-        base_dir: Root directory to search for session folders.
-        session_glob: Glob pattern for session folder names under base_dir.
-    """
-    run_dirs = find_session_run_dirs(base_dir, session_glob)
-    if names is not None:
-        run_dirs_selected = [d for d in run_dirs if any(name.lower() in d.lower() for name in names)]
-        run_dirs = run_dirs_selected
-    print(f"Found {len(run_dirs)} recording(s) under {base_dir}/{session_glob}/*.")
-
-    pooled: dict[str, dict] = {}
-    scatter_records: list[dict] = []
-    pooled_by_condition: dict[tuple, list] = {}
-    condition_columns: list[str] = []
-    global_metrics: dict[str, list] = {}
-    for i, results_dir in enumerate(run_dirs, 1):
-        print(f"[{i}/{len(run_dirs)}] {results_dir}")
-        try:
-            analysis = load_and_analyse(f0, results_dir)
-        except Exception:
-            print(f"  FAILED: {results_dir}")
-            traceback.print_exc()
-            continue
-        if analysis is None:
-            continue
-        errors = analysis.errors
-
-        # Same metric as load_and_analyse()'s single-run print; appended here so
-        # it rides the same _GLOBAL_METRIC_LABELS pooling as f0/stim duration error
-        freq_est = analysis.samples.get("FrequencyEstimation")
-        if freq_est is not None and analysis.f0_continuous is not None:
-            errors = errors + [{
-                "label": "Online vs offline f0 error", "unit": "Hz",
-                "time_s": (freq_est["x"] - analysis.ground_truth["time"][0]) / 1e6,
-                "values": np.asarray(freq_est["y"], dtype=float) - analysis.f0_continuous,
-            }]
-
-        # Same total analyse_latencies() prints as "TOTAL" for a single recording
-        total_lat = compute_total_latency(analysis.samples, analysis.ground_truth, analysis.graph_config)
-        if total_lat is not None:
-            n = len(total_lat)
-            errors = errors + [{
-                "label": "Total latency", "unit": "us",
-                "time_s": (analysis.ground_truth["time"][:n] - analysis.ground_truth["time"][0]) / 1e6,
-                "values": total_lat.astype(float),
-            }]
-
-        condition = (
-            analysis.graph_config.get("graph", {})
-            .get("processors", {})
-            .get("StimControl", {})
-            .get("options", {})
-            .get("stim_onset_deg")
-        )
-
-        for err in errors:
-            entry = pooled.setdefault(err["label"], {
-                "label": err["label"], "unit": err["unit"], "linestyle": err.get("linestyle", "-"),
-                "values": [],
-            })
-            vals = np.asarray(err["values"], dtype=float)
-            if err["unit"] == "degrees":
-                vals = vals[~np.isnan(vals)]
-                if condition in STIM_ONSET_DEGS and vals.size:
-                    pooled_by_condition.setdefault((condition, err["label"]), []).append(vals)
-                    if err["label"] not in condition_columns:
-                        condition_columns.append(err["label"])
-            elif err["label"] in _GLOBAL_METRIC_LABELS:
-                trimmed = vals[~np.isnan(vals)]
-                if trimmed.size:
-                    global_metrics.setdefault(err["label"], []).append(trimmed)
-            entry["values"].append(vals)
-
-        # One scatter bullet per recording per plot.py._SCATTER_METRICS metric:
-        # circular mean error (y) vs offline SNR (x)
-        oh = next((e for e in errors if e["label"] == ONLINE_VS_HILBERT), None)
-        if oh is not None:
-            snr_db = (10.0 * np.log10(analysis.snr)
-                      if analysis.snr is not None and np.isfinite(analysis.snr) and analysis.snr > 0
-                      else np.nan)
-            stim_onset_online  = next((e for e in errors if e["label"] == STIM_ONSET_ONLINE), None)
-            stim_onset_hilbert = next((e for e in errors if e["label"] == STIM_ONSET_HILBERT), None)
-            scatter_records.append({
-                "name": os.path.basename(results_dir),
-                "phase_vals": np.asarray(oh["values"], dtype=float),
-                STIM_ONSET_ONLINE: np.asarray(stim_onset_online["values"], dtype=float)
-                                   if stim_onset_online is not None else np.array([]),
-                STIM_ONSET_HILBERT: np.asarray(stim_onset_hilbert["values"], dtype=float)
-                                    if stim_onset_hilbert is not None else np.array([]),
-                "snr_db": snr_db,
-            })
-
-    if not pooled:
-        print("No errors collected; nothing to plot.")
-        return
-
-    merged_errors = [
-        {"label": e["label"], "unit": e["unit"], "linestyle": e["linestyle"],
-         "values": np.concatenate(e["values"])}
-        for e in pooled.values()
-    ]
-
-    plot_errors(merged_errors)
-    plot_pooled_scatter(scatter_records)
-
-    if pooled_by_condition:
-        condition_stats: dict[int, dict[str, tuple[float, float, float]]] = {}
-        for (condition, label), chunks in pooled_by_condition.items():
-            mu_u, sd_u, plv_u, _ = _circ_stats(np.radians(np.concatenate(chunks)))
-            condition_stats.setdefault(condition, {})[label] = (np.degrees(mu_u), np.degrees(sd_u), plv_u)
-        columns_ordered = [c for c in _CONDITION_TABLE_COLUMNS if c in condition_columns] + \
-                          sorted(c for c in condition_columns if c not in _CONDITION_TABLE_COLUMNS)
-        write_condition_error_table(condition_stats, columns_ordered, _CONDITION_ROW_GROUPS, CONDITION_LABELS)
-    else:
-        print("No recording matched a known stim_onset_deg condition; skipping condition table.")
-
-    # Plain pooled mean +/- SD across every recording, printed to console
-    for label, chunks in global_metrics.items():
-        vals = np.concatenate(chunks)
-        unit = pooled[label]["unit"]
-        print(f"{label}: {np.mean(vals):.3f} +- {np.std(vals):.3f} {unit} "
-              f"(n={vals.size} samples, {len(chunks)} recording(s))")
-        if label == "Online vs offline f0 error":
-            print(f"Online vs offline MAE: {np.mean(np.abs(vals)):.3f} {unit}")
-        if label == "Stim duration error":
-            print(f"Stim duration MAE: {np.mean(np.abs(vals)):.3f} {unit}")
-
-    plt.show()
+def _parse_pair(s: str) -> tuple[int, int]:
+    a, b = s.split(",")
+    return int(a), int(b)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -521,11 +166,45 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     erp_p = subparsers.add_parser(
         "erp", help="analyse_erp_by_subject(): plot one ERP curve per subject.")
-    erp_p.add_argument("--f0", type=float, default=10.0)
     erp_p.add_argument("--base-dir", default="results")
     erp_p.add_argument("--session-glob", default="CLAS_*")
     erp_p.add_argument("--channel", type=int, default=3,
                         help="Channel index to average for the ERP (default: 3 = Fz).")
+
+    spectrum_p = subparsers.add_parser(
+        "spectrum", help="spectrum_analysis.analyse_all(): log power change spectrum, opposite-phase "
+                         "time-frequency t-maps, and pooled Stim On/Off power change, per "
+                         "stim_onset_deg condition.")
+    spectrum_p.add_argument("--base-dir", default="results",
+                             help="Base directory to search for session folders (default: results).")
+    spectrum_p.add_argument("--channel", default="Fz",
+                             help="Electrode to analyse (default: Fz).")
+    spectrum_p.add_argument("--stim-onset-degs", type=int, nargs="*", default=list(STIM_ONSET_DEGS),
+                             help=f"stim_onset_deg conditions to include (default: {list(STIM_ONSET_DEGS)}).")
+    spectrum_p.add_argument("--comparisons", type=_parse_pair, nargs="*", default=list(TF_COMPARISONS),
+                             help="Opposite-phase condition pairs for the time-frequency t-maps, as "
+                                  "'a,b' (default: %(default)s). Pass with no values to skip the t-maps.")
+    spectrum_p.add_argument("--win-s", type=float, default=1.0, help="Welch window length (s) (default: 1.0).")
+    spectrum_p.add_argument("--step-s", type=float, default=1.0, help="Welch hop between windows (s) (default: 1.0).")
+    spectrum_p.add_argument("--smooth-window-s", type=float, default=10.0,
+                             help="Time-resolved map smoothing window (s) (default: 10.0).")
+    spectrum_p.add_argument("--no-csd", dest="use_csd", action="store_false",
+                             help="Skip the surface Laplacian / CSD re-referencing step.")
+
+    sweep_p = subparsers.add_parser(
+        "sweep", help="snr_sweep_table(): error table of an SNR / noise-colour sweep (see sweep_clas.py).")
+    sweep_p.add_argument("sweep_dir", nargs="?", default="results/snr_sweep",
+                          help="Folder containing the sweep's run folders (default: results/snr_sweep).")
+    sweep_p.add_argument("--f0", type=float, default=10.0,
+                          help="Bandpass centre frequency (Hz) when --no-f0-is-truth is set (default: 10.0).")
+    sweep_p.add_argument("--no-f0-is-truth", dest="f0_is_truth", action="store_false",
+                          help="Re-estimate f0 offline instead of using each run's known carrier frequency.")
+    sweep_p.add_argument("--whiten", action="store_true",
+                          help="Apply 1/f spectral whitening before the offline bandpass.")
+    sweep_p.add_argument("--out-dir", default=None,
+                          help="Output folder for the .csv/.tex table (default: analysis_output).")
+    sweep_p.add_argument("--label", default=None,
+                          help="LaTeX \\label of the table (default: tab:snr_sweep_echt).")
 
     return parser
 
@@ -543,6 +222,13 @@ if __name__ == "__main__":
         analyse_pooled_errors(f0=args.f0, names=args.names, base_dir=args.base_dir,
                               session_glob=args.session_glob)
     elif args.command == "erp":
-        analyse_erp_by_subject(f0=args.f0, base_dir=args.base_dir,
-                               session_glob=args.session_glob, channel=args.channel)
-
+        analyse_erp_by_subject(base_dir=args.base_dir, session_glob=args.session_glob,
+                               channel=args.channel)
+    elif args.command == "spectrum":
+        analyse_spectrum(base_dir=args.base_dir, stim_onset_degs=tuple(args.stim_onset_degs),
+                         comparisons=tuple(args.comparisons), channel=args.channel,
+                         win_s=args.win_s, step_s=args.step_s, smooth_window_s=args.smooth_window_s,
+                         use_csd=args.use_csd)
+    elif args.command == "sweep":
+        snr_sweep_table(args.sweep_dir, f0=args.f0, out_dir=args.out_dir,
+                        f0_is_truth=args.f0_is_truth, whiten=args.whiten, label=args.label)

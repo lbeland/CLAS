@@ -2,11 +2,26 @@
 Stimulus reconstruction and edge-error analysis.
 
 StimulusConfig is the single place to add new targeting rules - add fields here
-and update from_yaml() and compute_reference_stimulus() accordingly.
+and update from_graph() and compute_reference_stimulus() accordingly.
 """
 
 from dataclasses import dataclass
 import numpy as np
+
+from .cache import Recording
+from .clas_file_reader import GraphConfig
+
+# Study conditions: StimControl's stim_onset_deg, and its display name
+STIM_ONSET_DEGS = (0, 60, 150, 180, 240, 330)
+
+CONDITION_LABELS = {
+    330: "Pre-Peak",
+    180: r"$\mathrm{P}_1$-Trough",
+    60:  "Post-Peak",
+    150: "Pre-Trough",
+    0:   r"$\mathrm{P}_1$-Peak",
+    240: "Post-Trough",
+}
 
 
 @dataclass
@@ -18,13 +33,8 @@ class StimulusConfig:
     p1_latency_ms:  float = 0.0
 
     @classmethod
-    def from_yaml(cls, graph_config: dict) -> "StimulusConfig":
-        opts = (
-            graph_config.get("graph", {})
-            .get("processors", {})
-            .get("StimControl", {})
-            .get("options", {})
-        )
+    def from_graph(cls, graph: GraphConfig) -> "StimulusConfig":
+        opts = graph.options("StimControl")
         return cls(
             stim_onset_deg=opts.get("stim_onset_deg", 0.0),
             stim_dur_deg=opts.get("stim_dur_deg",   90.0),
@@ -44,12 +54,44 @@ def get_edges(signal: np.ndarray, kind: str) -> np.ndarray:
     return np.where((signal[1:] == 0) & (signal[:-1] == 1))[0] + 1
 
 
+def get_trigger_binary(samples: dict) -> "np.ndarray | None":
+    """The delivered stimulus as 0/1: the hardware trigger (StimTrak, on the
+    UDPSource aux port) if recorded, else StimControl's software trigger.
+    None if neither is there."""
+    if "UDPSource_TRIGGER" in samples:
+        trigger_y = samples["UDPSource_TRIGGER"]["y"]
+    elif "StimControl" in samples:
+        trigger_y = samples["StimControl"]["y"]
+    else:
+        return None
+    return (trigger_y > 0.5).astype(float)
+
+
+def compute_target_stimulus(recording: Recording, hilbert_phase: np.ndarray, f0_continuous: np.ndarray,
+                            fs: float, graph: GraphConfig) -> np.ndarray:
+    """The ideal stimulus train StimControl should have produced,
+    reconstructed from true_phase if available, else the
+    offline Hilbert phase. For visualisation / EDF export."""
+    ground_truth = recording.ground_truth
+    if ground_truth["true_phase"] is not None:
+        ref_phase = ground_truth["true_phase"]
+    else:
+        ref_phase = hilbert_phase
+
+    if ground_truth["true_inst_freq"] is not None:
+        f0 = ground_truth["true_inst_freq"]
+    else:
+        f0 = f0_continuous
+
+    return compute_reference_stimulus(ref_phase, f0, fs, StimulusConfig.from_graph(graph))
+
+
 def compute_reference_stimulus(
     phase: np.ndarray,
     f0: np.ndarray,
     fs: float,
     config: StimulusConfig,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> np.ndarray:
     """Reconstruct the ideal stimulus signal from a reference phase time
     series, mirroring StimControl::Process().
 
@@ -60,48 +102,31 @@ def compute_reference_stimulus(
         config: Stimulus targeting parameters.
 
     Returns:
-        (stim_ref, onset_phases, offset_phases): binary ndarray (1 inside the
-        stimulus window), and the phase (rad) at each onset/offset.
+        Binary ndarray, 1 inside each stimulus window.
     """
-    f0_safe  = np.where(np.isfinite(f0) & (f0 > 0))[0]
+    f0_safe   = np.isfinite(f0) & (f0 > 0)
     onset_rad = np.deg2rad(config.stim_onset_deg)
+    p1_latency_s = config.p1_latency_ms / 1000.0
 
-    if config.stim_dur_unit == "deg":
-        stim_dur_rad = np.full(len(phase), np.deg2rad(config.stim_dur_deg))
-    else:
-        stim_dur_rad = np.zeros_like(phase)
-        stim_dur_rad[f0_safe] = (config.stim_dur_ms / 1000.0) * 2.0 * np.pi * f0[f0_safe]
+    # Correct target phase by P1 latency
+    phase_past_onset = np.mod(phase + 2.0 * np.pi * f0 * p1_latency_s - onset_rad, 2.0 * np.pi)
 
-    corrected_phase = phase.copy()
-    corrected_phase[f0_safe] = (
-        phase[f0_safe] + 2.0 * np.pi * f0[f0_safe] * (config.p1_latency_ms / 1000.0)
-    ) % (2.0 * np.pi)
+    # Onset candidates: within the first 10% of a cycle past the target phase
+    candidates = np.where(f0_safe & (phase_past_onset < 0.1 * 2.0 * np.pi))[0]
 
-    diff         = corrected_phase - onset_rad
-    wrapped_diff = np.mod(diff, 2.0 * np.pi)
+    # Accept a candidate only 1 cycle + 10% buffer after the last onset
+    onsets, last_onset = [], 0
+    for i in candidates:
+        if (i - last_onset) / fs >= 1 / (f0[i] + f0[i] * 0.1):
+            onsets.append(i)
+            last_onset = i
 
+    # Fixed duration per onset instead of phase-targeted offset
     stim_ref = np.zeros_like(phase, dtype=float)
-    last_stim_idx = 0
-    # Minimum needed distance between stim onset is 1 cycle of the current f0 + 10% buffer
-    for i in f0_safe:
-        min_dist_stim = 1 / (f0[i] + f0[i] * 0.1)
-        if wrapped_diff[i] < 0.1 * 2.0 * np.pi:  # 10% of an alpha cycle
-            if (i - last_stim_idx) / fs >= min_dist_stim:
-                stim_ref[i] = 1
-                last_stim_idx = i
-        
-    # stim_ref[f0_safe] = (np.abs(wrapped_diff[f0_safe]) < stim_dur_rad[f0_safe] / 2.0).astype(float)
-
-    # Reset and rebuild with fixed duration per onset (matches real-time pipeline)
-    rising   = get_edges(stim_ref, "rising")
-    stim_ref = np.zeros_like(phase, dtype=float)
-    for r in rising:
-        dur_samples = int(round(stim_dur_rad[r] / (2 * np.pi * f0[r]) * fs))
-        stim_ref[r : r + dur_samples] = 1
-
-    onset_phases  = phase[rising] if len(rising) else np.array([])
-    offset_phases = onset_phases + stim_dur_rad[rising] if len(rising) else np.array([])
-    return stim_ref, onset_phases, offset_phases
+    for i in onsets:
+        dur_s = config.stim_dur_deg / 360.0 / f0[i] if config.stim_dur_unit == "deg" else config.stim_dur_ms / 1000.0
+        stim_ref[i : i + int(round(dur_s * fs))] = 1
+    return stim_ref
 
 
 def _edge_phase_errors(
@@ -160,8 +185,7 @@ def compute_stimulus_edge_errors(
     ``compute_stimulus_duration_error`` for the "ms" case instead).
 
     Returns:
-        (onset_error, offset_error): {"time_s", "values"} dicts, or None for
-        an edge kind with nothing to score.
+        (onset_error, offset_error): {"time_s", "values"} dicts
     """
     trigger_binary = np.asarray(trigger_binary)
     time_us        = np.asarray(time_us)

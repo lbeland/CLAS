@@ -1,14 +1,14 @@
 """
 Log power change (Stim On vs Stim Off), both per frequency bin and
 time-resolved (time x frequency), grouped by stim_onset_deg condition.
-    python -m analysis.spectrum_analysis   (from CLAS/)
+    python -m analysis.main spectrum   (from CLAS/)
 
 Discovers recording directories under results/CLAS_*/*/, reads each
 recording's graph yaml to find its stim_onset_deg condition, loads
-raw_signals.edf (written by analysis/edf_io.py:write_raw_signals_edf, via
+raw_signals.edf (written by analysis/cache.py:load_signals, via
 analysis/main.py) and runtime_metadata.h5 (for an online-f0 validity sanity
 check), splits the recording into "stim_on" / "stim_off" segments using the
-annotations added by load_stim_annotations, and computes a Welch PSD per
+annotations added by clas_file_reader.load_stim_annotations, and computes a Welch PSD per
 segment on one channel.
 
 Every per-recording quantity is averaged within its own recording (Stim
@@ -23,7 +23,6 @@ doesn't dominate the pooled result. Produces:
   with one subplot per stim_onset_deg condition.
 """
 
-import argparse
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,27 +30,17 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import mne
 import numpy as np
-import yaml
 from scipy.signal import welch
 from scipy.stats import ttest_ind, ttest_1samp
 
-from analysis.loader import find_session_run_dirs
-from analysis.plot import FIGSIZE, FIG_WIDTH, FIG_HEIGHT, save_pgf, save_pdf, CHANNEL_NAMES, EOG_CHANNEL_NAMES
-from analysis.runtime_meta import load_runtime_metadata
+from analysis.clas_file_reader import find_session_run_dirs, load_graph_config, CHANNEL_NAMES, EOG_CHANNEL_NAMES
+from analysis.plot import FIGSIZE, FIG_WIDTH, FIG_HEIGHT, save_pgf, save_pdf
+from analysis.results_io import load_runtime_metadata
 from analysis.report import TERMINAL_LABELS
+from analysis.stimulus import STIM_ONSET_DEGS, CONDITION_LABELS
 
 CONDITIONS      = ("stim_on", "stim_off")
-STIM_ONSET_DEGS = (0, 60, 150, 180, 240, 330)
 
-CONDITION_LABELS = {
-    330: "Pre-Peak",
-    180: r"$\mathrm{P}_1$-Trough",
-    60:  "Post-Peak",
-    150: "Pre-Trough",
-    0:   r"$\mathrm{P}_1$-Peak",
-    240: "Post-Trough",
-
-}
 CONDITION_COLORS = {
     0:   "green",  # P1-Peak
     60:  "red",
@@ -94,15 +83,8 @@ def discover_condition_recordings(
               f"{[os.path.basename(d) for d in session_dirs]}")
 
     for recording_dir in recording_dirs:
-        with open(os.path.join(recording_dir, "TurboLinkCLAS.yaml")) as f:
-            graph_config = yaml.safe_load(f)
-        stim_onset_deg = (
-            graph_config.get("graph", {})
-            .get("processors", {})
-            .get("StimControl", {})
-            .get("options", {})
-            .get("stim_onset_deg")
-        )
+        graph = load_graph_config(recording_dir, "TurboLinkCLAS.yaml")
+        stim_onset_deg = graph.options("StimControl").get("stim_onset_deg")
 
         if stim_onset_deg in recordings_by_condition:
             recordings_by_condition[stim_onset_deg].append(recording_dir)
@@ -762,38 +744,3 @@ def analyse_all(
         plot_tf_power_change_grid(pooled_by_condition, ncols=3)
 
     plt.show()
-
-
-def _parse_pair(s: str) -> tuple[int, int]:
-    a, b = s.split(",")
-    return int(a), int(b)
-
-
-def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="analyse_all(): log power change spectrum, opposite-phase time-frequency "
-                     "t-maps, and pooled Stim On/Off power change, per stim_onset_deg condition.")
-    parser.add_argument("--base-dir", default="results",
-                         help="Base directory to search for session folders (default: results).")
-    parser.add_argument("--channel", default="Fz",
-                         help="Electrode to analyse (default: Fz).")
-    parser.add_argument("--stim-onset-degs", type=int, nargs="*", default=list(STIM_ONSET_DEGS),
-                         help=f"stim_onset_deg conditions to include (default: {list(STIM_ONSET_DEGS)}).")
-    parser.add_argument("--comparisons", type=_parse_pair, nargs="*", default=list(TF_COMPARISONS),
-                         help="Opposite-phase condition pairs for the time-frequency t-maps, as "
-                              "'a,b' (default: %(default)s). Pass with no values to skip the t-maps.")
-    parser.add_argument("--win-s", type=float, default=1.0, help="Welch window length (s) (default: 1.0).")
-    parser.add_argument("--step-s", type=float, default=1.0, help="Welch hop between windows (s) (default: 1.0).")
-    parser.add_argument("--smooth-window-s", type=float, default=10.0,
-                         help="Time-resolved map smoothing window (s) (default: 10.0).")
-    parser.add_argument("--no-csd", dest="use_csd", action="store_false",
-                         help="Skip the surface Laplacian / CSD re-referencing step.")
-    return parser
-
-
-if __name__ == "__main__":
-    args = build_arg_parser().parse_args()
-    analyse_all(base_dir=args.base_dir, stim_onset_degs=tuple(args.stim_onset_degs),
-                comparisons=tuple(args.comparisons), channel=args.channel,
-                win_s=args.win_s, step_s=args.step_s, smooth_window_s=args.smooth_window_s,
-                use_csd=args.use_csd)

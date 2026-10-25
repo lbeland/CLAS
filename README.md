@@ -239,7 +239,7 @@ Usage:
 [`supplementary_scripts/simulate_EEG.py`](supplementary_scripts/simulate_EEG.py) sends synthetic EEG packets over UDP to a
 running `UDPSource` processor node (port 25000) and, on exit (Ctrl-C), writes the exact signal
 it sent to `simulated_signal.npy` in the current directory.
-[`analysis/main.py`](analysis/main.py) uses this file as ground truth when scoring a recording
+[`analysis/clas_file_reader.py`](analysis/clas_file_reader.py) (`extract_ground_truth()`) uses this file as ground truth when scoring a recording
 against the true phase/frequency.
 
 Start it only *after* Falcon is already running in a second terminal/process:
@@ -251,8 +251,9 @@ python3 supplementary_scripts/simulate_EEG.py                          # termina
 before publishing anything (see the `calib_packets` option in the graph yaml). If the client is
 started before `UDPSource` has bound its socket, those early packets are silently dropped by the
 OS instead of counted as calibration packets, and the ground-truth alignment in
-[`analysis/main.py`](analysis/main.py) (which skips exactly `calib_packets` rows of
-`simulated_signal.npy`) will be off by however many were lost.
+[`analysis/clas_file_reader.py`](analysis/clas_file_reader.py) (which skips exactly `calib_packets` rows of
+`simulated_signal.npy`) will be off by however many were lost. Terminate the EEG simulation before you terminate
+Falcon to make sure Falcon processes each sample that was sent.
 
 ### Offline analysis (analysis/)
 

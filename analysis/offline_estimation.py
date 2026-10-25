@@ -1,16 +1,138 @@
 """
-Fundamental frequency (f0) estimation.
-
+Offline f0 and phase estimation: the reference the online estimates are
+scored against. estimate_offline() runs the whole chain.
 """
 
+from dataclasses import dataclass
+
 import numpy as np
-from scipy.signal import welch, savgol_filter, medfilt
+from scipy.signal import butter, sosfiltfilt, hilbert, windows, welch, savgol_filter, medfilt
 from scipy.stats import linregress
 from tqdm import tqdm
 
 from .modal import modal
-from .core import _edge_trim_window
+from .estimation_errors import _edge_trim_window
 
+
+@dataclass
+class OfflineEstimate:
+    """Everything estimate_offline() derives from one recording's raw signal."""
+    f0:               float               # offline estimate, or the given/default f0
+    snr:              "float | None"      # linear SNR of the alpha peak
+    aperiodic_params: "np.ndarray | None" # 1/f fit used for whitening; None = no whitening
+    hilbert_phase:    np.ndarray          # edges NaN-trimmed
+    f0_continuous:    np.ndarray          # from hilbert_phase, edges NaN-trimmed
+    filtered:         np.ndarray          # bandpassed (and maybe whitened) signal
+    X_white:          "np.ndarray | None" # whitened spectrum, None without whitening
+    f0_windows:       "list | None" = None   # per-window offline f0 estimates
+    f0_note:          str = ""               # set when f0 was not estimated offline
+
+
+def estimate_offline(raw: np.ndarray, fs: float, f0: float, f0_is_truth: bool = False,
+                     whiten: bool = False) -> OfflineEstimate:
+    """Offline f0 estimate, Hilbert phase and continuous f0 of raw, with the
+    filter's edge transients NaN-trimmed (see _edge_trim_window()).
+
+    Args:
+        f0: Centre frequency (Hz) for the pre-Hilbert bandpass; used as a
+            fallback unless f0_is_truth is set.
+        f0_is_truth: Use f0 directly instead of the offline estimate, for
+            synthetic runs with a known carrier frequency.
+        whiten: Fit the 1/f aperiodic component and use it for spectral
+            whitening in compute_hilbert_reference().
+    """
+    # estimate_f0() returns both f0 and the 1/f aperiodic fit; skip only if
+    # neither is wanted (known carrier and whitening disabled)
+    snr = None
+    f0_windows = None
+    f0_note = ""
+    if f0_is_truth and not whiten:
+        aperiodic_params = None
+        f0_note = "given as ground truth, not estimated"
+    else:
+        f0_windows, aperiodic_params, snr = estimate_f0(raw, fs)
+        if f0_is_truth:
+            f0_note = "given as ground truth, offline estimate ignored"
+        elif np.all(~np.isfinite(f0_windows)):
+            f0_note = "offline estimation failed, using the default"
+        else:
+            f0 = float(np.nanmean(f0_windows))
+    if not whiten:
+        aperiodic_params = None  # disable whitening in compute_hilbert_reference
+
+    filtered, hilbert_phase, X_white = compute_hilbert_reference(raw, fs, f0, aperiodic_params=aperiodic_params)
+    # Needs the raw (unmasked) phase first: NaN edges would propagate through
+    # np.unwrap()/cumsum. NaNs its own output's edges internally.
+    f0_continuous = estimate_f0_with_phase(hilbert_phase, fs, f0)
+    # f0_modal = estimate_f0_modal(raw, fs)
+
+    # NaN hilbert_phase's own edges now, so every series derived from it
+    # excludes the filter's edge transients via plain NaN-dropping
+    hilbert_phase = hilbert_phase.copy()
+    hp_time_s = np.arange(len(hilbert_phase)) / fs
+    hp_t_lo, hp_t_hi = _edge_trim_window([{"time_s": hp_time_s}])
+    hilbert_phase[(hp_time_s < hp_t_lo) | (hp_time_s > hp_t_hi)] = np.nan
+
+    return OfflineEstimate(
+        f0=f0, snr=snr, aperiodic_params=aperiodic_params,
+        hilbert_phase=hilbert_phase, f0_continuous=f0_continuous,
+        filtered=filtered, X_white=X_white,
+        f0_windows=f0_windows, f0_note=f0_note,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase
+# ---------------------------------------------------------------------------
+
+def compute_hilbert_reference(
+    raw: np.ndarray, fs: float, f0: float, aperiodic_params: np.ndarray | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Bandpass + Hilbert transform to produce an offline phase reference.
+
+    Args:
+        raw: Input signal.
+        fs: Sample rate (Hz).
+        f0: Bandpass centre frequency (Hz); passband is [0.7, 1.3] * f0.
+        aperiodic_params: (slope, intercept) of a fitted 1/f PSD. When given,
+            the spectrum is whitened before bandpassing.
+
+    Returns:
+        (filtered signal, Hilbert phase, whitened spectrum or None).
+    """
+    psd_white = None
+    if (aperiodic_params is not None) and (all(np.isfinite(aperiodic_params))):
+        # Do whitening
+        slope, intercept = aperiodic_params
+
+        # taper signal because whitening is sensitive to edge effects
+        n = len(raw)
+        taper = windows.tukey(n, alpha=0.01)
+        raw = raw * taper
+
+        freqs = np.fft.rfftfreq(n, d=1/fs)
+
+        # Rescale intercept from density-scaled PSD units (Pxx = 2*|X|^2/(fs*n)) to raw FFT power
+        intercept_fft = intercept + np.log10(fs * n / 2)
+        aperiodic_comp = np.zeros_like(freqs)
+        aperiodic_comp[1:] = (freqs[1:] ** slope) * (10**intercept_fft)  # skip f=0
+
+        X = np.fft.rfft(raw)
+        psd_white = np.ones_like(X)
+        psd_white[1:] = X[1:] / np.maximum(1e-12,np.sqrt(np.array(aperiodic_comp[1:])))
+        psd_white[0] = 1.0  # avoid a DC offset in the whitened signal
+
+        raw = np.fft.irfft(psd_white, n=n)
+
+    sos      = butter(4, [0.7*f0, 1.3*f0], btype="band", fs=fs, output="sos")
+    filtered = sosfiltfilt(sos, raw)
+
+    return filtered, np.angle(hilbert(filtered)), psd_white
+
+
+# ---------------------------------------------------------------------------
+# f0
+# ---------------------------------------------------------------------------
 
 def gaussian_peak(freqs, amp, center, width):
     return amp * np.exp(-0.5 * ((freqs - center) / width) ** 2)

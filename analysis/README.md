@@ -39,7 +39,7 @@ The rest of the package:
   - [`pipeline.py`](pipeline.py) -- `load_and_analyse()`: the full offline analysis of one
     results folder, which every command builds on.
   - [`offline_estimation.py`](offline_estimation.py) -- offline f0 and Hilbert phase reference
-    via `estimate_offline()` ([`modal.py`](modal.py): the MODAL algorithm).
+    via `estimate_offline()`.
   - [`estimation_errors.py`](estimation_errors.py) -- phase/f0/stimulus-edge errors of the
     online estimates.
   - [`stimulus.py`](stimulus.py) -- stimulus reconstruction and the study's stimulation

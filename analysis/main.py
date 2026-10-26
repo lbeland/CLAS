@@ -29,7 +29,7 @@ from analysis.sweep             import snr_sweep_table
 from analysis import report
 
 
-def analyse_results(results_dir: str, f0: float=10.0, show: bool = True,
+def analyse_results(results_dir: str, f0: float=10.0, plot: bool = True,
                     f0_is_truth: bool = False, whiten: bool = False, full_analysis: bool = True) -> None:
     """Analyse one results folder: print the report, write analysis.edf and
     plot the latency, error distributions, spectrum and time series. With
@@ -45,12 +45,8 @@ def analyse_results(results_dir: str, f0: float=10.0, show: bool = True,
         analysis = analyse_recording(graph, recording, f0, f0_is_truth=f0_is_truth, whiten=whiten)
         report.print_recording_summary(analysis)
         _export_analysis_edf(analysis, results_dir)
-        _plot_recording(analysis)
-
-    if show:
-        plt.show()
-    else:
-        plt.close("all")
+        if plot:
+            _plot_recording(analysis)
 
 
 def _export_analysis_edf(analysis: RecordingAnalysis, results_dir: str) -> None:
@@ -95,7 +91,7 @@ def _plot_recording(analysis: RecordingAnalysis) -> None:
 
 def analyse_all_results(f0: float = 10, base_dir: str = "results", full_analysis: bool = True) -> None:
     """Batch smoke-test: run analyse_results() non-interactively (no
-    plt.show()) over every results subfolder under base_dir, keeping going
+    plot) over every results subfolder under base_dir, keeping going
     past per-folder errors so one bad run doesn't block the rest. Prints a
     full traceback for each failure plus a pass/fail summary at the end."""
     run_dirs = find_result_dirs(base_dir)
@@ -105,7 +101,7 @@ def analyse_all_results(f0: float = 10, base_dir: str = "results", full_analysis
     for i, results_dir in enumerate(run_dirs, 1):
         print(f"\n{'=' * 80}\n[{i}/{len(run_dirs)}] {results_dir}\n{'=' * 80}")
         try:
-            analyse_results(results_dir, f0, show=False, full_analysis=full_analysis)
+            analyse_results(results_dir, f0, plot=False, full_analysis=full_analysis)
         except Exception:
             print(f"FAILED: {results_dir}")
             traceback.print_exc()
@@ -149,8 +145,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                            help="Use --f0 directly instead of re-estimating it offline.")
     single_p.add_argument("--whiten", action="store_true",
                            help="Apply 1/f spectral whitening before the offline bandpass.")
-    single_p.add_argument("--no-show", dest="show", action="store_false",
-                           help="Don't call plt.show() at the end (just close the figures).")
+    single_p.add_argument("--no-plot", dest="plot", action="store_false",
+                           help="Don't create any plots (just load and analyse the data).")
     single_p.add_argument("--no-full-analysis", dest="full_analysis", action="store_false",
                            help="Skip f0/Hilbert/error analysis and plotting; just load the folder.")
 
@@ -215,7 +211,7 @@ if __name__ == "__main__":
     if args.command == "all":
         analyse_all_results(f0=args.f0, base_dir=args.base_dir, full_analysis=args.full_analysis)
     elif args.command == "single":
-        analyse_results(results_dir=args.results_dir, f0=args.f0, show=args.show,
+        analyse_results(results_dir=args.results_dir, f0=args.f0, plot=args.plot,
                          f0_is_truth=args.f0_is_truth, whiten=args.whiten,
                          full_analysis=args.full_analysis)
     elif args.command == "pooled":

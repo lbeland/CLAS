@@ -6,7 +6,7 @@ the rest of the package is a supporting library imported by it (and by `clas.py`
 
 **[`python -m analysis.main <command>`](main.py)** (from `CLAS/`), with commands:
 
-- `single [results_dir] [--f0 HZ] [--f0-is-truth] [--whiten] [--no-show] [--no-full-analysis]`
+- `single [results_dir] [--f0 HZ] [--f0-is-truth] [--whiten] [--no-plot] [--no-full-analysis]`
   -- full analysis + plots for one results folder (default: `_last_run`).
 - `all [--base-dir DIR] [--f0 HZ] [--no-full-analysis]` -- analyse every results folder under
   `DIR` (default: `results`).

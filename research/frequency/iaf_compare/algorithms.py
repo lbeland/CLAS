@@ -14,6 +14,8 @@ from fooof import FOOOF
 from scipy import stats
 from scipy.signal import savgol_filter
 
+from flatten_spectrum import flatten_spectrum
+
 
 def _safe_log10(x):
     """log10 floored at the smallest positive float (smoothed PSD can dip
@@ -25,6 +27,7 @@ def run_algorithms(window, psd, psd_welch, psd_mt, freq_bins, freq_bins_welch, f
     return {
         "Maximum":      stupid_max(psd_welch, freq_bins_welch, config),
         "FOOOF":        fooof(psd_welch, freq_bins_welch, config),
+        "FLAT":         flat(psd_welch, freq_bins_welch, config),
         "RestingIAF":   philistine_iaf(psd, freq_bins, config),
         "alpha_fast":       alpha_fast(psd, freq_bins, config),
         "alpha_fast_mt":    alpha_fast(psd_mt, freq_mt, config),  # same estimator, multitaper PSD
@@ -59,7 +62,7 @@ def parabolic_max(psd, freq_bins, config):
     # refine via parabolic interpolation if not at the band edges
     if 0 < max_bin < (psd_band.size - 1):
         y1, y2, y3 = psd_band[max_bin - 1], psd_band[max_bin], psd_band[max_bin + 1]
-        denom = (y1 - 2 * y2 + y3)
+        denom = y1 - 2 * y2 + y3
         if denom != 0:
             delta = 0.5 * (y1 - y3) / denom
             bin_hz = freq_bins_band[1] - freq_bins_band[0]
@@ -72,7 +75,7 @@ def fooof(psd, freq_bins, config):
     """
     Parameterizing neural power spectra into periodic and aperiodic components
     10.1038/s41593-020-00744-x
-    
+
     """
     fooof_model = FOOOF(peak_width_limits=[0.1, 4.0], min_peak_height=0.0,
                         peak_threshold=2., max_n_peaks=3, aperiodic_mode="fixed", verbose=False)
@@ -89,6 +92,16 @@ def fooof(psd, freq_bins, config):
                    if config["alpha_band"][0] <= p[0] <= config["alpha_band"][1]]
     return max(alpha_peaks, key=lambda p: p[1])[0] if alpha_peaks else np.nan
 
+def flat(psd, freq_bins, config):
+    flattened, _, _ = flatten_spectrum(psd, freq_bins)
+
+    band = (freq_bins >= config["alpha_band"][0]) & (freq_bins <= config["alpha_band"][1])
+    psd_band = flattened[band]
+    max_bin = np.argmax(psd_band)
+    freq_bins_band = freq_bins[band]
+    est_pf = freq_bins_band[max_bin]
+
+    return est_pf
 
 def gaussian_peak(freqs, amp, center, width):
     return amp * np.exp(-0.5 * ((freqs - center) / width) ** 2)
@@ -174,7 +187,7 @@ def alpha_fast(psd, freq_bins, config, return_diagnostics=False):
 
     if 0 < max_bin < (psd_alpha_band.size - 1):
         y1, y2, y3 = psd_alpha_band[max_bin - 1], psd_alpha_band[max_bin], psd_alpha_band[max_bin + 1]
-        denom = (y1 - 2 * y2 + y3)
+        denom = y1 - 2 * y2 + y3
         if denom != 0:
             delta = 0.5 * (y1 - y3) / denom
             est_pf += delta * resolution

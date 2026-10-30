@@ -1,10 +1,11 @@
 """Run the full peak-frequency algorithm sweep and write outputs/iaf_results.h5.
 
-Was IAF_tests.py. The sweep definition now lives in iaf_compare/config.py; the
+The sweep definition lives in iaf_compare/config.py; the
 signal generation, spectral estimation, algorithms, metrics and HDF5 writing
 are the corresponding iaf_compare submodules.
 """
 from multiprocessing import Pool
+from os import cpu_count
 
 from tqdm import tqdm
 
@@ -14,8 +15,6 @@ from iaf_compare.pipeline import build_sweep, process_condition, process_window_
 from iaf_compare.spectra import precompute_dpss, _init_dpss_cache
 from iaf_compare.io_hdf5 import write_results
 from iaf_compare.config import save_conditions_latex_table
-
-from os import cpu_count
 
 N_WORKERS = max(1, cpu_count() - 2)
 

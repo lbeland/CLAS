@@ -47,6 +47,7 @@ def analyse_results(results_dir: str, f0: float=10.0, plot: bool = True,
         _export_analysis_edf(analysis, results_dir)
         if plot:
             _plot_recording(analysis)
+            plt.show()
 
 
 def _export_analysis_edf(analysis: RecordingAnalysis, results_dir: str) -> None:

@@ -1,5 +1,5 @@
-Description: Estimates the instantaneous phase of the ongoing alpha oscillation with a causal
-  end-corrected Hilbert transform (cecHT). A sliding window of 2 f0 cycles is FFT'd, turned
+Description: Estimates the instantaneous phase of the ongoing alpha oscillation with a calibrated
+  endpoint-corrected Hilbert transform (cecHT). A sliding window of 2 f0 cycles is FFT'd, turned
   into an analytic spectrum, multiplied by a bandpass filter (loaded from file or derived from
   the f0), and inverse-transformed; phase and real part are read at the last window sample.
   The window, FFT size, filter and calibration are retuned whenever the shared f0 changes.

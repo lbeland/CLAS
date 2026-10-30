@@ -3,7 +3,7 @@
 Based on upstream ``EEG/eeg_phase.py`` but:
 - adds the ``ds004148`` dataset,
 - ``--iaf-method {fooof,alpha_fast}`` selects the per-window PAF estimator
-  (``alpha_fast`` = the ``alpha_fast`` algorithm from ``analysis/f0.py``),
+  (``alpha_fast`` = the ``alpha_fast`` algorithm from ``analysis/offline_estimation.py``),
 - shows a progress bar and pins worker CPU affinity,
 - ``--subjects`` is honoured by every loader.
 
@@ -31,13 +31,13 @@ import pathlib
 import argparse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-import _bootstrap  # noqa: E402,F401  -> puts the cecHT submodule on sys.path
+import _bootstrap
 
-from joblib import Parallel, delayed  # noqa: E402
-from tqdm import tqdm  # noqa: E402
+from joblib import Parallel, delayed
+from tqdm import tqdm
 
 try:
-    from tqdm_joblib import tqdm_joblib  # noqa: E402
+    from tqdm_joblib import tqdm_joblib
 except ImportError:  # pragma: no cover - fall back to no progress bar
     import contextlib
 
@@ -45,7 +45,7 @@ except ImportError:  # pragma: no cover - fall back to no progress bar
     def tqdm_joblib(_tqdm):
         yield
 
-import helpers_ext as H  # noqa: E402
+import helpers_ext as H  
 
 _RESULTS_ROOT = pathlib.Path(__file__).resolve().parents[1] / "results"
 _IAF_NAME = "iaf_per_segment.csv"
@@ -152,7 +152,7 @@ if __name__ == "__main__":
                    help="IAF estimation window (s). <=0 -> full segment. (default: 10)")
     p.add_argument("--iaf-method", choices=["fooof", "alpha_fast"], default="alpha_fast",
                    help="Per-window IAF estimator: 'fooof' (upstream) or 'alpha_fast' "
-                        "(the alpha_fast algorithm from analysis/f0.py). (default: alpha_fast)")
+                        "(the alpha_fast algorithm from analysis/offline_estimation.py). (default: alpha_fast)")
     p.add_argument("--subjects", type=int, default=None,
                    help="Max number of subjects, ds004148 only (default: all).")
     p.add_argument("--conditions", nargs="*", default="EC",

@@ -1,15 +1,15 @@
-"""alpha_fast IAF estimator -- ported from :func:`analysis.f0.alpha_fast`.
+"""alpha_fast IAF estimator -- ported from :func:`analysis.offline_estimation.alpha_fast`.
 
 ``gaussian_peak``, ``bic_peak_test_simple``, ``approve_peak`` and ``alpha_fast``
-are a verbatim copy of ``analysis/f0.py`` (itself the production version of the
+are a verbatim copy of ``analysis/offline_estimation.py`` (itself the production version of the
 ``alpha_fast`` estimator in ``research/frequency/iaf_compare/algorithms.py``,
 plus a linear-scale SNR matching
 ``extensions/clas/processors/FrequencyEstimation/FrequencyEstimation.cpp``). Kept as a
-local copy rather than importing ``analysis.f0`` to avoid pulling in that
+local copy rather than importing ``analysis.offline_estimation`` to avoid pulling in that
 package's dependencies (mne-free here).
 
 ``alpha_fast_paf`` is the thin adapter the EEG pipeline calls: it builds the
-same one-sided periodogram PSD that ``analysis.f0.estimate_f0`` feeds to
+same one-sided periodogram PSD that ``analysis.offline_estimation.estimate_f0`` feeds to
 ``alpha_fast`` and returns ``(peak_alpha_freq, snr)`` (``(nan, nan)`` if no peak
 is approved).
 """
@@ -19,7 +19,7 @@ from scipy import stats
 from scipy.signal import savgol_filter
 
 
-# --- verbatim from analysis/f0.py -------------------------------------------------
+# --- verbatim from analysis/offline_estimation.py -------------------------------------------------
 def gaussian_peak(freqs, amp, center, width):
     return amp * np.exp(-0.5 * ((freqs - center) / width) ** 2)
 
@@ -169,7 +169,7 @@ def alpha_fast(psd, freq_bins, config):
 
 
 def _periodogram(window, fs):
-    """One-sided periodogram PSD, identical to analysis.f0.estimate_f0."""
+    """One-sided periodogram PSD, identical to analysis.offline_estimation.estimate_f0."""
     window = np.asarray(window, dtype=float)
     n = window.size
     freq_bins = np.fft.rfftfreq(n, 1 / fs)
@@ -199,5 +199,5 @@ def alpha_fast_paf(window, fs, alpha_band=(7.5, 14.0), freq_range=(0.1, 30.0)):
     try:
         paf, _aperiodic_params, snr = alpha_fast(psd, freq_bins, config)
         return float(paf), float(snr)
-    except Exception:  # noqa: BLE001 - match the pipeline's per-window robustness
+    except Exception:  # match the pipeline's per-window robustness
         return np.nan, np.nan

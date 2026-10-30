@@ -28,7 +28,8 @@ from scipy.signal import hilbert, butter, sosfiltfilt
 from scipy.signal.windows import tukey
 import matplotlib as mpl
 
-from analysis.plot import _circ_stats, _style_polar_axis, COMMON_BBOX
+from analysis.plot import _style_polar_axis, COMMON_BBOX
+from analysis.estimation_errors import _circ_stats
 
 mpl.rcParams.update({
     "pgf.texsystem": "pdflatex",

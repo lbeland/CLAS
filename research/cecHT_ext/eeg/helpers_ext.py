@@ -15,17 +15,17 @@ import sys
 import pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-import _bootstrap  # noqa: E402,F401  -> puts the cecHT submodule on sys.path
+import _bootstrap  # puts the cecHT submodule on sys.path
 
-import csv  # noqa: E402
-import os  # noqa: E402
-import warnings  # noqa: E402
-from pathlib import Path  # noqa: E402
+import csv
+import os
+import warnings
+from pathlib import Path
 
-import mne  # noqa: E402
-import numpy as np  # noqa: E402
-from scipy.interpolate import interp1d  # noqa: E402
-from scipy.signal import butter, hilbert, sosfiltfilt  # noqa: E402
+import mne
+import numpy as np
+from scipy.interpolate import interp1d
+from scipy.signal import butter, hilbert, sosfiltfilt
 
 # Upstream ``EEG/helpers.py`` does ``from fooof import FOOOF`` at import time, and
 # fooof 1.1's __init__ calls ``simplefilter('always')`` and then ``warn(...)`` so
@@ -42,11 +42,11 @@ with warnings.catch_warnings():
         return _real_showwarning(message, category, *args, **kwargs)
 
     warnings.showwarning = _drop_fooof_deprecation
-    import helpers as _h  # noqa: E402  -> pristine upstream EEG/helpers.py
-from phase_track import ECHT as ECHT_track  # noqa: E402
-from utils import _circ_stats, run_echt_window_loop  # noqa: E402
+    import helpers as _h  # pristine upstream EEG/helpers.py
+from phase_track import ECHT as ECHT_track
+from utils import _circ_stats, run_echt_window_loop
 
-from alpha_fast_iaf import alpha_fast_paf  # noqa: E402  -> alpha_fast, ported from analysis/f0.py
+from alpha_fast_iaf import alpha_fast_paf  # alpha_fast, ported from analysis/offline_estimation.py
 
 # Re-export upstream primitives that are reused unchanged.
 iaf = _h.iaf
@@ -71,7 +71,7 @@ def estimate_paf(data, info, fmin=7.5, fmax=14,
         ``"fooof"``      -> upstream :func:`helpers.iaf` (FOOOF aperiodic + BIC test).
         ``"alpha_fast"`` -> :func:`alpha_fast_iaf.alpha_fast_paf` (log-log 1/f fit,
         Savgol-smoothed residual, BIC peak approval) -- the ``alpha_fast``
-        algorithm from ``analysis/f0.py``.
+        algorithm from ``analysis/offline_estimation.py``.
 
     Returns
     -------
@@ -108,7 +108,7 @@ def estimate_paf(data, info, fmin=7.5, fmax=14,
                 paf, snr = r.PeakAlphaFrequency, np.nan
             else:
                 paf, snr = alpha_fast_paf(seg.get_data()[0], fs, alpha_band=(fmin, fmax))
-        except Exception:  # noqa: BLE001 - a single bad window must not kill the segment
+        except Exception:  # a single bad window must not kill the segment
             continue
         if paf is not None and np.isfinite(paf) and paf > 0:
             pafs.append(float(paf))
@@ -210,7 +210,7 @@ def load_ds004148(edf_dir, max_subjects=None, channel_name="Fz-FCz"):
                 ))
                 current_t += step_dur
                 block_idx += 1
-        except Exception as e:  # noqa: BLE001 - match upstream loader behaviour
+        except Exception as e:  # match upstream loader behaviour
             print(f"  Skipping {edf_path.name}: {e}")
 
     print(f"Loaded {len(segments)} windows from ds004148 ({edf_dir})")
@@ -284,7 +284,7 @@ def process_segment(seg, iaf_window=10, bw_factor=0.5, filt_order=1, iaf_method=
             ],
         )
 
-    except Exception as e:  # noqa: BLE001 - match upstream behaviour
+    except Exception as e:
         return _fail(sid, f"error: {e}")
 
 

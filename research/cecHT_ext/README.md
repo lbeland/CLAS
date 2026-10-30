@@ -12,7 +12,7 @@ via [`_bootstrap.py`](_bootstrap.py).
 |------|------|
 | `_bootstrap.py` | puts `../cecHT` and `../cecHT/EEG` on `sys.path` (also used by `../phase/harmonic_experiments_offline_ht.py`) |
 | `eeg/helpers_ext.py` | per-window IAF, `load_ds004148`, `time_s` in the IAF CSV (ecHT phase-error part currently commented out) |
-| `eeg/alpha_fast_iaf.py` | `alpha_fast` (+ helpers) copied verbatim from `analysis/f0.py`; `alpha_fast_paf` adapter |
+| `eeg/alpha_fast_iaf.py` | `alpha_fast` (+ helpers) copied verbatim from `analysis/offline_estimation.py`; `alpha_fast_paf` adapter |
 | `eeg/run_pipeline.py` | driver: `ds004148`, `--iaf-method {fooof,alpha_fast}`, writes `iaf_per_segment.csv` |
 | `eeg/plot_results.py` | IAF variability plots: one run dir (SD hist, std-vs-mean, SD-vs-mean-SNR) or two (fooof-vs-alpha_fast comparison) |
 | `results/` | pipeline outputs — **git-ignored**, kept on disk |
@@ -34,7 +34,7 @@ submodule path from `__file__`.
 # Output -> cecHT_ext/results/<dataset>_<channel>_<method>/iaf_per_segment.csv
 #           (here: results/ds004148_Fz_fooof/)
 python research/cecHT_ext/eeg/run_pipeline.py --dataset ds004148 --edf-dir /path/to/ds004148 --channel Fz --iaf-method fooof
-#   --iaf-method {fooof,alpha_fast}   'alpha_fast' = the alpha_fast algorithm from analysis/f0.py
+#   --iaf-method {fooof,alpha_fast}   'alpha_fast' = the alpha_fast algorithm from analysis/offline_estimation.py
 #   --out-dir DIR                     override the destination
 
 # IAF variability (per-participant SD, Hz) — one run dir:

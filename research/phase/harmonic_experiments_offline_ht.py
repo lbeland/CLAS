@@ -30,7 +30,7 @@ keeps growing.
 Fixed conditions: Butterworth band-pass centred on f0, bandwidth BW and
 order FILT_ORDER for ecHT / c-ecHT, bandwidth OFFLINE_BW and order
 OFFLINE_FILT_ORDER for the offline Hilbert (defaults: [0.7, 1.3] f0 for
-both, order 1 vs. 4 as in analysis/core.py); no frequency drift.
+both, order 1 vs. 4 as in analysis/offline_estimation.py); no frequency drift.
 
 All three methods estimate the phase at the same target sample k:
 
@@ -71,17 +71,17 @@ from scipy.signal import butter, sosfiltfilt, hilbert
 from scipy.stats import circmean, circstd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "cecHT_ext"))
-import _bootstrap  # noqa: E402,F401  -> puts the cecHT submodule on sys.path
-from phase import ECHT  # noqa: E402
-from utils import _wrap_phase  # noqa: E402
+import _bootstrap  # puts the cecHT submodule on sys.path
+from phase import ECHT
+from utils import _wrap_phase
 
 # Global parameters
 F0 = 10                # central frequency in Hz
 SFREQ = 256            # sampling frequency in Hz
 BW = F0 * 0.6          # ecHT / c-ecHT band-pass bandwidth (Hz), centred on f0
 FILT_ORDER = 2         # ecHT / c-ecHT Butterworth order (scipy band-pass convention)
-OFFLINE_BW = F0 * 0.6  # offline HT band-pass bandwidth (Hz), as analysis/core.py
-OFFLINE_FILT_ORDER = 4 # offline HT Butterworth order (as analysis/core.py)
+OFFLINE_BW = F0 * 0.6  # offline HT band-pass bandwidth (Hz), as analysis/offline_estimation.py
+OFFLINE_FILT_ORDER = 4 # offline HT Butterworth order (as analysis/offline_estimation.py)
 
 N_PHASE_SAMPLES = 5            # initial phases per SNR point (evenly spaced)
 N_NOISE_TRIALS = int(3e3)       # noise trials per initial phase
@@ -328,7 +328,7 @@ def plot_snr_sweep(ax, r):
     ax.grid(True, linestyle=":", which="both", axis="both")
     ax.set_axisbelow(True)
 
-    
+
 def plot_snr_signed(ax, r, key, method, ylabel):
     """Circular (shaded) and linear (dash-dotted) mean ± SD of a signed phase
     difference vs. SNR."""

@@ -39,7 +39,7 @@ mpl.rcParams.update({
     "text.usetex": True,
     "pgf.rcfonts": False,
 })
-import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.pyplot as plt
 
 _IAF_CSV = "iaf_per_segment.csv"
 _PARTICIPANT_RE = r"(s\w+?)(?=_)"

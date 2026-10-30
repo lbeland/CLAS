@@ -10,7 +10,7 @@ is importable, e.g.::
 
     import sys, pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-    import _bootstrap  # noqa: E402,F401
+    import _bootstrap
 """
 
 import sys

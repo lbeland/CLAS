@@ -24,7 +24,7 @@
 //   g++ -O2 -o precompute_wisdom precompute_wisdom.cpp -lfftw3
 //
 // Usage (from the repo root):
-//   ./z_extra/precompute_wisdom
+//   ./supplementary_scripts/precompute_wisdom
 //   (wisdom file path, sample rate, and window_size_sec are hardcoded below
 //   to match TurboLinkCLAS/ERPCLAS/ReplayCLAS.yaml; update them if those
 //   graphs' fs/window_size_sec change)
